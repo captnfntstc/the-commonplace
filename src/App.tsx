@@ -20,7 +20,7 @@ import {
   User,
   X,
 } from 'lucide-react'
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   fetchLyrics,
@@ -143,9 +143,9 @@ function getTypeMeta(type: EntryType) {
 // Expanding a card pushes only the cards below it in that column down.
 // Adding a new card at index 0 shifts all cards to the right across columns.
 
-const M_GAP = 14
-const M_PAD_X = 32
-const M_PAD_TOP = 8
+const M_GAP = 32
+const M_PAD_X = 40
+const M_PAD_TOP = 28
 
 function getColumnCount(width: number): number {
   if (width < 640) return 1
@@ -157,13 +157,32 @@ function getColumnCount(width: number): number {
 type MasonryPos = { left: number; top: number; width: number }
 type MasonryLayout = { positions: Map<string, MasonryPos>; height: number } | null
 
+function getItemTargetHeight(item: HTMLElement, isExpanded: boolean): number {
+  const card = item.querySelector('.entry-card') as HTMLElement | null
+  if (!card) return item.offsetHeight
+
+  const reflection = card.querySelector('.card-reflection') as HTMLElement | null
+  const reflectionInner = card.querySelector('.reflection-inner') as HTMLElement | null
+
+  const currentReflectionH = reflection ? reflection.offsetHeight : 0
+  const collapsedH = card.offsetHeight > 0 ? card.offsetHeight - currentReflectionH : item.offsetHeight
+
+  if (isExpanded) {
+    const reflectionH = reflectionInner ? reflectionInner.scrollHeight + 20 : 0
+    return collapsedH + reflectionH
+  }
+
+  return collapsedH
+}
+
 function useMasonryLayout(
   containerRef: React.RefObject<HTMLElement | null>,
   itemCount: number,
+  expandedId?: string,
 ): MasonryLayout {
   const [layout, setLayout] = useState<MasonryLayout>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) return
 
@@ -174,7 +193,10 @@ function useMasonryLayout(
         const items = Array.from(container.children).filter(
           (el) => el.classList.contains('masonry-item'),
         ) as HTMLElement[]
-        if (items.length === 0) { setLayout(null); return }
+        if (items.length === 0) {
+          setLayout(null)
+          return
+        }
 
         const w = container.clientWidth
         const numCols = getColumnCount(w)
@@ -186,12 +208,18 @@ function useMasonryLayout(
           const id = item.dataset.id
           if (!id) return
           const col = index % numCols
+          const isExpanded = id === expandedId
+
+          item.style.width = `${colWidth}px`
+
+          const itemHeight = getItemTargetHeight(item, isExpanded)
+
           positions.set(id, {
             left: M_PAD_X + col * (colWidth + M_GAP),
             top: heights[col],
             width: colWidth,
           })
-          heights[col] += item.offsetHeight + M_GAP
+          heights[col] += itemHeight + M_GAP
         })
 
         setLayout({ positions, height: Math.max(...heights) + 80 })
@@ -200,27 +228,18 @@ function useMasonryLayout(
 
     const ro = new ResizeObserver(recalculate)
     ro.observe(container)
-    Array.from(container.children).forEach((c) => ro.observe(c))
 
-    const mo = new MutationObserver((mutations) => {
-      mutations.forEach((m) => {
-        m.addedNodes.forEach((node) => {
-          if (node instanceof Element) ro.observe(node)
-        })
-      })
-      recalculate()
-    })
-    mo.observe(container, { childList: true })
+    container.addEventListener('load', recalculate, true)
 
     recalculate()
 
     return () => {
       ro.disconnect()
-      mo.disconnect()
+      container.removeEventListener('load', recalculate, true)
       cancelAnimationFrame(frameId)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef, itemCount])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containerRef, itemCount, expandedId])
 
   return layout
 }
@@ -312,7 +331,30 @@ function App() {
     )
   }, [entries, query, typeFilter])
 
-  const masonryLayout = useMasonryLayout(gridRef, filteredEntries.length)
+  const masonryLayout = useMasonryLayout(gridRef, filteredEntries.length, expandedId)
+  const [isInitialRender, setIsInitialRender] = useState(true)
+  const [isFilterSwitching, setIsFilterSwitching] = useState(false)
+
+  const handleTypeFilterChange = (nextFilter: EntryType | 'all') => {
+    if (nextFilter === typeFilter) return
+    setIsFilterSwitching(true)
+    setTypeFilter(nextFilter)
+  }
+
+  const handleQueryChange = (val: string) => {
+    setIsFilterSwitching(true)
+    setQuery(val)
+  }
+
+  useEffect(() => {
+    if (masonryLayout) {
+      const timer = setTimeout(() => {
+        setIsInitialRender(false)
+        setIsFilterSwitching(false)
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [masonryLayout, typeFilter, query])
 
   const saveEntries = (nextEntries: Entry[]) => {
     setEntries(nextEntries)
@@ -364,7 +406,7 @@ function App() {
         updatedAt: timestamp,
       }
       saveEntries([newEntry, ...entries])
-      setExpandedId(newEntry.id)
+      setExpandedId('')
     }
 
     closeComposer()
@@ -420,7 +462,7 @@ function App() {
                 <input
                   type="search"
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => handleQueryChange(e.target.value)}
                   placeholder="Search title, creator, passage…"
                   aria-label="Search entries"
                   autoFocus
@@ -429,7 +471,7 @@ function App() {
                   <button
                     type="button"
                     className="search-clear"
-                    onClick={() => setQuery('')}
+                    onClick={() => handleQueryChange('')}
                     aria-label="Clear search"
                   >
                     <X aria-hidden="true" />
@@ -445,7 +487,7 @@ function App() {
               <button
                 className={typeFilter === 'all' ? 'tab active' : 'tab'}
                 type="button"
-                onClick={() => setTypeFilter('all')}
+                onClick={() => handleTypeFilterChange('all')}
               >
                 <span>All</span>
               </button>
@@ -454,7 +496,7 @@ function App() {
                   key={id}
                   className={typeFilter === id ? 'tab active' : 'tab'}
                   type="button"
-                  onClick={() => setTypeFilter(id)}
+                  onClick={() => handleTypeFilterChange(id)}
                 >
                   <Icon aria-hidden="true" />
                   <span>{label}</span>
@@ -472,6 +514,11 @@ function App() {
             position: 'relative',
             height: masonryLayout ? masonryLayout.height : 'auto',
             minHeight: filteredEntries.length === 0 ? 320 : undefined,
+            visibility: masonryLayout && !isFilterSwitching ? 'visible' : 'hidden',
+            opacity: masonryLayout && !isFilterSwitching ? 1 : 0,
+            transition: masonryLayout && !isFilterSwitching
+              ? 'opacity 140ms ease-out'
+              : 'none',
           }}
           aria-label="Saved entries"
         >
@@ -484,10 +531,14 @@ function App() {
                 className="masonry-item"
                 style={pos ? {
                   position: 'absolute',
-                  left: pos.left,
-                  top: pos.top,
+                  top: 0,
+                  left: 0,
                   width: pos.width,
-                  transition: 'top 220ms cubic-bezier(0.16,1,0.3,1), left 220ms cubic-bezier(0.16,1,0.3,1)',
+                  transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
+                  transition: (isInitialRender || isFilterSwitching)
+                    ? 'none'
+                    : 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
+                  willChange: 'transform',
                 } : { width: '100%', marginBottom: 14 }}
               >
                 <EntryCard
@@ -599,12 +650,7 @@ function EntryCard({
   const { Icon } = getTypeMeta(entry.type)
 
   return (
-    <motion.article
-      className={`entry-card tone-${entry.coverTone}`}
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
-    >
+    <article className={`entry-card tone-${entry.coverTone}`}>
       {/* Card top row: avatar + username + stars + type icon */}
       <div className="card-toprow">
         <div className="card-user">
@@ -713,9 +759,7 @@ function EntryCard({
       {/* Hardware-accelerated zero-lag reflection expansion */}
       <div className={expanded ? 'card-reflection expanded' : 'card-reflection'}>
         <div className="reflection-inner">
-          {entry.reflection.split('\n\n').map((para, i) => (
-            <p key={i}>{para}</p>
-          ))}
+          <div className="reflection-text">{entry.reflection}</div>
           <div className="card-actions">
             <button
               className="action-btn"
@@ -750,7 +794,7 @@ function EntryCard({
           <ChevronDown aria-hidden="true" />
         )}
       </button>
-    </motion.article>
+      </article>
   )
 }
 
