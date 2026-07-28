@@ -1,10 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  User,
+  Trash2,
   BookOpen,
   ChevronUp,
   Clapperboard,
   Disc3,
-  Ellipsis,
   Gamepad2,
   Loader2,
   Music4,
@@ -67,21 +68,21 @@ const entryTypes: Array<{
   label: string
   Icon: typeof BookOpen
 }> = [
-  { id: 'book', label: 'Books', Icon: BookOpen },
   { id: 'album', label: 'Albums', Icon: Disc3 },
-  { id: 'song', label: 'Songs', Icon: Music4 },
+  { id: 'book', label: 'Books', Icon: BookOpen },
   { id: 'film', label: 'Films', Icon: Clapperboard },
   { id: 'game', label: 'Games', Icon: Gamepad2 },
+  { id: 'song', label: 'Songs', Icon: Music4 },
   { id: 'tv', label: 'Shows', Icon: Tv },
 ]
 
 const defaultCoverToneByType: Record<EntryType, CoverTone> = {
-  book: 'blue',
   album: 'gold',
-  song: 'violet',
+  book: 'blue',
   film: 'ember',
-  tv: 'sage',
   game: 'rose',
+  song: 'violet',
+  tv: 'sage',
 }
 
 const sampleEntryIds = new Set([
@@ -97,13 +98,13 @@ const sampleEntryIds = new Set([
 ])
 
 const emptyDraft: EntryDraft = {
-  type: 'book',
+  type: 'album',
   title: '',
   creator: '',
   provider: 'Manual',
   providerId: '',
   genre: '',
-  rating: 4,
+  rating: 0,
   favoritePassage: '',
   reflection: '',
   reflectionAlign: 'left',
@@ -290,14 +291,16 @@ function draftFromMetadata(
 function TypeIconBar({
   value,
   onChange,
+  disabled = false,
 }: {
   value: EntryType
   onChange: (type: EntryType) => void
+  disabled?: boolean
 }) {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
 
   return (
-    <div className="type-icon-bar" role="radiogroup" aria-label="Select type">
+    <div className={`type-icon-bar ${disabled ? 'disabled' : ''}`} role="radiogroup" aria-label="Select type">
       {entryTypes.map(({ id, label, Icon }) => {
         const isSelected = id === value
         const isHovered = hoveredId === id
@@ -307,7 +310,8 @@ function TypeIconBar({
             key={id}
             type="button"
             className={`type-icon-btn ${isSelected ? 'active' : ''}`}
-            onClick={() => onChange(id)}
+            onClick={() => !disabled && onChange(id)}
+            disabled={disabled}
             onMouseEnter={() => setHoveredId(id)}
             onMouseLeave={() => setHoveredId(null)}
             aria-label={label}
@@ -333,7 +337,19 @@ function AppContent() {
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [overlayEntry, setOverlayEntry] = useState<Entry | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const gridRef = useRef<HTMLElement>(null)
+  const profileMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+        setProfileMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const filteredEntries = useMemo(() => {
     const byType =
@@ -347,8 +363,10 @@ function AppContent() {
         entry.title.toLowerCase().includes(q) ||
         entry.creator.toLowerCase().includes(q) ||
         entry.provider.toLowerCase().includes(q) ||
+        (entry.genre && entry.genre.toLowerCase().includes(q)) ||
         entry.favoritePassage.toLowerCase().includes(q) ||
-        entry.reflection.toLowerCase().includes(q)
+        entry.reflection.toLowerCase().includes(q) ||
+        'jimboii'.includes(q)
     )
   }, [entries, query, typeFilter])
 
@@ -450,57 +468,71 @@ function AppContent() {
               <h1 className="commonplace-title">The Commonplace.</h1>
             </div>
             <div className="header-actions">
-              <button
-                className="hdr-icon-btn"
-                type="button"
-                aria-label="Search"
-                onClick={() => setSearchOpen((v) => !v)}
-              >
-                <Search aria-hidden="true" />
-              </button>
-              <button
-                className="hdr-icon-btn"
-                type="button"
-                aria-label="Menu"
-              >
-                <Ellipsis aria-hidden="true" />
-              </button>
+              <div className={`hdr-search-box ${searchOpen ? 'open' : ''}`}>
+                <button
+                  className="hdr-icon-btn"
+                  type="button"
+                  aria-label="Search"
+                  onClick={() => setSearchOpen((v) => !v)}
+                  title="Search entries"
+                >
+                  <Search aria-hidden="true" />
+                </button>
+                {searchOpen && (
+                  <input
+                    type="text"
+                    className="hdr-search-input"
+                    value={query}
+                    onChange={(e) => handleQueryChange(e.target.value)}
+                    placeholder="Search title, user, author…"
+                    aria-label="Search entries"
+                    autoFocus
+                  />
+                )}
+              </div>
+
+              <div className="profile-menu-wrapper" ref={profileMenuRef}>
+                <button
+                  className="profile-avatar-btn"
+                  type="button"
+                  aria-label="User Profile & Settings"
+                  title="User Profile & Settings"
+                  onClick={() => setProfileMenuOpen((v) => !v)}
+                >
+                  <User aria-hidden="true" />
+                </button>
+
+                {profileMenuOpen && (
+                  <div className="profile-dropdown-menu">
+                    <div className="menu-header">
+                      <span className="menu-user-name">jimboii</span>
+                      <span className="menu-user-role">Catalog Collector</span>
+                    </div>
+                    <div className="menu-divider" />
+                    <div className="menu-stats">
+                      <span>Total Entries: {entries.length}</span>
+                    </div>
+                    <div className="menu-divider" />
+                    <button
+                      type="button"
+                      className="menu-item danger"
+                      onClick={() => {
+                        if (window.confirm('Clear all entries from local storage?')) {
+                          setEntries([])
+                          localStorage.removeItem('the-commonplace.entries')
+                          setProfileMenuOpen(false)
+                        }
+                      }}
+                    >
+                      <Trash2 aria-hidden="true" />
+                      <span>Clear All Data</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <div className="header-rule" />
-
-          {/* Search bar (collapsible) */}
-          <AnimatePresence initial={false}>
-            {searchOpen && (
-              <motion.div
-                className="search-bar"
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <Search aria-hidden="true" />
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(e) => handleQueryChange(e.target.value)}
-                  placeholder="Search title, creator, passage…"
-                  aria-label="Search entries"
-                  autoFocus
-                />
-                {query && (
-                  <button
-                    type="button"
-                    className="search-clear"
-                    onClick={() => handleQueryChange('')}
-                    aria-label="Clear search"
-                  >
-                    <X aria-hidden="true" />
-                  </button>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
 
           {/* Type filter tabs */}
           <div className="filter-row">
@@ -926,62 +958,68 @@ function EntryComposer({
             <div className="form-grid">
               <label>
                 <span>Type</span>
-                <TypeIconBar value={draft.type} onChange={changeType} />
+                <TypeIconBar
+                  value={draft.type}
+                  onChange={changeType}
+                  disabled={Boolean(entry)}
+                />
               </label>
 
-              <label className="metadata-search-field">
-                <span>Select {draft.type === 'tv' ? 'a show' : `a ${draft.type}`}</span>
-                <input
-                  value={metadataQuery}
-                  onChange={(event) => updateMetadataQuery(event.target.value)}
-                  placeholder={`Search ${getTypeMeta(draft.type).label.toLowerCase()}`}
-                />
-                {metadataQuery.trim().length >= 2 && (
-                  <div className="metadata-dropdown">
-                    {searchStatus === 'searching' && (
-                      <p className="metadata-status searching">
-                        <Loader2 className="spin-icon" aria-hidden="true" />
-                        <span>Searching metadata…</span>
-                      </p>
-                    )}
-                    {searchStatus !== 'searching' && statusMessage && (
-                      <p className="metadata-status">{statusMessage}</p>
-                    )}
-                    {searchStatus === 'ready' && metadataResults.map((result) => (
-                      <button
-                        className={
-                          result.providerId === draft.providerId
-                            ? 'metadata-option selected'
-                            : 'metadata-option'
-                        }
-                        key={result.id}
-                        type="button"
-                        onClick={() => selectMetadata(result)}
-                      >
-                        <span
+              {!entry && (
+                <label className="metadata-search-field">
+                  <span>Select {draft.type === 'tv' ? 'a show' : `a ${draft.type}`}</span>
+                  <input
+                    value={metadataQuery}
+                    onChange={(event) => updateMetadataQuery(event.target.value)}
+                    placeholder={`Search ${getTypeMeta(draft.type).label.toLowerCase()}`}
+                  />
+                  {metadataQuery.trim().length >= 2 && (
+                    <div className="metadata-dropdown">
+                      {searchStatus === 'searching' && (
+                        <p className="metadata-status searching">
+                          <Loader2 className="spin-icon" aria-hidden="true" />
+                          <span>Searching metadata…</span>
+                        </p>
+                      )}
+                      {searchStatus !== 'searching' && statusMessage && (
+                        <p className="metadata-status">{statusMessage}</p>
+                      )}
+                      {searchStatus === 'ready' && metadataResults.map((result) => (
+                        <button
                           className={
-                            usesSquareArtwork(result.type)
-                              ? 'metadata-thumb metadata-thumb--square'
-                              : 'metadata-thumb'
+                            result.providerId === draft.providerId
+                              ? 'metadata-option selected'
+                              : 'metadata-option'
                           }
+                          key={result.id}
+                          type="button"
+                          onClick={() => selectMetadata(result)}
                         >
-                          {result.coverUrl ? (
-                            <img src={result.coverUrl} alt="" />
-                          ) : (
-                            <Search aria-hidden="true" />
-                          )}
-                        </span>
-                        <span className="metadata-option-copy">
-                          <strong>{result.title}</strong>
-                          <span className="metadata-type-line">
-                            <span>{[result.creator, result.provider || result.genre].filter(Boolean).join(' • ')}</span>
+                          <span
+                            className={
+                              usesSquareArtwork(result.type)
+                                ? 'metadata-thumb metadata-thumb--square'
+                                : 'metadata-thumb'
+                            }
+                          >
+                            {result.coverUrl ? (
+                              <img src={result.coverUrl} alt="" />
+                            ) : (
+                              <Search aria-hidden="true" />
+                            )}
                           </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </label>
+                          <span className="metadata-option-copy">
+                            <strong>{result.title}</strong>
+                            <span className="metadata-type-line">
+                              <span>{[result.creator, result.provider || result.genre].filter(Boolean).join(' • ')}</span>
+                            </span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </label>
+              )}
             </div>
 
             {draft.title ? (

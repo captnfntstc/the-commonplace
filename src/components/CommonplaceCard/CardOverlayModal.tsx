@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { FormattedText, stripHtmlAlignment } from './FormattedText'
 import { StarRating } from './CardHeader'
+import { getDropCapParts } from './variants/HybridScrollVariant'
 
 export interface OverlayEntry {
   id: string
@@ -76,6 +77,9 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   const wordCount = cleanText.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length
   const readTimeMin = Math.max(1, Math.ceil(wordCount / 180))
 
+  const showDropCap = Boolean(entry.enableDropCap)
+  const { firstChar, restText, isEmoji, isLowercase } = getDropCapParts(entry.reflection)
+
   return (
     <AnimatePresence>
       <div className="overlay-modal-root">
@@ -138,12 +142,12 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
             <div className="overlay-card-details">
               <h2 className="overlay-title">{entry.title}</h2>
               {entry.creator && (
-                <p className="overlay-creator">by {entry.creator}</p>
+                <p className="overlay-creator">{entry.creator}</p>
               )}
               {entry.genre && (
                 <span className="overlay-genre-pill">{entry.genre}</span>
               )}
-              {entry.provider && (
+              {entry.provider && entry.provider !== 'Manual' && (
                 <p className="overlay-provider">
                   {entry.provider} {entry.year ? `(${entry.year})` : ''}
                 </p>
@@ -158,7 +162,18 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
           )}
 
           <div className="overlay-reflection-body">
-            <FormattedText text={entry.reflection} align={entry.reflectionAlign} />
+            {showDropCap ? (
+              <div className="dropcap-container">
+                <span className={`dropcap-letter ${isEmoji ? 'is-emoji' : ''} ${isLowercase ? 'is-lowercase' : ''}`}>
+                  {firstChar}
+                </span>
+                <span className="dropcap-body">
+                  <FormattedText text={restText} align={entry.reflectionAlign} />
+                </span>
+              </div>
+            ) : (
+              <FormattedText text={entry.reflection} align={entry.reflectionAlign} />
+            )}
           </div>
         </motion.div>
       </div>

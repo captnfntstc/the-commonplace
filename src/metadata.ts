@@ -59,6 +59,112 @@ type TmdbItem = {
   first_air_date?: string
   overview?: string
   poster_path?: string
+  genre_ids?: number[]
+}
+
+const tmdbGenreMap: Record<number, string> = {
+  28: 'Action',
+  12: 'Adventure',
+  16: 'Animation',
+  35: 'Comedy',
+  80: 'Crime',
+  99: 'Documentary',
+  18: 'Drama',
+  10751: 'Family',
+  14: 'Fantasy',
+  36: 'History',
+  27: 'Horror',
+  10402: 'Music',
+  9648: 'Mystery',
+  10749: 'Romance',
+  878: 'Sci-Fi',
+  10770: 'TV Movie',
+  53: 'Thriller',
+  10752: 'War',
+  37: 'Western',
+  10759: 'Action & Adventure',
+  10762: 'Kids',
+  10765: 'Sci-Fi & Fantasy',
+}
+
+async function fetchWikiCreator(
+  title: string,
+  type: 'film' | 'tv',
+  signal?: AbortSignal,
+): Promise<string> {
+  try {
+    const url = new URL('https://en.wikipedia.org/w/api.php')
+    url.searchParams.set('action', 'query')
+    url.searchParams.set(
+      'titles',
+      type === 'film' ? `${title} (film)|${title}` : `${title} (TV series)|${title}`,
+    )
+    url.searchParams.set('prop', 'extracts')
+    url.searchParams.set('exintro', '1')
+    url.searchParams.set('explaintext', '1')
+    url.searchParams.set('format', 'json')
+    url.searchParams.set('origin', '*')
+
+    const res = await fetch(url, { signal })
+    if (!res.ok) return ''
+    const data = (await res.json()) as any
+    const pages = data.query?.pages
+    if (!pages) return ''
+    const page = Object.values(pages)[0] as { extract?: string }
+    const text = page?.extract || ''
+
+    if (type === 'film') {
+      const directorMatch = text.match(/directed by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i)
+      if (directorMatch?.[1]) return directorMatch[1]
+    } else {
+      const creatorMatch = text.match(/created by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i)
+      if (creatorMatch?.[1]) return creatorMatch[1]
+    }
+  } catch {
+    // fallback empty
+  }
+  return ''
+}
+
+export async function fetchTmdbCreator(
+  type: 'film' | 'tv',
+  id: number,
+  title?: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (tmdbToken) {
+    try {
+      if (type === 'film') {
+        const url = `https://api.themoviedb.org/3/movie/${id}/credits`
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${tmdbToken}`, accept: 'application/json' },
+          signal,
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const director = (data.crew ?? []).find((c: any) => c.job === 'Director')?.name
+          if (director) return director
+        }
+      } else {
+        const url = `https://api.themoviedb.org/3/tv/${id}`
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${tmdbToken}`, accept: 'application/json' },
+          signal,
+        })
+        if (res.ok) {
+          const data = await res.json()
+          const creators = (data.created_by ?? []).map((c: any) => c.name).filter(Boolean)
+          if (creators.length > 0) return creators.join(', ')
+        }
+      }
+    } catch {
+      // fallback to wiki
+    }
+  }
+  if (title) {
+    return fetchWikiCreator(title, type, signal)
+  }
+  return ''
 }
 
 type MBArtistCredit = Array<{ name?: string; artist?: { name?: string } }>
@@ -309,24 +415,36 @@ async function searchTmdb(
       throw new Error('TMDB API search failed. Please check your TMDB Access Token.')
     }
     const data = (await res.json()) as { results?: TmdbItem[] }
-    const results = (data.results ?? []).slice(0, 8).map((item) => {
-      const date = type === 'film' ? item.release_date : item.first_air_date
-      const title = (type === 'film' ? item.title : item.name) ?? 'Untitled'
-      return {
-        id: `tmdb:${type}:${item.id}`,
-        type,
-        title,
-        creator: '',
-        provider: yearFrom(date) ?? '',
-        providerId: String(item.id),
-        genre: type === 'film' ? 'Film' : 'TV Show',
-        coverUrl: item.poster_path
-          ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
-          : undefined,
-        year: yearFrom(date),
-        summary: item.overview,
-      }
-    })
+    const rawItems = (data.results ?? []).slice(0, 8)
+
+    const results = await Promise.all(
+      rawItems.map(async (item) => {
+        const date = type === 'film' ? item.release_date : item.first_air_date
+        const title = (type === 'film' ? item.title : item.name) ?? 'Untitled'
+        const creatorStr = await fetchTmdbCreator(type, item.id, title, signal)
+        const primaryGenreId = item.genre_ids?.[0]
+        const genreName = primaryGenreId
+          ? tmdbGenreMap[primaryGenreId] || (type === 'film' ? 'Film' : 'TV Show')
+          : type === 'film'
+          ? 'Film'
+          : 'TV Show'
+
+        return {
+          id: `tmdb:${type}:${item.id}`,
+          type,
+          title,
+          creator: creatorStr,
+          provider: yearFrom(date) ?? '',
+          providerId: String(item.id),
+          genre: genreName,
+          coverUrl: item.poster_path
+            ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
+            : undefined,
+          year: yearFrom(date),
+          summary: item.overview,
+        }
+      })
+    )
 
     logApiCall({
       provider: 'TMDB',

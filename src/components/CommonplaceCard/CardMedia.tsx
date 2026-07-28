@@ -17,6 +17,24 @@ function usesSquareArtwork(type: string) {
   return type === 'album' || type === 'song'
 }
 
+function formatTvYear(year?: string): string | undefined {
+  if (!year) return undefined
+  if (year.includes('-') || year.includes('–')) return year
+  const numYear = parseInt(year, 10)
+  if (!isNaN(numYear) && numYear > 1900 && numYear <= new Date().getFullYear()) {
+    return `Since ${year}`
+  }
+  return year
+}
+
+function formatBookExtra(provider?: string, year?: string): string | undefined {
+  if (!provider || provider === 'Manual') return year
+  if (year && !provider.includes(year)) {
+    return `${provider} (${year})`
+  }
+  return provider
+}
+
 export const CardMedia: React.FC<CardMediaProps> = ({
   type,
   title,
@@ -28,6 +46,9 @@ export const CardMedia: React.FC<CardMediaProps> = ({
   typeIcon: Icon,
   onToggle,
 }) => {
+  const tvYearDisplay = formatTvYear(year)
+  const bookExtraDisplay = formatBookExtra(provider, year)
+
   return (
     <div className="card-body">
       <button
@@ -54,6 +75,7 @@ export const CardMedia: React.FC<CardMediaProps> = ({
           <>
             {creator && <p className="card-creator">{creator}</p>}
             {genre && <p className="card-genre">{genre}</p>}
+            {bookExtraDisplay && <p className="card-provider">{bookExtraDisplay}</p>}
           </>
         )}
 
@@ -61,6 +83,7 @@ export const CardMedia: React.FC<CardMediaProps> = ({
           <>
             {creator && <p className="card-creator">{creator}</p>}
             {genre && <p className="card-genre">{genre}</p>}
+            {year && <p className="card-provider">{year}</p>}
           </>
         )}
 
@@ -69,37 +92,32 @@ export const CardMedia: React.FC<CardMediaProps> = ({
             {creator && <p className="card-creator">{creator}</p>}
             {genre && <p className="card-genre">{genre}</p>}
             {provider && provider !== genre && provider !== year && (
-              <p className="card-album">{provider}</p>
+              <p className="card-provider">{provider}</p>
             )}
           </>
         )}
 
         {type === 'film' && (
           <>
+            {creator && <p className="card-creator">{creator}</p>}
             {genre && <p className="card-genre">{genre}</p>}
-            {(creator || year) && (
-              <p className="card-creator">
-                {creator || (year ? `Released ${year}` : '')}
-              </p>
-            )}
+            {year && <p className="card-provider">{year}</p>}
           </>
         )}
 
         {type === 'game' && (
           <>
-            {genre && <p className="card-genre">{genre}</p>}
             {creator && <p className="card-creator">{creator}</p>}
+            {genre && <p className="card-genre">{genre}</p>}
+            {year && <p className="card-provider">{year}</p>}
           </>
         )}
 
         {type === 'tv' && (
           <>
+            {creator && <p className="card-creator">{creator}</p>}
             {genre && <p className="card-genre">{genre}</p>}
-            {creator && (
-              <p className="card-cast">
-                <span className="meta-label">Cast:</span> {creator}
-              </p>
-            )}
+            {tvYearDisplay && <p className="card-provider">{tvYearDisplay}</p>}
           </>
         )}
       </div>
