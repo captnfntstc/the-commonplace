@@ -578,16 +578,42 @@ function AppContent() {
           })}
           {filteredEntries.length === 0 && (
             <div className="empty-state">
-              <BookOpen aria-hidden="true" />
-              <p>Nothing here yet.</p>
-              <button
-                className="primary-btn"
-                type="button"
-                onClick={() => openComposer()}
-              >
-                <Plus aria-hidden="true" />
-                <span>Add first entry</span>
-              </button>
+              <div className="empty-state-icon">
+                <BookOpen aria-hidden="true" />
+              </div>
+              {entries.length === 0 ? (
+                <>
+                  <h3 className="empty-state-title">Your commonplace is waiting.</h3>
+                  <p className="empty-state-subtitle">
+                    Catalog your favorite quotes, books, albums, films, songs, games, and personal reflections in one quiet place.
+                  </p>
+                  <button
+                    className="primary-btn"
+                    type="button"
+                    onClick={() => openComposer()}
+                  >
+                    <Plus aria-hidden="true" />
+                    <span>Add your first entry</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h3 className="empty-state-title">No entries found.</h3>
+                  <p className="empty-state-subtitle">
+                    No items match your search query or selected filter tab.
+                  </p>
+                  <button
+                    className="ghost-btn"
+                    type="button"
+                    onClick={() => {
+                      setQuery('')
+                      setTypeFilter('all')
+                    }}
+                  >
+                    <span>Reset Filters</span>
+                  </button>
+                </>
+              )}
             </div>
           )}
         </section>
