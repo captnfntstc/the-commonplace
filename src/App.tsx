@@ -1,11 +1,9 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   BookOpen,
-  ChevronDown,
   ChevronUp,
   Clapperboard,
   Disc3,
-  Edit3,
   Ellipsis,
   Gamepad2,
   Loader2,
@@ -15,9 +13,7 @@ import {
   Save,
   Search,
   Star,
-  Trash2,
   Tv,
-  User,
   X,
 } from 'lucide-react'
 import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -29,7 +25,11 @@ import {
   type MetadataType,
   searchMetadata,
 } from './metadata'
-
+import { ExpansionProvider, useCardExpansion } from './context/ExpansionContext'
+import { Card } from './components/CommonplaceCard/Card'
+import { FormattingToolbar } from './components/FormattingToolbar/FormattingToolbar'
+import { RichTextEditor } from './components/RichTextEditor/RichTextEditor'
+import { stripHtmlAlignment, type Alignment } from './components/CommonplaceCard/FormattedText'
 
 type EntryType = MetadataType
 
@@ -46,6 +46,8 @@ type Entry = {
   rating: number
   favoritePassage: string
   reflection: string
+  reflectionAlign?: Alignment
+  passageAlign?: Alignment
   year?: string
   coverUrl?: string
   summary?: string
@@ -102,6 +104,8 @@ const emptyDraft: EntryDraft = {
   rating: 4,
   favoritePassage: '',
   reflection: '',
+  reflectionAlign: 'left',
+  passageAlign: 'left',
   coverTone: 'gold',
 }
 
@@ -115,8 +119,20 @@ function loadEntries(): Entry[] {
   try {
     const parsed = JSON.parse(stored) as Entry[]
     if (!Array.isArray(parsed)) return []
-    // Filter out initial sample entries so user gets a clean slate
-    return parsed.filter((entry) => !sampleEntryIds.has(entry.id))
+    // Filter out initial sample entries and clean legacy HTML alignment tags
+    return parsed
+      .filter((entry) => !sampleEntryIds.has(entry.id))
+      .map((entry) => {
+        const { cleanText: cleanRef, align: refAlign } = stripHtmlAlignment(entry.reflection || '')
+        const { cleanText: cleanPas, align: pasAlign } = stripHtmlAlignment(entry.favoritePassage || '')
+        return {
+          ...entry,
+          reflection: cleanRef,
+          favoritePassage: cleanPas,
+          reflectionAlign: entry.reflectionAlign || refAlign || 'left',
+          passageAlign: entry.passageAlign || pasAlign || 'left',
+        }
+      })
   } catch {
     return []
   }
@@ -304,11 +320,12 @@ function TypeIconBar({
   )
 }
 
-function App() {
+function AppContent() {
   const [entries, setEntries] = useState<Entry[]>(loadEntries)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<EntryType | 'all'>('all')
-  const [expandedId, setExpandedId] = useState<string>('')
+  const { expandedCardId, setExpandedCardId, toggleCardExpanded } = useCardExpansion()
+
   const [composerOpen, setComposerOpen] = useState(false)
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -331,7 +348,7 @@ function App() {
     )
   }, [entries, query, typeFilter])
 
-  const masonryLayout = useMasonryLayout(gridRef, filteredEntries.length, expandedId)
+  const masonryLayout = useMasonryLayout(gridRef, filteredEntries.length, expandedCardId)
   const [isInitialRender, setIsInitialRender] = useState(true)
   const [isFilterSwitching, setIsFilterSwitching] = useState(false)
 
@@ -397,7 +414,7 @@ function App() {
           : entry,
       )
       saveEntries(nextEntries)
-      setExpandedId(editingEntry.id)
+      setExpandedCardId(editingEntry.id)
     } else {
       const newEntry: Entry = {
         ...draft,
@@ -406,7 +423,7 @@ function App() {
         updatedAt: timestamp,
       }
       saveEntries([newEntry, ...entries])
-      setExpandedId('')
+      setExpandedCardId('')
     }
 
     closeComposer()
@@ -415,7 +432,7 @@ function App() {
   const deleteEntry = (entryId: string) => {
     const nextEntries = entries.filter((entry) => entry.id !== entryId)
     saveEntries(nextEntries)
-    if (expandedId === entryId) setExpandedId('')
+    if (expandedCardId === entryId) setExpandedCardId('')
   }
 
   return (
@@ -524,6 +541,7 @@ function App() {
         >
           {filteredEntries.map((entry) => {
             const pos = masonryLayout?.positions.get(entry.id)
+            const typeMeta = getTypeMeta(entry.type)
             return (
               <div
                 key={entry.id}
@@ -541,14 +559,14 @@ function App() {
                   willChange: 'transform',
                 } : { width: '100%', marginBottom: 14 }}
               >
-                <EntryCard
+                <Card
                   entry={entry}
-                  expanded={expandedId === entry.id}
+                  expanded={expandedCardId === entry.id}
                   onDelete={() => deleteEntry(entry.id)}
                   onEdit={() => openComposer(entry)}
-                  onToggle={() =>
-                    setExpandedId((cur) => (cur === entry.id ? '' : entry.id))
-                  }
+                  onToggle={() => toggleCardExpanded(entry.id)}
+                  typeIcon={typeMeta.Icon}
+                  typeLabel={typeMeta.label}
                 />
               </div>
             )
@@ -615,188 +633,15 @@ function App() {
   )
 }
 
-function StarRating({ rating }: { rating: number }) {
+function App() {
   return (
-    <div className="star-rating" aria-label={`${rating} out of 5`}>
-      {Array.from({ length: 5 }, (_, i) => {
-        const fillPercent = Math.max(0, Math.min(1, rating - i)) * 100
-
-        return (
-          <span className="star-shell" key={i}>
-            <Star aria-hidden="true" className="star" />
-            <span className="star-fill" style={{ width: `${fillPercent}%` }}>
-              <Star aria-hidden="true" />
-            </span>
-          </span>
-        )
-      })}
-    </div>
+    <ExpansionProvider>
+      <AppContent />
+    </ExpansionProvider>
   )
 }
 
-function EntryCard({
-  entry,
-  expanded,
-  onDelete,
-  onEdit,
-  onToggle,
-}: {
-  entry: Entry
-  expanded: boolean
-  onDelete: () => void
-  onEdit: () => void
-  onToggle: () => void
-}) {
-  const { Icon } = getTypeMeta(entry.type)
 
-  return (
-    <article className={`entry-card tone-${entry.coverTone}`}>
-      {/* Card top row: avatar + username + stars + type icon */}
-      <div className="card-toprow">
-        <div className="card-user">
-          <div className="avatar" aria-hidden="true">
-            <User />
-          </div>
-          <span className="username">jimboii</span>
-          <StarRating rating={entry.rating} />
-        </div>
-        <div className="card-type-icon" aria-label={entry.type}>
-          <Icon aria-hidden="true" />
-        </div>
-      </div>
-
-      {/* Card body: artwork + meta */}
-      <div className="card-body">
-        <button
-          className={
-            usesSquareArtwork(entry.type)
-              ? 'card-artwork card-artwork--square'
-              : 'card-artwork'
-          }
-          type="button"
-          onClick={onToggle}
-          aria-label={`View details for ${entry.title}`}
-          tabIndex={-1}
-        >
-          {entry.coverUrl ? (
-            <img src={entry.coverUrl} alt="" />
-          ) : (
-            <Icon aria-hidden="true" className="artwork-icon" />
-          )}
-        </button>
-        <div className="card-meta">
-          <h2 className="card-title">{entry.title}</h2>
-
-          {entry.type === 'book' && (
-            <>
-              {entry.creator && <p className="card-creator">{entry.creator}</p>}
-              {entry.genre && <p className="card-genre">{entry.genre}</p>}
-            </>
-          )}
-
-          {entry.type === 'album' && (
-            <>
-              {entry.creator && <p className="card-creator">{entry.creator}</p>}
-              {entry.genre && <p className="card-genre">{entry.genre}</p>}
-            </>
-          )}
-
-          {entry.type === 'song' && (
-            <>
-              {entry.creator && <p className="card-creator">{entry.creator}</p>}
-              {entry.genre && <p className="card-genre">{entry.genre}</p>}
-              {entry.provider &&
-                entry.provider !== entry.genre &&
-                entry.provider !== entry.year && (
-                  <p className="card-album">{entry.provider}</p>
-                )}
-            </>
-          )}
-
-          {entry.type === 'film' && (
-            <>
-              {entry.genre && <p className="card-genre">{entry.genre}</p>}
-              {(entry.creator || entry.year) && (
-                <p className="card-creator">
-                  {entry.creator || (entry.year ? `Released ${entry.year}` : '')}
-                </p>
-              )}
-            </>
-          )}
-
-          {entry.type === 'game' && (
-            <>
-              {entry.genre && <p className="card-genre">{entry.genre}</p>}
-              {entry.creator && <p className="card-creator">{entry.creator}</p>}
-            </>
-          )}
-
-          {entry.type === 'tv' && (
-            <>
-              {entry.genre && <p className="card-genre">{entry.genre}</p>}
-              {entry.creator && (
-                <p className="card-cast">
-                  <span className="meta-label">Cast:</span> {entry.creator}
-                </p>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Favorite passage */}
-      {entry.favoritePassage && (
-        <button
-          className="card-passage"
-          type="button"
-          onClick={onToggle}
-          aria-expanded={expanded}
-        >
-          <span>{entry.favoritePassage}</span>
-        </button>
-      )}
-
-      {/* Hardware-accelerated zero-lag reflection expansion */}
-      <div className={expanded ? 'card-reflection expanded' : 'card-reflection'}>
-        <div className="reflection-inner">
-          <div className="reflection-text">{entry.reflection}</div>
-          <div className="card-actions">
-            <button
-              className="action-btn"
-              type="button"
-              onClick={onEdit}
-            >
-              <Edit3 aria-hidden="true" />
-              <span>Edit</span>
-            </button>
-            <button
-              className="action-btn danger"
-              type="button"
-              onClick={onDelete}
-            >
-              <Trash2 aria-hidden="true" />
-              <span>Delete</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Collapse / expand toggle at bottom */}
-      <button
-        className="card-toggle"
-        type="button"
-        onClick={onToggle}
-        aria-label={expanded ? 'Collapse' : 'Expand'}
-      >
-        {expanded ? (
-          <ChevronUp aria-hidden="true" />
-        ) : (
-          <ChevronDown aria-hidden="true" />
-        )}
-      </button>
-      </article>
-  )
-}
 
 function EntryComposer({
   entry,
@@ -817,6 +662,8 @@ function EntryComposer({
         rating: entry.rating,
         favoritePassage: entry.favoritePassage,
         reflection: entry.reflection,
+        reflectionAlign: entry.reflectionAlign || 'left',
+        passageAlign: entry.passageAlign || 'left',
         coverUrl: entry.coverUrl,
         summary: entry.summary,
         coverTone: entry.coverTone,
@@ -838,6 +685,13 @@ function EntryComposer({
   >('idle')
   const [lyrics, setLyrics] = useState('')
   const lyricsFetchId = useRef(0)
+  const reflectionRef = useRef<HTMLDivElement>(null)
+  const passageRef = useRef<HTMLDivElement>(null)
+  const [activeTarget, setActiveTarget] = useState<'reflection' | 'favoritePassage'>('reflection')
+
+  const activeRef = activeTarget === 'favoritePassage' ? passageRef : reflectionRef
+  const activeValue = activeTarget === 'favoritePassage' ? draft.favoritePassage : draft.reflection
+  const setActiveValue = (val: string) => setDraft((cur) => ({ ...cur, [activeTarget]: val }))
 
   const isMusicEntry = draft.type === 'song' || draft.type === 'album'
   const lyricLines = lyrics
@@ -1237,13 +1091,14 @@ function EntryComposer({
                     <X aria-hidden="true" />
                   </button>
                 </div>
-                <textarea
-                  name="favoritePassage"
+                <RichTextEditor
+                  editorRef={passageRef}
                   value={draft.favoritePassage}
-                  onChange={(e) =>
-                    setDraft((cur) => ({ ...cur, favoritePassage: e.target.value }))
+                  onFocus={() => setActiveTarget('favoritePassage')}
+                  onChange={(html) =>
+                    setDraft((cur) => ({ ...cur, favoritePassage: html }))
                   }
-                  rows={4}
+                  minHeight={100}
                   placeholder={
                     draft.type === 'album'
                       ? 'A lyric or line from this album that stayed with you…'
@@ -1262,28 +1117,37 @@ function EntryComposer({
               </button>
             )}
 
-            <label className="full-label composer-review">
-              <span>Review</span>
-              <textarea
-                name="reflection"
+            <div className="full-label composer-review">
+              <div className="passage-header">
+                <span>Review / Reflection</span>
+              </div>
+              <RichTextEditor
+                editorRef={reflectionRef}
                 value={draft.reflection}
-                onChange={(event) =>
-                  setDraft((cur) => ({ ...cur, reflection: event.target.value }))
+                onFocus={() => setActiveTarget('reflection')}
+                onChange={(html) =>
+                  setDraft((cur) => ({ ...cur, reflection: html }))
                 }
-                required
-                rows={8}
+                minHeight={180}
                 placeholder="What stayed with you?"
               />
-            </label>
+            </div>
 
             <div className="composer-actions">
-              <button className="ghost-btn" type="button" onClick={onClose}>
-                Cancel
-              </button>
-              <button className="primary-btn" type="submit">
-                <Save aria-hidden="true" />
-                <span>Publish</span>
-              </button>
+              <FormattingToolbar
+                editorRef={activeRef}
+                value={activeValue}
+                onChange={setActiveValue}
+              />
+              <div className="composer-action-btns">
+                <button className="ghost-btn" type="button" onClick={onClose}>
+                  Cancel
+                </button>
+                <button className="primary-btn" type="submit">
+                  <Save aria-hidden="true" />
+                  <span>Publish</span>
+                </button>
+              </div>
             </div>
           </section>
         </div>
