@@ -27,6 +27,7 @@ import {
 } from './metadata'
 import { ExpansionProvider, useCardExpansion } from './context/ExpansionContext'
 import { Card } from './components/CommonplaceCard/Card'
+import { CardOverlayModal } from './components/CommonplaceCard/CardOverlayModal'
 import { FormattingToolbar } from './components/FormattingToolbar/FormattingToolbar'
 import { RichTextEditor } from './components/RichTextEditor/RichTextEditor'
 import { stripHtmlAlignment, type Alignment } from './components/CommonplaceCard/FormattedText'
@@ -161,7 +162,7 @@ function getTypeMeta(type: EntryType) {
 // Expanding a card pushes only the cards below it in that column down.
 // Adding a new card at index 0 shifts all cards to the right across columns.
 
-const M_GAP = 32
+const M_GAP = 30
 const M_PAD_X = 40
 const M_PAD_TOP = 28
 
@@ -186,7 +187,7 @@ function getItemTargetHeight(item: HTMLElement, isExpanded: boolean): number {
   const collapsedH = card.offsetHeight > 0 ? card.offsetHeight - currentReflectionH : item.offsetHeight
 
   if (isExpanded) {
-    const reflectionH = reflectionInner ? reflectionInner.scrollHeight + 20 : 0
+    const reflectionH = reflectionInner ? reflectionInner.scrollHeight + 4 : 0
     return collapsedH + reflectionH
   }
 
@@ -330,6 +331,7 @@ function AppContent() {
 
   const [composerOpen, setComposerOpen] = useState(false)
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
+  const [overlayEntry, setOverlayEntry] = useState<Entry | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const gridRef = useRef<HTMLElement>(null)
 
@@ -567,6 +569,7 @@ function AppContent() {
                   onDelete={() => deleteEntry(entry.id)}
                   onEdit={() => openComposer(entry)}
                   onToggle={() => toggleCardExpanded(entry.id)}
+                  onExpandOverlay={() => setOverlayEntry(entry)}
                   typeIcon={typeMeta.Icon}
                   typeLabel={typeMeta.label}
                 />
@@ -588,6 +591,12 @@ function AppContent() {
             </div>
           )}
         </section>
+
+        {/* Reading Overlay Modal */}
+        <CardOverlayModal
+          entry={overlayEntry}
+          onClose={() => setOverlayEntry(null)}
+        />
       </main>
 
       {/* Floating action buttons stack */}

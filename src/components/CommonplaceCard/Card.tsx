@@ -34,6 +34,7 @@ interface CardProps {
   onDelete: () => void
   onEdit: () => void
   onToggle: () => void
+  onExpandOverlay?: () => void
   typeIcon: LucideIcon
   typeLabel: string
 }
@@ -44,6 +45,7 @@ export const Card: React.FC<CardProps> = ({
   onDelete,
   onEdit,
   onToggle,
+  onExpandOverlay,
   typeIcon,
   typeLabel,
 }) => {
@@ -89,6 +91,7 @@ export const Card: React.FC<CardProps> = ({
         expanded={expanded}
         onEdit={onEdit}
         onDelete={onDelete}
+        onExpandOverlay={onExpandOverlay}
       />
 
       {/* Card Toggle Button */}

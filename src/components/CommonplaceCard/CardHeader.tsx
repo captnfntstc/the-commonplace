@@ -8,7 +8,7 @@ interface CardHeaderProps {
   typeLabel: string
 }
 
-function StarRating({ rating }: { rating: number }) {
+export function StarRating({ rating }: { rating: number }) {
   return (
     <div className="star-rating" aria-label={`${rating} out of 5`}>
       {Array.from({ length: 5 }, (_, i) => {

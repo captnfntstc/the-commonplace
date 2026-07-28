@@ -9,6 +9,7 @@ interface CardReflectionProps {
   expanded: boolean
   onEdit: () => void
   onDelete: () => void
+  onExpandOverlay?: () => void
 }
 
 export const CardReflection: React.FC<CardReflectionProps> = ({
@@ -18,6 +19,7 @@ export const CardReflection: React.FC<CardReflectionProps> = ({
   expanded,
   onEdit,
   onDelete,
+  onExpandOverlay,
 }) => {
   return (
     <HybridScrollVariant
@@ -27,6 +29,7 @@ export const CardReflection: React.FC<CardReflectionProps> = ({
       expanded={expanded}
       onEdit={onEdit}
       onDelete={onDelete}
+      onExpandOverlay={onExpandOverlay}
     />
   )
 }

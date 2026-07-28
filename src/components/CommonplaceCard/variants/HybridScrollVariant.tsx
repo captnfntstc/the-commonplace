@@ -1,5 +1,5 @@
 import React from 'react'
-import { Edit3, Trash2, Clock } from 'lucide-react'
+import { Edit3, Trash2, Clock, Maximize2 } from 'lucide-react'
 import { FormattedText, stripHtmlAlignment, type Alignment } from '../FormattedText'
 
 interface VariantProps {
@@ -9,6 +9,7 @@ interface VariantProps {
   expanded: boolean
   onEdit: () => void
   onDelete: () => void
+  onExpandOverlay?: () => void
 }
 
 export function getDropCapParts(text: string): {
@@ -106,6 +107,7 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
   expanded,
   onEdit,
   onDelete,
+  onExpandOverlay,
 }) => {
   const { cleanText } = stripHtmlAlignment(reflection)
   const wordCount = cleanText.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length
@@ -144,13 +146,34 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
         </div>
 
         <div className="card-actions">
-          <button className="action-btn" type="button" onClick={onEdit}>
+          {onExpandOverlay && (
+            <button
+              className="action-btn icon-only"
+              type="button"
+              onClick={onExpandOverlay}
+              title="View Reading Overlay"
+              aria-label="View Reading Overlay"
+            >
+              <Maximize2 aria-hidden="true" />
+            </button>
+          )}
+          <button
+            className="action-btn icon-only"
+            type="button"
+            onClick={onEdit}
+            title="Edit Entry"
+            aria-label="Edit Entry"
+          >
             <Edit3 aria-hidden="true" />
-            <span>Edit</span>
           </button>
-          <button className="action-btn danger" type="button" onClick={onDelete}>
+          <button
+            className="action-btn danger icon-only"
+            type="button"
+            onClick={onDelete}
+            title="Delete Entry"
+            aria-label="Delete Entry"
+          >
             <Trash2 aria-hidden="true" />
-            <span>Delete</span>
           </button>
         </div>
       </div>
