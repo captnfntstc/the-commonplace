@@ -5,6 +5,7 @@ import { FormattedText, stripHtmlAlignment, type Alignment } from '../FormattedT
 interface VariantProps {
   reflection: string
   reflectionAlign?: Alignment
+  enableDropCap?: boolean
   expanded: boolean
   onEdit: () => void
   onDelete: () => void
@@ -101,6 +102,7 @@ export function getDropCapParts(text: string): {
 export const HybridScrollVariant: React.FC<VariantProps> = ({
   reflection,
   reflectionAlign,
+  enableDropCap = false,
   expanded,
   onEdit,
   onDelete,
@@ -109,6 +111,7 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
   const wordCount = cleanText.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length
   const readTimeMin = Math.max(1, Math.ceil(wordCount / 180))
 
+  const showDropCap = Boolean(enableDropCap)
   const { firstChar, restText, isEmoji, isLowercase } = getDropCapParts(reflection)
 
   return (
@@ -123,14 +126,20 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
 
         <div className="scroll-container">
           <div className="reading-width-wrapper">
-            <div className="dropcap-container">
-              <span className={`dropcap-letter ${isEmoji ? 'is-emoji' : ''} ${isLowercase ? 'is-lowercase' : ''}`}>
-                {firstChar}
-              </span>
-              <span className="dropcap-body">
-                <FormattedText text={restText} align={reflectionAlign} />
-              </span>
-            </div>
+            {showDropCap ? (
+              <div className="dropcap-container">
+                <span className={`dropcap-letter ${isEmoji ? 'is-emoji' : ''} ${isLowercase ? 'is-lowercase' : ''}`}>
+                  {firstChar}
+                </span>
+                <span className="dropcap-body">
+                  <FormattedText text={restText} align={reflectionAlign} />
+                </span>
+              </div>
+            ) : (
+              <div className="standard-body">
+                <FormattedText text={reflection} align={reflectionAlign} />
+              </div>
+            )}
           </div>
         </div>
 

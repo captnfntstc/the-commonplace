@@ -19,6 +19,7 @@ export type CardEntry = {
   reflection: string
   reflectionAlign?: 'left' | 'center' | 'right' | 'justify'
   passageAlign?: 'left' | 'center' | 'right' | 'justify'
+  enableDropCap?: boolean
   year?: string
   coverUrl?: string
   summary?: string
@@ -84,6 +85,7 @@ export const Card: React.FC<CardProps> = ({
       <CardReflection
         reflection={entry.reflection}
         reflectionAlign={entry.reflectionAlign}
+        enableDropCap={entry.enableDropCap}
         expanded={expanded}
         onEdit={onEdit}
         onDelete={onDelete}

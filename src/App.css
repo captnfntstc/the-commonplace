@@ -1075,6 +1075,47 @@ textarea {
   margin-bottom: 10px !important;
 }
 
+.dropcap-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid rgba(201, 169, 110, 0.3);
+  border-radius: 6px;
+  background: rgba(201, 169, 110, 0.06);
+  color: var(--secondary);
+  font-family: var(--body);
+  font-size: 11px;
+  font-weight: 600;
+  transition: all 150ms ease;
+  cursor: pointer;
+}
+
+.dropcap-toggle-btn:hover {
+  background: rgba(201, 169, 110, 0.12);
+  color: var(--text-strong);
+}
+
+.dropcap-toggle-btn.active {
+  background: rgba(201, 169, 110, 0.18);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.dropcap-toggle-badge {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.dropcap-toggle-btn.active .dropcap-toggle-badge {
+  background: var(--accent);
+  color: #12100c;
+}
+
 .composer-review .rich-editor-wrapper {
   flex: 1;
   display: flex;
@@ -1877,43 +1918,48 @@ textarea {
 }
 
 .card-reflection .rich-rendered-text,
-.dropcap-body .rich-rendered-text {
+.dropcap-body .rich-rendered-text,
+.standard-body .rich-rendered-text {
   font-family: var(--display);
-  font-size: 14.5px;
+  font-size: 15px;
   color: var(--secondary);
-  line-height: 1.6;
-  text-align: justify;
-  text-align-last: left;
+  line-height: 1.68;
+  letter-spacing: 0;
+  word-spacing: 0.01em;
   text-justify: inter-word;
+  hyphens: manual;
+  -webkit-hyphens: manual;
 }
 
 .card-reflection .rich-rendered-text p,
 .card-reflection .rich-rendered-text div,
 .dropcap-body .rich-rendered-text p,
-.dropcap-body .rich-rendered-text div {
-  text-align: inherit;
-  text-align-last: left;
-  text-justify: inter-word;
-  margin-bottom: 0.6em;
+.dropcap-body .rich-rendered-text div,
+.standard-body .rich-rendered-text p,
+.standard-body .rich-rendered-text div {
+  margin-bottom: 0.75em;
 }
 
-/* Explicit alignment overrides from toolbar */
-.card-reflection [style*="text-align: left"],
-.dropcap-body [style*="text-align: left"] {
+/* Explicit alignment overrides from toolbar (Left, Center, Right, Justify) */
+[style*="text-align: left"],
+[style*="text-align:left"] {
   text-align: left !important;
-  text-align-last: left !important;
 }
 
-.card-reflection [style*="text-align: center"],
-.dropcap-body [style*="text-align: center"] {
+[style*="text-align: center"],
+[style*="text-align:center"] {
   text-align: center !important;
-  text-align-last: center !important;
 }
 
-.card-reflection [style*="text-align: right"],
-.dropcap-body [style*="text-align: right"] {
+[style*="text-align: right"],
+[style*="text-align:right"] {
   text-align: right !important;
-  text-align-last: right !important;
+}
+
+[style*="text-align: justify"],
+[style*="text-align:justify"] {
+  text-align: justify !important;
+  text-justify: inter-word;
 }
 
 /* Universal Reading Width Utility */
@@ -2728,6 +2774,13 @@ code.detail-value {
   background: rgba(201, 169, 110, 0.12);
   color: var(--text-strong);
   border-color: rgba(201, 169, 110, 0.3);
+}
+
+.toolbar-btn.active {
+  background: rgba(201, 169, 110, 0.28) !important;
+  color: #fff8ee !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 10px rgba(201, 169, 110, 0.35), inset 0 0 4px rgba(201, 169, 110, 0.2) !important;
 }
 
 .toolbar-divider {

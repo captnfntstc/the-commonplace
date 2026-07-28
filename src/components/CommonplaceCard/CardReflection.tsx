@@ -5,6 +5,7 @@ import { HybridScrollVariant } from './variants/HybridScrollVariant'
 interface CardReflectionProps {
   reflection: string
   reflectionAlign?: Alignment
+  enableDropCap?: boolean
   expanded: boolean
   onEdit: () => void
   onDelete: () => void
@@ -13,6 +14,7 @@ interface CardReflectionProps {
 export const CardReflection: React.FC<CardReflectionProps> = ({
   reflection,
   reflectionAlign,
+  enableDropCap,
   expanded,
   onEdit,
   onDelete,
@@ -21,6 +23,7 @@ export const CardReflection: React.FC<CardReflectionProps> = ({
     <HybridScrollVariant
       reflection={reflection}
       reflectionAlign={reflectionAlign}
+      enableDropCap={enableDropCap}
       expanded={expanded}
       onEdit={onEdit}
       onDelete={onDelete}

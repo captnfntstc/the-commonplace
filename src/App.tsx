@@ -48,6 +48,7 @@ type Entry = {
   reflection: string
   reflectionAlign?: Alignment
   passageAlign?: Alignment
+  enableDropCap?: boolean
   year?: string
   coverUrl?: string
   summary?: string
@@ -106,6 +107,7 @@ const emptyDraft: EntryDraft = {
   reflection: '',
   reflectionAlign: 'left',
   passageAlign: 'left',
+  enableDropCap: false,
   coverTone: 'gold',
 }
 
@@ -1138,6 +1140,13 @@ function EntryComposer({
                 editorRef={activeRef}
                 value={activeValue}
                 onChange={setActiveValue}
+                enableDropCap={Boolean(draft.enableDropCap)}
+                onToggleDropCap={() =>
+                  setDraft((cur) => ({
+                    ...cur,
+                    enableDropCap: !cur.enableDropCap,
+                  }))
+                }
               />
               <div className="composer-action-btns">
                 <button className="ghost-btn" type="button" onClick={onClose}>

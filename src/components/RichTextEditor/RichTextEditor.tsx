@@ -66,6 +66,31 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
       document.execCommand('underline', false)
       handleInput()
       document.dispatchEvent(new Event('selectionchange'))
+    } else if (!e.shiftKey && key === 'k') {
+      e.preventDefault()
+      const selection = window.getSelection()
+      let isLink = false
+      if (selection && selection.rangeCount > 0 && ref.current) {
+        let node: Node | null = selection.getRangeAt(0).commonAncestorContainer
+        while (node && node !== ref.current) {
+          if (node.nodeName.toLowerCase() === 'a') {
+            isLink = true
+            break
+          }
+          node = node.parentNode
+        }
+      }
+
+      if (isLink) {
+        document.execCommand('unlink', false)
+      } else {
+        const url = window.prompt('Enter link URL:', 'https://')
+        if (url && url.trim() && url !== 'https://') {
+          document.execCommand('createLink', false, url.trim())
+        }
+      }
+      handleInput()
+      document.dispatchEvent(new Event('selectionchange'))
     } else if (e.shiftKey && (e.key === '7' || e.code === 'Digit7' || e.key === '8' || e.code === 'Digit8')) {
       e.preventDefault()
       document.execCommand('insertUnorderedList', false)
