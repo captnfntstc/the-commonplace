@@ -6,6 +6,7 @@ interface CardHeaderProps {
   rating: number
   typeIcon: LucideIcon
   typeLabel: string
+  onOpenProfile?: () => void
 }
 
 export function StarRating({ rating }: { rating: number }) {
@@ -31,14 +32,26 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
   rating,
   typeIcon: Icon,
   typeLabel,
+  onOpenProfile,
 }) => {
   return (
     <div className="card-toprow">
-      <div className="card-user">
-        <div className="avatar" aria-hidden="true">
-          <User />
-        </div>
-        <span className="username">jimboii</span>
+      <div className="card-user-row">
+        <button
+          type="button"
+          className="card-user-btn"
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpenProfile?.()
+          }}
+          title="View jimboii's profile"
+          aria-label="View jimboii's profile"
+        >
+          <div className="avatar" aria-hidden="true">
+            <User />
+          </div>
+          <span className="username">jimboii</span>
+        </button>
         <StarRating rating={rating} />
       </div>
       <div className="card-type-icon" aria-label={typeLabel}>
@@ -47,3 +60,5 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
     </div>
   )
 }
+
+

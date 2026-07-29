@@ -1,0 +1,333 @@
+import React, { useState, useMemo, useRef, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import {
+  ArrowLeft,
+  User,
+  Search,
+  X,
+  BookOpen,
+  Disc3,
+  Clapperboard,
+  Gamepad2,
+  Music4,
+  Tv,
+  Calendar,
+  Star,
+  Edit3,
+  Layers,
+} from 'lucide-react'
+import { Card, type CardEntry } from '../components/CommonplaceCard/Card'
+import { useMasonryLayout } from '../hooks/useMasonryLayout'
+import { CardSkeletonGrid } from '../components/CommonplaceCard/CardSkeleton'
+import type { UserProfileState } from './SettingsPage'
+
+interface UserProfilePageProps {
+  onBack: () => void
+  entries: CardEntry[]
+  onSelectEntry?: (entry: CardEntry) => void
+  userProfile: UserProfileState
+  onNavigateToSettings: () => void
+  onDeleteEntry?: (id: string) => void
+  onEditEntry?: (entry: CardEntry) => void
+}
+
+export const UserProfilePage: React.FC<UserProfilePageProps> = ({
+  onBack,
+  entries,
+  onSelectEntry,
+  userProfile,
+  onNavigateToSettings,
+  onDeleteEntry,
+  onEditEntry,
+}) => {
+  const [profileSearchQuery, setProfileSearchQuery] = useState('')
+  const [profileCategoryFilter, setProfileCategoryFilter] = useState<string>('all')
+  const [expandedCardId, setExpandedCardId] = useState<string>('')
+  const [isFilterSwitching, setIsFilterSwitching] = useState(false)
+  const profileGridRef = useRef<HTMLElement>(null)
+
+  const booksCount = entries.filter((e) => e.type === 'book').length
+  const albumsCount = entries.filter((e) => e.type === 'album').length
+  const filmsCount = entries.filter((e) => e.type === 'film').length
+  const songsCount = entries.filter((e) => e.type === 'song').length
+  const gamesCount = entries.filter((e) => e.type === 'game').length
+  const showsCount = entries.filter((e) => e.type === 'tv').length
+
+  const avgRating =
+    entries.length > 0
+      ? (entries.reduce((acc, curr) => acc + curr.rating, 0) / entries.length).toFixed(1)
+      : '0.0'
+
+  const handleCategoryChange = (id: string) => {
+    if (id === profileCategoryFilter) return
+    setIsFilterSwitching(true)
+    setProfileCategoryFilter(id)
+  }
+
+  const handleSearchChange = (val: string) => {
+    setIsFilterSwitching(true)
+    setProfileSearchQuery(val)
+  }
+
+  const filteredProfileEntries = useMemo(() => {
+    let result = entries
+    if (profileCategoryFilter !== 'all') {
+      result = result.filter((e) => e.type === profileCategoryFilter)
+    }
+
+    if (!profileSearchQuery.trim()) return result
+
+    const q = profileSearchQuery.toLowerCase()
+    return result.filter(
+      (entry) =>
+        entry.title.toLowerCase().includes(q) ||
+        entry.creator.toLowerCase().includes(q) ||
+        entry.provider.toLowerCase().includes(q) ||
+        (entry.genre && entry.genre.toLowerCase().includes(q)) ||
+        entry.favoritePassage.toLowerCase().includes(q) ||
+        entry.reflection.toLowerCase().includes(q),
+    )
+  }, [entries, profileSearchQuery, profileCategoryFilter])
+
+  const masonryLayout = useMasonryLayout(
+    profileGridRef,
+    filteredProfileEntries.length,
+    expandedCardId,
+    profileCategoryFilter,
+  )
+
+  useEffect(() => {
+    if (masonryLayout) {
+      const timer = setTimeout(() => setIsFilterSwitching(false), 140)
+      return () => clearTimeout(timer)
+    }
+  }, [masonryLayout, profileCategoryFilter, profileSearchQuery])
+
+  const stats = [
+    { id: 'all', label: 'All', count: entries.length, Icon: Layers },
+    { id: 'album', label: 'Albums', count: albumsCount, Icon: Disc3 },
+    { id: 'book', label: 'Books', count: booksCount, Icon: BookOpen },
+    { id: 'film', label: 'Films', count: filmsCount, Icon: Clapperboard },
+    { id: 'game', label: 'Games', count: gamesCount, Icon: Gamepad2 },
+    { id: 'song', label: 'Songs', Icon: Music4, count: songsCount },
+    { id: 'tv', label: 'Shows', count: showsCount, Icon: Tv },
+  ]
+
+  const displayName = userProfile.showFullName
+    ? `${userProfile.firstName} ${userProfile.lastName}`.trim()
+    : userProfile.firstName
+  const handleFormatted = `@${userProfile.handle.replace(/^@/, '')}`
+
+  return (
+    <div className="page-wrapper profile-page-wrapper">
+      {/* Top Floating Circle Back Button */}
+      <button
+        type="button"
+        className="profile-back-circle"
+        onClick={onBack}
+        title="Back to Feed"
+        aria-label="Back to Feed"
+      >
+        <ArrowLeft aria-hidden="true" />
+      </button>
+
+      <div className="profile-page-container">
+        {/* Banner Hero */}
+        <div
+          className="profile-page-banner"
+          style={{
+            backgroundImage: userProfile.coverUrl
+              ? `linear-gradient(135deg, rgba(200, 162, 106, 0.2), rgba(15, 13, 10, 0.6)), url('${userProfile.coverUrl}')`
+              : undefined,
+          }}
+        >
+          <div className="profile-page-avatar">
+            {userProfile.avatarUrl ? (
+              <img src={userProfile.avatarUrl} alt={displayName} className="profile-avatar-img" />
+            ) : (
+              <User aria-hidden="true" />
+            )}
+          </div>
+
+          <button
+            type="button"
+            className="edit-profile-btn"
+            onClick={onNavigateToSettings}
+            title="Edit Profile Settings"
+          >
+            <Edit3 aria-hidden="true" />
+            <span>Edit Profile</span>
+          </button>
+        </div>
+
+        {/* Identity Details */}
+        <div className="profile-page-header">
+          <div className="profile-page-names">
+            <h1 className="profile-page-name">{displayName}</h1>
+            <span className="profile-page-handle">{handleFormatted}</span>
+          </div>
+
+          {userProfile.bio && (
+            <p className="profile-page-bio">{userProfile.bio}</p>
+          )}
+
+          {/* Inline Pill Container Badges */}
+          <div className="profile-pill-container">
+            <span className="profile-pill-badge">
+              <Calendar aria-hidden="true" />
+              <span>Member since July 2026</span>
+            </span>
+            <span className="profile-pill-badge rating">
+              <Star aria-hidden="true" />
+              <span>{avgRating} Avg Rating</span>
+            </span>
+          </div>
+        </div>
+
+        {/* Interactive Stats Grid (Clickable Filter Buttons) */}
+        <div className="profile-stats-grid">
+          {stats.map(({ id, label, count, Icon }) => {
+            const isActive = profileCategoryFilter === id
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`stat-card stat-btn ${isActive ? 'active' : ''}`}
+                onClick={() => handleCategoryChange(id)}
+              >
+                <div className="stat-icon-wrapper">
+                  <Icon aria-hidden="true" />
+                </div>
+                <span className="stat-value">{count}</span>
+                <span className="stat-label">{label}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="profile-section-divider" />
+
+        {/* Catalog Section */}
+        <section className="profile-catalog-section">
+          <div className="profile-catalog-header">
+            <h2 className="profile-catalog-title">
+              Reviewed Catalog ({filteredProfileEntries.length})
+            </h2>
+
+            {/* Compact Search Box */}
+            <div className="profile-search-box">
+              <Search aria-hidden="true" className="profile-search-icon" />
+              <input
+                type="text"
+                className="profile-search-input"
+                value={profileSearchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="Search profile"
+                aria-label="Search profile"
+              />
+              {profileSearchQuery && (
+                <button
+                  type="button"
+                  className="profile-search-clear"
+                  onClick={() => handleSearchChange('')}
+                  aria-label="Clear search"
+                >
+                  <X aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Skeleton Loading Grid with Fade In Animation */}
+          <AnimatePresence mode="wait">
+            {(isFilterSwitching || !masonryLayout) && filteredProfileEntries.length > 0 ? (
+              <motion.div
+                key="profile-skeleton"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+              >
+                <CardSkeletonGrid count={filteredProfileEntries.length > 6 ? 6 : Math.max(2, filteredProfileEntries.length)} />
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          {/* Review Cards Grid Reusing Home Card Component with True Masonry Layout & Fade In */}
+          {filteredProfileEntries.length === 0 ? (
+            <div className="profile-empty">
+              <BookOpen aria-hidden="true" />
+              <h3>No matching reviews found</h3>
+              <p>
+                {profileSearchQuery
+                  ? `No reviews match "${profileSearchQuery}" in ${displayName}'s profile.`
+                  : 'No entries cataloged in this category.'}
+              </p>
+            </div>
+          ) : (
+            <motion.section
+              key="profile-cards"
+              className="card-grid profile-masonry-grid"
+              ref={profileGridRef as React.RefObject<HTMLElement>}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: isFilterSwitching ? 0 : 1 }}
+              transition={{ duration: 0.22 }}
+              style={{
+                position: 'relative',
+                height: masonryLayout ? masonryLayout.height : 'auto',
+                minHeight: 320,
+              }}
+            >
+              {filteredProfileEntries.map((entry) => {
+                const pos = masonryLayout?.positions.get(entry.id)
+                const getMeta = () => {
+                  switch (entry.type) {
+                    case 'album': return { Icon: Disc3, label: 'Albums' }
+                    case 'book': return { Icon: BookOpen, label: 'Books' }
+                    case 'film': return { Icon: Clapperboard, label: 'Films' }
+                    case 'game': return { Icon: Gamepad2, label: 'Games' }
+                    case 'song': return { Icon: Music4, label: 'Songs' }
+                    case 'tv': return { Icon: Tv, label: 'Shows' }
+                    default: return { Icon: BookOpen, label: 'Books' }
+                  }
+                }
+                const { Icon, label } = getMeta()
+
+                return (
+                  <div
+                    key={entry.id}
+                    data-id={entry.id}
+                    className="masonry-item"
+                    style={pos ? {
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: pos.width,
+                      transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
+                      transition: 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
+                      willChange: 'transform',
+                    } : { width: '100%', marginBottom: 14 }}
+                  >
+                    <Card
+                      entry={entry}
+                      expanded={expandedCardId === entry.id}
+                      onDelete={() => onDeleteEntry?.(entry.id)}
+                      onEdit={() => onEditEntry?.(entry)}
+                      onToggle={() =>
+                        setExpandedCardId(expandedCardId === entry.id ? '' : entry.id)
+                      }
+                      onExpandOverlay={() => onSelectEntry?.(entry)}
+                      onOpenProfile={() => {}}
+                      typeIcon={Icon}
+                      typeLabel={label}
+                    />
+                  </div>
+                )
+              })}
+            </motion.section>
+          )}
+        </section>
+      </div>
+    </div>
+  )
+}

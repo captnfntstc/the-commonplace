@@ -1,4 +1,5 @@
 import React from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Edit3, Trash2, Clock, Maximize2 } from 'lucide-react'
 import { FormattedText, stripHtmlAlignment, type Alignment } from '../FormattedText'
 
@@ -117,66 +118,79 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
   const { firstChar, restText, isEmoji, isLowercase } = getDropCapParts(reflection)
 
   return (
-    <div className={`card-reflection ${expanded ? 'expanded' : ''} v12-hybrid-scroll`}>
-      <div className="reflection-inner">
-        <div className="article-badge-row">
-          <span className="article-tag">
-            <Clock aria-hidden="true" />
-            {readTimeMin} min read &bull; {wordCount} words
-          </span>
-        </div>
+    <AnimatePresence initial={false}>
+      {expanded && (
+        <motion.div
+          key="card-reflection"
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.32, ease: [0.2, 0, 0, 1] }}
+          className="card-reflection expanded v12-hybrid-scroll"
+          style={{ overflow: 'hidden' }}
+        >
+          <div className="reflection-inner">
+            <div className="article-badge-row">
+              <span className="article-tag">
+                <Clock aria-hidden="true" />
+                {readTimeMin} min read &bull; {wordCount} words
+              </span>
+            </div>
 
-        <div className="scroll-container">
-          <div className="reading-width-wrapper">
-            {showDropCap ? (
-              <div className="dropcap-container">
-                <span className={`dropcap-letter ${isEmoji ? 'is-emoji' : ''} ${isLowercase ? 'is-lowercase' : ''}`}>
-                  {firstChar}
-                </span>
-                <span className="dropcap-body">
-                  <FormattedText text={restText} align={reflectionAlign} />
-                </span>
+            <div className="scroll-container">
+              <div className="reading-width-wrapper">
+                {showDropCap ? (
+                  <div className="dropcap-container">
+                    <span className={`dropcap-letter ${isEmoji ? 'is-emoji' : ''} ${isLowercase ? 'is-lowercase' : ''}`}>
+                      {firstChar}
+                    </span>
+                    <span className="dropcap-body">
+                      <FormattedText text={restText} align={reflectionAlign} />
+                    </span>
+                  </div>
+                ) : (
+                  <div className="standard-body">
+                    <FormattedText text={reflection} align={reflectionAlign} />
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="standard-body">
-                <FormattedText text={reflection} align={reflectionAlign} />
-              </div>
-            )}
+            </div>
+
+            <div className="card-actions">
+              {onExpandOverlay && (
+                <button
+                  className="action-btn icon-only"
+                  type="button"
+                  onClick={onExpandOverlay}
+                  title="View Reading Overlay"
+                  aria-label="View Reading Overlay"
+                >
+                  <Maximize2 aria-hidden="true" />
+                </button>
+              )}
+              <button
+                className="action-btn icon-only"
+                type="button"
+                onClick={onEdit}
+                title="Edit Entry"
+                aria-label="Edit Entry"
+              >
+                <Edit3 aria-hidden="true" />
+              </button>
+              <button
+                className="action-btn danger icon-only"
+                type="button"
+                onClick={onDelete}
+                title="Delete Entry"
+                aria-label="Delete Entry"
+              >
+                <Trash2 aria-hidden="true" />
+              </button>
+            </div>
           </div>
-        </div>
-
-        <div className="card-actions">
-          {onExpandOverlay && (
-            <button
-              className="action-btn icon-only"
-              type="button"
-              onClick={onExpandOverlay}
-              title="View Reading Overlay"
-              aria-label="View Reading Overlay"
-            >
-              <Maximize2 aria-hidden="true" />
-            </button>
-          )}
-          <button
-            className="action-btn icon-only"
-            type="button"
-            onClick={onEdit}
-            title="Edit Entry"
-            aria-label="Edit Entry"
-          >
-            <Edit3 aria-hidden="true" />
-          </button>
-          <button
-            className="action-btn danger icon-only"
-            type="button"
-            onClick={onDelete}
-            title="Delete Entry"
-            aria-label="Delete Entry"
-          >
-            <Trash2 aria-hidden="true" />
-          </button>
-        </div>
-      </div>
-    </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }
+

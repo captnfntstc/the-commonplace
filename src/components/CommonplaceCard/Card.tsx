@@ -35,6 +35,7 @@ interface CardProps {
   onEdit: () => void
   onToggle: () => void
   onExpandOverlay?: () => void
+  onOpenProfile?: () => void
   typeIcon: LucideIcon
   typeLabel: string
 }
@@ -46,6 +47,7 @@ export const Card: React.FC<CardProps> = ({
   onEdit,
   onToggle,
   onExpandOverlay,
+  onOpenProfile,
   typeIcon,
   typeLabel,
 }) => {
@@ -56,6 +58,7 @@ export const Card: React.FC<CardProps> = ({
         rating={entry.rating}
         typeIcon={typeIcon}
         typeLabel={typeLabel}
+        onOpenProfile={onOpenProfile}
       />
 
       {/* Body: Artwork & Metadata */}

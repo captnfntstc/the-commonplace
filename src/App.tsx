@@ -13,6 +13,8 @@ import {
   Quote,
   Save,
   Search,
+  Settings,
+  LogOut,
   Star,
   Tv,
   X,
@@ -32,6 +34,10 @@ import { CardOverlayModal } from './components/CommonplaceCard/CardOverlayModal'
 import { FormattingToolbar } from './components/FormattingToolbar/FormattingToolbar'
 import { RichTextEditor } from './components/RichTextEditor/RichTextEditor'
 import { stripHtmlAlignment, type Alignment } from './components/CommonplaceCard/FormattedText'
+import { CardSkeletonGrid } from './components/CommonplaceCard/CardSkeleton'
+import { UserProfilePage } from './pages/UserProfilePage'
+import { SettingsPage, type UserProfileState } from './pages/SettingsPage'
+import { useMasonryLayout } from './hooks/useMasonryLayout'
 
 type EntryType = MetadataType
 
@@ -158,112 +164,6 @@ function getTypeMeta(type: EntryType) {
   return entryTypes.find((entryType) => entryType.id === type) ?? entryTypes[0]
 }
 
-// ─── Column-Based Dynamic Grid Layout ───────────────────────────────────────
-// Column length has no limit.
-// Expanding a card pushes only the cards below it in that column down.
-// Adding a new card at index 0 shifts all cards to the right across columns.
-
-const M_GAP = 30
-const M_PAD_X = 40
-const M_PAD_TOP = 28
-
-function getColumnCount(width: number): number {
-  if (width < 640) return 1
-  if (width < 960) return 2
-  if (width < 1280) return 3
-  return 4
-}
-
-type MasonryPos = { left: number; top: number; width: number }
-type MasonryLayout = { positions: Map<string, MasonryPos>; height: number } | null
-
-function getItemTargetHeight(item: HTMLElement, isExpanded: boolean): number {
-  const card = item.querySelector('.entry-card') as HTMLElement | null
-  if (!card) return item.offsetHeight
-
-  const reflection = card.querySelector('.card-reflection') as HTMLElement | null
-  const reflectionInner = card.querySelector('.reflection-inner') as HTMLElement | null
-
-  const currentReflectionH = reflection ? reflection.offsetHeight : 0
-  const collapsedH = card.offsetHeight > 0 ? card.offsetHeight - currentReflectionH : item.offsetHeight
-
-  if (isExpanded) {
-    const reflectionH = reflectionInner ? reflectionInner.scrollHeight + 4 : 0
-    return collapsedH + reflectionH
-  }
-
-  return collapsedH
-}
-
-function useMasonryLayout(
-  containerRef: React.RefObject<HTMLElement | null>,
-  itemCount: number,
-  expandedId?: string,
-): MasonryLayout {
-  const [layout, setLayout] = useState<MasonryLayout>(null)
-
-  useLayoutEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-
-    let frameId = 0
-    const recalculate = () => {
-      cancelAnimationFrame(frameId)
-      frameId = requestAnimationFrame(() => {
-        const items = Array.from(container.children).filter(
-          (el) => el.classList.contains('masonry-item'),
-        ) as HTMLElement[]
-        if (items.length === 0) {
-          setLayout(null)
-          return
-        }
-
-        const w = container.clientWidth
-        const numCols = getColumnCount(w)
-        const colWidth = (w - M_PAD_X * 2 - M_GAP * (numCols - 1)) / numCols
-        const heights = Array<number>(numCols).fill(M_PAD_TOP)
-        const positions = new Map<string, MasonryPos>()
-
-        items.forEach((item, index) => {
-          const id = item.dataset.id
-          if (!id) return
-          const col = index % numCols
-          const isExpanded = id === expandedId
-
-          item.style.width = `${colWidth}px`
-
-          const itemHeight = getItemTargetHeight(item, isExpanded)
-
-          positions.set(id, {
-            left: M_PAD_X + col * (colWidth + M_GAP),
-            top: heights[col],
-            width: colWidth,
-          })
-          heights[col] += itemHeight + M_GAP
-        })
-
-        setLayout({ positions, height: Math.max(...heights) + 80 })
-      })
-    }
-
-    const ro = new ResizeObserver(recalculate)
-    ro.observe(container)
-
-    container.addEventListener('load', recalculate, true)
-
-    recalculate()
-
-    return () => {
-      ro.disconnect()
-      container.removeEventListener('load', recalculate, true)
-      cancelAnimationFrame(frameId)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef, itemCount, expandedId])
-
-  return layout
-}
-
 function draftFromMetadata(
   result: MetadataResult,
   current: EntryDraft,
@@ -288,56 +188,30 @@ function draftFromMetadata(
   }
 }
 
-function TypeIconBar({
-  value,
-  onChange,
-  disabled = false,
-}: {
-  value: EntryType
-  onChange: (type: EntryType) => void
-  disabled?: boolean
-}) {
-  const [hoveredId, setHoveredId] = useState<string | null>(null)
-
-  return (
-    <div className={`type-icon-bar ${disabled ? 'disabled' : ''}`} role="radiogroup" aria-label="Select type">
-      {entryTypes.map(({ id, label, Icon }) => {
-        const isSelected = id === value
-        const isHovered = hoveredId === id
-
-        return (
-          <button
-            key={id}
-            type="button"
-            className={`type-icon-btn ${isSelected ? 'active' : ''}`}
-            onClick={() => !disabled && onChange(id)}
-            disabled={disabled}
-            onMouseEnter={() => setHoveredId(id)}
-            onMouseLeave={() => setHoveredId(null)}
-            aria-label={label}
-            aria-checked={isSelected}
-            role="radio"
-          >
-            <Icon aria-hidden="true" />
-            {isHovered && <span className="type-icon-tooltip">{label}</span>}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 function AppContent() {
   const [entries, setEntries] = useState<Entry[]>(loadEntries)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<EntryType | 'all'>('all')
   const { expandedCardId, setExpandedCardId, toggleCardExpanded } = useCardExpansion()
 
+  const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings'>('feed')
+  const [userProfile, setUserProfile] = useState<UserProfileState>({
+    firstName: 'Jimmy',
+    lastName: 'Boy',
+    showFullName: true,
+    handle: 'jimboii',
+    email: 'jimboii@commonplace.app',
+    bio: 'Collector of timeless passages, album impressions, cinematic notes, and personal reflections in one quiet place.',
+    avatarUrl: '',
+    coverUrl: 'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?q=80&w=1200&auto=format&fit=crop',
+    lastUsernameChangeDate: '2026-07-01T00:00:00.000Z',
+  })
   const [composerOpen, setComposerOpen] = useState(false)
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [overlayEntry, setOverlayEntry] = useState<Entry | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const [isLoggedOut, setIsLoggedOut] = useState(false)
   const gridRef = useRef<HTMLElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
 
@@ -366,11 +240,11 @@ function AppContent() {
         (entry.genre && entry.genre.toLowerCase().includes(q)) ||
         entry.favoritePassage.toLowerCase().includes(q) ||
         entry.reflection.toLowerCase().includes(q) ||
-        'jimboii'.includes(q)
+        userProfile.name.toLowerCase().includes(q)
     )
-  }, [entries, query, typeFilter])
+  }, [entries, query, typeFilter, userProfile.name])
 
-  const masonryLayout = useMasonryLayout(gridRef, filteredEntries.length, expandedCardId)
+  const masonryLayout = useMasonryLayout(gridRef, filteredEntries.length, expandedCardId, activeView)
   const [isInitialRender, setIsInitialRender] = useState(true)
   const [isFilterSwitching, setIsFilterSwitching] = useState(false)
 
@@ -390,7 +264,7 @@ function AppContent() {
       const timer = setTimeout(() => {
         setIsInitialRender(false)
         setIsFilterSwitching(false)
-      }, 100)
+      }, 120)
       return () => clearTimeout(timer)
     }
   }, [masonryLayout, typeFilter, query])
@@ -398,6 +272,13 @@ function AppContent() {
   const saveEntries = (nextEntries: Entry[]) => {
     setEntries(nextEntries)
     localStorage.setItem(storageKey, JSON.stringify(nextEntries))
+  }
+
+  const handleLogout = () => {
+    if (window.confirm(`Log out of ${userProfile.name} session?`)) {
+      setIsLoggedOut(true)
+      setProfileMenuOpen(false)
+    }
   }
 
   const [showScrollTop, setShowScrollTop] = useState(false)
@@ -457,6 +338,35 @@ function AppContent() {
     if (expandedCardId === entryId) setExpandedCardId('')
   }
 
+  // Render Standalone Pages
+  if (activeView === 'profile') {
+    return (
+      <UserProfilePage
+        onBack={() => setActiveView('feed')}
+        entries={entries}
+        onSelectEntry={(entry) => setOverlayEntry(entry)}
+        userProfile={userProfile}
+        onNavigateToSettings={() => setActiveView('settings')}
+        onDeleteEntry={(id) => deleteEntry(id)}
+        onEditEntry={(entry) => openComposer(entry)}
+      />
+    )
+  }
+
+  if (activeView === 'settings') {
+    return (
+      <SettingsPage
+        onBack={() => setActiveView('feed')}
+        onClearAllData={() => {
+          setEntries([])
+          localStorage.removeItem(storageKey)
+        }}
+        userProfile={userProfile}
+        onSaveProfile={(updated) => setUserProfile(updated)}
+      />
+    )
+  }
+
   return (
     <div className="app-shell">
       {/* Main content */}
@@ -474,20 +384,72 @@ function AppContent() {
                   type="button"
                   aria-label="Search"
                   onClick={() => setSearchOpen((v) => !v)}
-                  title="Search entries"
+                  title="Search entries and users"
                 >
                   <Search aria-hidden="true" />
                 </button>
                 {searchOpen && (
-                  <input
-                    type="text"
-                    className="hdr-search-input"
-                    value={query}
-                    onChange={(e) => handleQueryChange(e.target.value)}
-                    placeholder="Search title, user, author…"
-                    aria-label="Search entries"
-                    autoFocus
-                  />
+                  <>
+                    <input
+                      type="text"
+                      className="hdr-search-input"
+                      value={query}
+                      onChange={(e) => handleQueryChange(e.target.value)}
+                      placeholder="Search title, user, author…"
+                      aria-label="Search entries and users"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      className="hdr-search-close"
+                      title="Close search"
+                      aria-label="Close search"
+                      onClick={() => {
+                        setQuery('')
+                        setSearchOpen(false)
+                      }}
+                    >
+                      <X aria-hidden="true" />
+                    </button>
+                  </>
+                )}
+
+                {/* Search Dropdown with Users */}
+                {searchOpen && query.trim().length > 0 && (
+                  <div className="search-results-dropdown">
+                    <div className="search-dropdown-section">
+                      <span className="search-dropdown-header">Matching Users</span>
+                      {['jimboii', 'jim', 'user', 'collector', 'catalog'].some((term) =>
+                        'jimboii'.includes(query.toLowerCase()) || term.includes(query.toLowerCase())
+                      ) ? (
+                        <button
+                          type="button"
+                          className="search-user-item"
+                          onClick={() => {
+                            setActiveView('profile')
+                            setSearchOpen(false)
+                          }}
+                        >
+                          <div className="search-user-left">
+                            <div className="search-user-avatar">
+                              <User aria-hidden="true" />
+                            </div>
+                            <div className="search-user-info">
+                              <span className="search-user-name">
+                                {userProfile.showFullName ? `${userProfile.firstName} ${userProfile.lastName}` : userProfile.firstName}
+                              </span>
+                              <span className="search-user-handle">@{userProfile.handle.replace(/^@/, '')} &bull; {entries.length} reviews</span>
+                            </div>
+                          </div>
+                          <span className="search-user-action">View Profile</span>
+                        </button>
+                      ) : (
+                        <div style={{ padding: '6px', fontSize: '12px', color: 'var(--secondary)' }}>
+                          No users matching "{query}"
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -499,20 +461,60 @@ function AppContent() {
                   title="User Profile & Settings"
                   onClick={() => setProfileMenuOpen((v) => !v)}
                 >
-                  <User aria-hidden="true" />
+                  {userProfile.avatarUrl ? (
+                    <img src={userProfile.avatarUrl} alt="Avatar" className="profile-avatar-img-sm" />
+                  ) : (
+                    <User aria-hidden="true" />
+                  )}
                 </button>
 
                 {profileMenuOpen && (
                   <div className="profile-dropdown-menu">
-                    <div className="menu-header">
-                      <span className="menu-user-name">jimboii</span>
-                      <span className="menu-user-role">Catalog Collector</span>
-                    </div>
+                    <button
+                      type="button"
+                      className="menu-header"
+                      onClick={() => {
+                        setActiveView('profile')
+                        setProfileMenuOpen(false)
+                      }}
+                      title="View Profile"
+                    >
+                      <span className="menu-user-name">
+                        {userProfile.showFullName ? `${userProfile.firstName} ${userProfile.lastName}` : userProfile.firstName}
+                      </span>
+                    </button>
                     <div className="menu-divider" />
-                    <div className="menu-stats">
-                      <span>Total Entries: {entries.length}</span>
-                    </div>
+                    <button
+                      type="button"
+                      className="menu-item"
+                      onClick={() => {
+                        setActiveView('profile')
+                        setProfileMenuOpen(false)
+                      }}
+                    >
+                      <User aria-hidden="true" />
+                      <span>My Profile</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="menu-item"
+                      onClick={() => {
+                        setActiveView('settings')
+                        setProfileMenuOpen(false)
+                      }}
+                    >
+                      <Settings aria-hidden="true" />
+                      <span>Settings</span>
+                    </button>
                     <div className="menu-divider" />
+                    <button
+                      type="button"
+                      className="menu-item"
+                      onClick={handleLogout}
+                    >
+                      <LogOut aria-hidden="true" />
+                      <span>Logout</span>
+                    </button>
                     <button
                       type="button"
                       className="menu-item danger"
@@ -534,30 +536,52 @@ function AppContent() {
           </div>
           <div className="header-rule" />
 
-          {/* Type filter tabs */}
+          {/* Type filter tabs with animated pill */}
           <div className="filter-row">
             <nav className="type-tabs" aria-label="Filter by type">
               <button
-                className={typeFilter === 'all' ? 'tab active' : 'tab'}
+                className={`tab ${typeFilter === 'all' ? 'active' : ''}`}
                 type="button"
                 onClick={() => handleTypeFilterChange('all')}
               >
+                {typeFilter === 'all' && (
+                  <motion.div
+                    layoutId="activeFilterPill"
+                    className="active-tab-pill"
+                    transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                  />
+                )}
                 <span>All</span>
               </button>
-              {entryTypes.map(({ id, label, Icon }) => (
-                <button
-                  key={id}
-                  className={typeFilter === id ? 'tab active' : 'tab'}
-                  type="button"
-                  onClick={() => handleTypeFilterChange(id)}
-                >
-                  <Icon aria-hidden="true" />
-                  <span>{label}</span>
-                </button>
-              ))}
+              {entryTypes.map(({ id, label, Icon }) => {
+                const isActive = typeFilter === id
+                return (
+                  <button
+                    key={id}
+                    className={`tab ${isActive ? 'active' : ''}`}
+                    type="button"
+                    onClick={() => handleTypeFilterChange(id)}
+                  >
+                    {isActive && (
+                      <motion.div
+                        layoutId="activeFilterPill"
+                        className="active-tab-pill"
+                        transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                      />
+                    )}
+                    <Icon aria-hidden="true" />
+                    <span>{label}</span>
+                  </button>
+                )
+              })}
             </nav>
           </div>
         </header>
+
+        {/* Skeleton loading grid during filter switching or initialization */}
+        {(!masonryLayout || isFilterSwitching) && filteredEntries.length > 0 ? (
+          <CardSkeletonGrid count={filteredEntries.length > 6 ? 6 : Math.max(2, filteredEntries.length)} />
+        ) : null}
 
         {/* Card grid — JS absolute-position masonry, newest top-left */}
         <section
@@ -602,6 +626,7 @@ function AppContent() {
                   onEdit={() => openComposer(entry)}
                   onToggle={() => toggleCardExpanded(entry.id)}
                   onExpandOverlay={() => setOverlayEntry(entry)}
+                  onOpenProfile={() => setActiveView('profile')}
                   typeIcon={typeMeta.Icon}
                   typeLabel={typeMeta.label}
                 />
@@ -655,6 +680,39 @@ function AppContent() {
           entry={overlayEntry}
           onClose={() => setOverlayEntry(null)}
         />
+
+        {/* Logged Out Dialog */}
+        <AnimatePresence>
+          {isLoggedOut && (
+            <div className="modal-backdrop" onClick={() => setIsLoggedOut(false)}>
+              <motion.div
+                className="settings-modal"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="settings-header">
+                  <div className="settings-header-title">
+                    <LogOut aria-hidden="true" />
+                    <h2>Signed Out</h2>
+                  </div>
+                </div>
+                <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 20 }}>
+                  You have logged out of your session. Your local catalog entries remain safely preserved.
+                </p>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  style={{ width: '100%', justifyContent: 'center' }}
+                  onClick={() => setIsLoggedOut(false)}
+                >
+                  Log back in as jimboii
+                </button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </main>
 
       {/* Floating action buttons stack */}
