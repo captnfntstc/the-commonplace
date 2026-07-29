@@ -1,5 +1,3 @@
-import React from 'react'
-
 export function CardSkeleton() {
   return (
     <div className="entry-card skeleton-card">

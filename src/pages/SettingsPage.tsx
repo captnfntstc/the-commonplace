@@ -1,22 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import {
   ArrowLeft,
-  User,
   CheckCircle2,
   AlertCircle,
   Clock,
   ShieldCheck,
-  Disc3,
-  BookOpen,
-  Clapperboard,
-  Gamepad2,
   Trash2,
   Download,
   Lock,
-  Shield,
-  Bell,
-  Sliders,
-  Moon,
 } from 'lucide-react'
 import {
   LinkedAccountCard,
@@ -291,10 +282,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     onSaveProfile(updated)
     setSavedNotice(true)
     setTimeout(() => setSavedNotice(false), 3000)
-  }
-
-  const toggleAccount = (key: keyof typeof linkedAccounts) => {
-    setLinkedAccounts((prev) => ({ ...prev, [key]: !prev[key] }))
   }
 
   const computedDisplayName = showFullName ? `${firstName} ${lastName}`.trim() : firstName

@@ -19,7 +19,7 @@ import {
   Tv,
   X,
 } from 'lucide-react'
-import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
   fetchLyrics,
@@ -225,12 +225,18 @@ function AppContent() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  const userProfileName = userProfile.showFullName
+    ? `${userProfile.firstName} ${userProfile.lastName}`.trim()
+    : userProfile.firstName
+
   const filteredEntries = useMemo(() => {
-    const byType =
-      typeFilter === 'all'
-        ? entries
-        : entries.filter((entry) => entry.type === typeFilter)
+    let byType = entries
+    if (typeFilter !== 'all') {
+      byType = entries.filter((entry) => entry.type === typeFilter)
+    }
+
     if (!query.trim()) return byType
+
     const q = query.toLowerCase()
     return byType.filter(
       (entry) =>
@@ -240,9 +246,9 @@ function AppContent() {
         (entry.genre && entry.genre.toLowerCase().includes(q)) ||
         entry.favoritePassage.toLowerCase().includes(q) ||
         entry.reflection.toLowerCase().includes(q) ||
-        userProfile.name.toLowerCase().includes(q)
+        userProfileName.toLowerCase().includes(q)
     )
-  }, [entries, query, typeFilter, userProfile.name])
+  }, [entries, query, typeFilter, userProfileName])
 
   const masonryLayout = useMasonryLayout(gridRef, filteredEntries.length, expandedCardId, activeView)
   const [isInitialRender, setIsInitialRender] = useState(true)
@@ -275,7 +281,7 @@ function AppContent() {
   }
 
   const handleLogout = () => {
-    if (window.confirm(`Log out of ${userProfile.name} session?`)) {
+    if (window.confirm(`Log out of ${userProfileName} session?`)) {
       setIsLoggedOut(true)
       setProfileMenuOpen(false)
     }
@@ -768,7 +774,32 @@ function App() {
   )
 }
 
-
+function TypeIconBar({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: EntryType
+  onChange: (type: EntryType) => void
+  disabled?: boolean
+}) {
+  return (
+    <div className="preset-chips-row">
+      {entryTypes.map(({ id, label, Icon }) => (
+        <button
+          key={id}
+          type="button"
+          className={`filter-chip ${value === id ? 'active' : ''}`}
+          onClick={() => !disabled && onChange(id)}
+          disabled={disabled}
+        >
+          <Icon aria-hidden="true" className="chip-icon" />
+          <span>{label}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
 
 function EntryComposer({
   entry,

@@ -25,7 +25,7 @@ export type CardEntry = {
   summary?: string
   createdAt: string
   updatedAt: string
-  coverTone: string
+  coverTone: 'gold' | 'rose' | 'sage' | 'blue' | 'violet' | 'ember'
 }
 
 interface CardProps {
