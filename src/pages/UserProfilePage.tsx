@@ -29,6 +29,8 @@ interface UserProfilePageProps {
   onNavigateToSettings: () => void
   onDeleteEntry?: (id: string) => void
   onEditEntry?: (entry: CardEntry) => void
+  categoryFilter: string
+  onCategoryFilterChange: (id: string) => void
 }
 
 export const UserProfilePage: React.FC<UserProfilePageProps> = ({
@@ -39,9 +41,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onNavigateToSettings,
   onDeleteEntry,
   onEditEntry,
+  categoryFilter,
+  onCategoryFilterChange,
 }) => {
   const [profileSearchQuery, setProfileSearchQuery] = useState('')
-  const [profileCategoryFilter, setProfileCategoryFilter] = useState<string>('all')
+  const profileCategoryFilter = categoryFilter
+  const setProfileCategoryFilter = onCategoryFilterChange
   const [expandedCardId, setExpandedCardId] = useState<string>('')
   const [isFilterSwitching, setIsFilterSwitching] = useState(false)
   const profileGridRef = useRef<HTMLElement>(null)
@@ -119,7 +124,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const handleFormatted = `@${userProfile.handle.replace(/^@/, '')}`
 
   return (
-    <div className="page-wrapper profile-page-wrapper">
+    <motion.div
+      className="page-wrapper profile-page-wrapper"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.22, ease: 'easeOut' }}
+    >
       {/* Top Floating Circle Back Button */}
       <button
         type="button"
@@ -270,8 +280,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               className="card-grid profile-masonry-grid"
               ref={profileGridRef as React.RefObject<HTMLElement>}
               initial={{ opacity: 0 }}
-              animate={{ opacity: isFilterSwitching ? 0 : 1 }}
-              transition={{ duration: 0.22 }}
+              animate={{ opacity: (masonryLayout && !isFilterSwitching) ? 1 : 0 }}
+              transition={{ duration: 0.28 }}
               style={{
                 position: 'relative',
                 height: masonryLayout ? masonryLayout.height : 'auto',
@@ -328,6 +338,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           )}
         </section>
       </div>
-    </div>
+    </motion.div>
   )
 }

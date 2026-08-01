@@ -18,6 +18,7 @@ import {
   Star,
   Tv,
   X,
+  AlertCircle,
 } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
@@ -38,6 +39,72 @@ import { CardSkeletonGrid } from './components/CommonplaceCard/CardSkeleton'
 import { UserProfilePage } from './pages/UserProfilePage'
 import { SettingsPage, type UserProfileState } from './pages/SettingsPage'
 import { useMasonryLayout } from './hooks/useMasonryLayout'
+
+const WARN_UNRATED_KEY = 'the-commonplace.warn-unrated'
+
+function getWarnUnratedPreference(): boolean {
+  const stored = localStorage.getItem(WARN_UNRATED_KEY)
+  return stored === null ? true : stored !== 'false'
+}
+
+function setWarnUnratedPreference(val: boolean) {
+  localStorage.setItem(WARN_UNRATED_KEY, String(val))
+}
+
+function getMatchingLyricIndexes(lyricsText: string, favoritePassageText: string): number[] {
+  if (!lyricsText || !favoritePassageText) return []
+
+  const lyricLines = lyricsText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const cleanedPassage = favoritePassageText
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li)>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+
+  const passageLines = cleanedPassage
+    .split(/\r?\n/)
+    .map((line) => line.trim().toLowerCase())
+    .filter(Boolean)
+
+  if (passageLines.length === 0) return []
+
+  const matched: number[] = []
+  lyricLines.forEach((line, index) => {
+    const normLine = line.toLowerCase()
+    const isMatch = passageLines.some((pLine) => {
+      if (pLine === normLine) return true
+      if (pLine.length > 4 && normLine.length > 4) {
+        return pLine.includes(normLine) || normLine.includes(pLine)
+      }
+      return false
+    })
+    if (isMatch) {
+      matched.push(index)
+    }
+  })
+
+  return matched
+}
+
+function isDraftDirty(current: EntryDraft, base: EntryDraft): boolean {
+  return (
+    current.type !== base.type ||
+    current.title.trim() !== base.title.trim() ||
+    current.creator.trim() !== base.creator.trim() ||
+    current.rating !== base.rating ||
+    current.favoritePassage.trim() !== base.favoritePassage.trim() ||
+    current.reflection.trim() !== base.reflection.trim() ||
+    current.coverTone !== base.coverTone ||
+    current.enableDropCap !== base.enableDropCap
+  )
+}
 
 type EntryType = MetadataType
 
@@ -195,6 +262,7 @@ function AppContent() {
   const { expandedCardId, setExpandedCardId, toggleCardExpanded } = useCardExpansion()
 
   const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings'>('feed')
+  const [profileCategoryFilter, setProfileCategoryFilter] = useState<string>('all')
   const [userProfile, setUserProfile] = useState<UserProfileState>({
     firstName: 'Jimmy',
     lastName: 'Boy',
@@ -338,6 +406,15 @@ function AppContent() {
     closeComposer()
   }
 
+  const [deletingEntry, setDeletingEntry] = useState<Entry | null>(null)
+
+  const promptDeleteEntry = (entryId: string) => {
+    const target = entries.find((e) => e.id === entryId)
+    if (target) {
+      setDeletingEntry(target)
+    }
+  }
+
   const deleteEntry = (entryId: string) => {
     const nextEntries = entries.filter((entry) => entry.id !== entryId)
     saveEntries(nextEntries)
@@ -353,8 +430,10 @@ function AppContent() {
         onSelectEntry={(entry) => setOverlayEntry(entry)}
         userProfile={userProfile}
         onNavigateToSettings={() => setActiveView('settings')}
-        onDeleteEntry={(id) => deleteEntry(id)}
+        onDeleteEntry={(id) => promptDeleteEntry(id)}
         onEditEntry={(entry) => openComposer(entry)}
+        categoryFilter={profileCategoryFilter}
+        onCategoryFilterChange={setProfileCategoryFilter}
       />
     )
   }
@@ -545,6 +624,8 @@ function AppContent() {
           {/* Type filter tabs with animated pill */}
           <div className="filter-row">
             <nav className="type-tabs" aria-label="Filter by type">
+              {/* Always render the pill inside every tab button — visibility is toggled via opacity
+                  so Framer Motion's layoutId can animate it correctly without a double-render glitch */}
               <button
                 className={`tab ${typeFilter === 'all' ? 'active' : ''}`}
                 type="button"
@@ -554,7 +635,7 @@ function AppContent() {
                   <motion.div
                     layoutId="activeFilterPill"
                     className="active-tab-pill"
-                    transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                    transition={{ type: 'spring', stiffness: 380, damping: 36 }}
                   />
                 )}
                 <span>All</span>
@@ -572,7 +653,7 @@ function AppContent() {
                       <motion.div
                         layoutId="activeFilterPill"
                         className="active-tab-pill"
-                        transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                        transition={{ type: 'spring', stiffness: 380, damping: 36 }}
                       />
                     )}
                     <Icon aria-hidden="true" />
@@ -628,7 +709,7 @@ function AppContent() {
                 <Card
                   entry={entry}
                   expanded={expandedCardId === entry.id}
-                  onDelete={() => deleteEntry(entry.id)}
+                  onDelete={() => promptDeleteEntry(entry.id)}
                   onEdit={() => openComposer(entry)}
                   onToggle={() => toggleCardExpanded(entry.id)}
                   onExpandOverlay={() => setOverlayEntry(entry)}
@@ -686,6 +767,52 @@ function AppContent() {
           entry={overlayEntry}
           onClose={() => setOverlayEntry(null)}
         />
+
+        {/* Confirm Delete Card Modal */}
+        <AnimatePresence>
+          {deletingEntry && (
+            <div className="modal-backdrop" style={{ zIndex: 120 }} onClick={() => setDeletingEntry(null)}>
+              <motion.div
+                className="settings-modal"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="settings-header">
+                  <div className="settings-header-title">
+                    <Trash2 style={{ color: '#e57373' }} aria-hidden="true" />
+                    <h2>Delete Entry?</h2>
+                  </div>
+                </div>
+                <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 20 }}>
+                  Are you sure you want to delete <strong>"{deletingEntry.title}"</strong>? This action cannot be undone.
+                </p>
+                <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => setDeletingEntry(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="action-btn danger"
+                    onClick={() => {
+                      if (deletingEntry) {
+                        deleteEntry(deletingEntry.id)
+                        setDeletingEntry(null)
+                      }
+                    }}
+                  >
+                    Delete Entry
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* Logged Out Dialog */}
         <AnimatePresence>
@@ -784,17 +911,18 @@ function TypeIconBar({
   disabled?: boolean
 }) {
   return (
-    <div className="preset-chips-row">
+    <div className="type-icon-bar">
       {entryTypes.map(({ id, label, Icon }) => (
         <button
           key={id}
           type="button"
-          className={`filter-chip ${value === id ? 'active' : ''}`}
+          className={`type-icon-btn ${value === id ? 'active' : ''}`}
           onClick={() => !disabled && onChange(id)}
           disabled={disabled}
+          aria-label={label}
         >
-          <Icon aria-hidden="true" className="chip-icon" />
-          <span>{label}</span>
+          <Icon aria-hidden="true" style={{ width: 18, height: 18 }} />
+          <span className="type-icon-tooltip">{label}</span>
         </button>
       ))}
     </div>
@@ -842,6 +970,10 @@ function EntryComposer({
     'idle' | 'loading' | 'ready' | 'not-found'
   >('idle')
   const [lyrics, setLyrics] = useState('')
+  const [showUnratedConfirm, setShowUnratedConfirm] = useState(false)
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false)
+  const [dontShowAgain, setDontShowAgain] = useState(false)
+  const [pendingDraft, setPendingDraft] = useState<EntryDraft | null>(null)
   const lyricsFetchId = useRef(0)
   const reflectionRef = useRef<HTMLDivElement>(null)
   const passageRef = useRef<HTMLDivElement>(null)
@@ -851,11 +983,52 @@ function EntryComposer({
   const activeValue = activeTarget === 'favoritePassage' ? draft.favoritePassage : draft.reflection
   const setActiveValue = (val: string) => setDraft((cur) => ({ ...cur, [activeTarget]: val }))
 
+  const handleRequestClose = () => {
+    if (isDraftDirty(draft, initialDraft)) {
+      setShowDiscardConfirm(true)
+    } else {
+      onClose()
+    }
+  }
+
   const isMusicEntry = draft.type === 'song' || draft.type === 'album'
   const lyricLines = lyrics
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
+
+  useEffect(() => {
+    if (draft.type !== 'song' || !draft.title || !draft.creator) return
+    if (lyricsStatus !== 'idle') return
+
+    const fetchId = ++lyricsFetchId.current
+    setLyricsStatus('loading')
+    const abortController = new AbortController()
+
+    fetchLyrics(draft.creator, draft.title, abortController.signal)
+      .then((fetched) => {
+        if (lyricsFetchId.current !== fetchId) return
+        if (fetched) {
+          setLyrics(fetched)
+          setLyricsStatus('ready')
+
+          if (draft.favoritePassage) {
+            const matched = getMatchingLyricIndexes(fetched, draft.favoritePassage)
+            if (matched.length > 0) {
+              setSelectedLyricIndexes(matched)
+            }
+          }
+        } else {
+          setLyricsStatus('not-found')
+        }
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === 'AbortError') return
+        if (lyricsFetchId.current === fetchId) setLyricsStatus('not-found')
+      })
+
+    return () => abortController.abort()
+  }, [draft.type, draft.title, draft.creator, lyricsStatus, draft.favoritePassage])
 
   useEffect(() => {
     const normalizedQuery = metadataQuery.trim()
@@ -963,6 +1136,12 @@ function EntryComposer({
         if (fetched) {
           setLyrics(fetched)
           setLyricsStatus('ready')
+          if (draft.favoritePassage) {
+            const matched = getMatchingLyricIndexes(fetched, draft.favoritePassage)
+            if (matched.length > 0) {
+              setSelectedLyricIndexes(matched)
+            }
+          }
         } else {
           setLyricsStatus('not-found')
         }
@@ -998,7 +1177,7 @@ function EntryComposer({
       return
     }
 
-    onSave({
+    const finalDraft: EntryDraft = {
       ...draft,
       title: draft.title.trim(),
       creator: draft.creator.trim(),
@@ -1006,7 +1185,15 @@ function EntryComposer({
       providerId: draft.providerId.trim(),
       favoritePassage: draft.favoritePassage.trim(),
       reflection: draft.reflection.trim(),
-    })
+    }
+
+    if (draft.rating === 0 && getWarnUnratedPreference()) {
+      setPendingDraft(finalDraft)
+      setShowUnratedConfirm(true)
+      return
+    }
+
+    onSave(finalDraft)
   }
 
   return (
@@ -1015,7 +1202,7 @@ function EntryComposer({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onClick={(e) => { if (e.target === e.currentTarget) handleRequestClose() }}
     >
       <motion.form
         className="composer"
@@ -1035,7 +1222,7 @@ function EntryComposer({
           <button
             className="composer-close-icon"
             type="button"
-            onClick={onClose}
+            onClick={handleRequestClose}
             aria-label="Close modal"
           >
             <X aria-hidden="true" />
@@ -1196,7 +1383,9 @@ function EntryComposer({
           <section className="composer-right">
             {draft.type === 'song' ? (
               <div className="full-label lyrics-section">
-                <span>Favorite lyrics</span>
+                <div className="passage-header">
+                  <span>Favorite lyrics</span>
+                </div>
                 <div className="lyrics-box">
                   {lyricsStatus === 'idle' && (
                     <div className="lyrics-placeholder">
@@ -1212,7 +1401,7 @@ function EntryComposer({
                   )}
                   {lyricsStatus === 'not-found' && (
                     <div className="lyrics-placeholder">
-                      <p>No lyrics found for this track.</p>
+                      <p>No lyrics found automatically for this track.</p>
                     </div>
                   )}
                   {lyricsStatus === 'ready' && lyricLines.length > 0 && (
@@ -1311,7 +1500,7 @@ function EntryComposer({
                 }
               />
               <div className="composer-action-btns">
-                <button className="ghost-btn" type="button" onClick={onClose}>
+                <button className="ghost-btn" type="button" onClick={handleRequestClose}>
                   Cancel
                 </button>
                 <button className="primary-btn" type="submit">
@@ -1323,6 +1512,118 @@ function EntryComposer({
           </section>
         </div>
       </motion.form>
+
+      {/* Confirmation modal when discarding unsaved changes */}
+      <AnimatePresence>
+        {showDiscardConfirm && (
+          <div
+            className="modal-backdrop"
+            style={{ zIndex: 110 }}
+            onClick={() => setShowDiscardConfirm(false)}
+          >
+            <motion.div
+              className="settings-modal"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="settings-header">
+                <div className="settings-header-title">
+                  <AlertCircle style={{ color: '#e57373' }} aria-hidden="true" />
+                  <h2>Discard Unsaved Changes?</h2>
+                </div>
+              </div>
+              <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 20 }}>
+                You have unsaved changes in this entry. Are you sure you want to discard them?
+              </p>
+
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => setShowDiscardConfirm(false)}
+                >
+                  Keep Editing
+                </button>
+                <button
+                  type="button"
+                  className="action-btn danger"
+                  onClick={() => {
+                    setShowDiscardConfirm(false)
+                    onClose()
+                  }}
+                >
+                  Discard Changes
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation modal when publishing an unrated entry */}
+      <AnimatePresence>
+        {showUnratedConfirm && (
+          <div
+            className="modal-backdrop"
+            style={{ zIndex: 100 }}
+            onClick={() => setShowUnratedConfirm(false)}
+          >
+            <motion.div
+              className="settings-modal"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="settings-header">
+                <div className="settings-header-title">
+                  <AlertCircle style={{ color: '#f5b74c' }} aria-hidden="true" />
+                  <h2>Publish Without Rating?</h2>
+                </div>
+              </div>
+              <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 16 }}>
+                You have not assigned a star rating to this entry. Are you sure you want to publish it without a rating?
+              </p>
+
+              <label className="dont-show-again-label">
+                <input
+                  type="checkbox"
+                  checked={dontShowAgain}
+                  onChange={(e) => setDontShowAgain(e.target.checked)}
+                />
+                <span>Don't show this warning again</span>
+              </label>
+
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', marginTop: 24 }}>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => setShowUnratedConfirm(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={() => {
+                    if (dontShowAgain) {
+                      setWarnUnratedPreference(false)
+                    }
+                    setShowUnratedConfirm(false)
+                    if (pendingDraft) {
+                      onSave(pendingDraft)
+                    }
+                  }}
+                >
+                  Publish Anyway
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 }

@@ -205,11 +205,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   }
 
   // General toggles state
+  const [warnUnratedEntry, setWarnUnratedEntry] = useState(() => {
+    const stored = localStorage.getItem('the-commonplace.warn-unrated')
+    return stored === null ? true : stored !== 'false'
+  })
   const [dropCapEnabled, setDropCapEnabled] = useState(true)
   const [gpuAccelerated, setGpuAccelerated] = useState(true)
   const [smoothAccordion, setSmoothAccordion] = useState(true)
   const [weeklyDigest, setWeeklyDigest] = useState(true)
   const [publicIndexing, setPublicIndexing] = useState(true)
+  const [privateProfile, setPrivateProfile] = useState(false)
 
   // Check if dirty changes exist
   const sanitizedHandle = handleInput.trim().toLowerCase().replace(/^@/, '')
@@ -489,6 +494,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <p className="settings-page-desc">Interface behavior and reading preferences.</p>
               </div>
 
+              <SettingsSection title="Publishing Preferences">
+                <SettingsToggle
+                  label="Warn Before Publishing Unrated Entries"
+                  description="Display a confirmation prompt when publishing an entry without a star rating."
+                  checked={warnUnratedEntry}
+                  onChange={(val) => {
+                    setWarnUnratedEntry(val)
+                    localStorage.setItem('the-commonplace.warn-unrated', String(val))
+                  }}
+                />
+              </SettingsSection>
+
               <SettingsSection title="Reading Experience">
                 <SettingsToggle
                   label="Drop Cap Initial Letter"
@@ -580,16 +597,59 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="settings-page-content">
               <div className="settings-header-minimal">
                 <h1 className="settings-page-title">Privacy</h1>
-                <p className="settings-page-desc">Control visibility and profile indexing.</p>
+                <p className="settings-page-desc">Control who can see your profile and how it appears online.</p>
               </div>
 
-              <SettingsSection title="Public Indexing">
+              <SettingsSection
+                title="Profile Visibility"
+                description="Choose whether your commonplace is open to others or kept entirely private."
+              >
                 <SettingsToggle
-                  label="Search Engine Indexing"
-                  description="Allow search engines to index your public commonplace profile."
-                  checked={publicIndexing}
-                  onChange={setPublicIndexing}
+                  label="Private Profile"
+                  description="When enabled, your profile and catalog will be hidden from all other users and public search results."
+                  checked={privateProfile}
+                  onChange={setPrivateProfile}
                 />
+
+                {/* Status badge + context box */}
+                <div style={{ marginTop: 14 }}>
+                  <span className={`privacy-badge ${privateProfile ? 'private' : ''}`}>
+                    {privateProfile ? '🔒 Private' : '🌐 Public'}
+                  </span>
+
+                  <div className={`privacy-info-box ${privateProfile ? 'private' : ''}`} style={{ marginTop: 10 }}>
+                    <p className="privacy-info-text">
+                      {privateProfile ? (
+                        <>
+                          <strong>Your library is private.</strong> Only you can view your profile,
+                          catalog, and collected passages. No one else can find or follow your commonplace.
+                        </>
+                      ) : (
+                        <>
+                          <strong>Your library is public.</strong> Anyone can view your profile and
+                          catalog. Your collected passages are visible to other readers on The Commonplace.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection title="Search Engine Indexing">
+                <SettingsToggle
+                  label="Allow Search Engine Indexing"
+                  description="Allow search engines to index your public commonplace profile. Has no effect when profile is set to Private."
+                  checked={publicIndexing && !privateProfile}
+                  onChange={(val) => {
+                    if (privateProfile) return
+                    setPublicIndexing(val)
+                  }}
+                />
+                {privateProfile && (
+                  <p className="privacy-info-text" style={{ marginTop: 10, opacity: 0.55 }}>
+                    Indexing is automatically disabled while your profile is private.
+                  </p>
+                )}
               </SettingsSection>
             </div>
           )}
