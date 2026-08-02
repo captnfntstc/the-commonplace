@@ -273,7 +273,57 @@ function AppContent() {
     avatarUrl: '',
     coverUrl: 'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?q=80&w=1200&auto=format&fit=crop',
     lastUsernameChangeDate: '2026-07-01T00:00:00.000Z',
+    showFollowLists: true,
+    allowComments: true,
   })
+
+  // Social Interaction States (Likes, Saves, Comments Disabled per entry)
+  const [likedEntryIds, setLikedEntryIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('the-commonplace.likes') || '[]')
+    } catch {
+      return []
+    }
+  })
+  const [savedEntryIds, setSavedEntryIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('the-commonplace.saves') || '[]')
+    } catch {
+      return []
+    }
+  })
+  const [disabledCommentEntryIds, setDisabledCommentEntryIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('the-commonplace.disabled-comments') || '[]')
+    } catch {
+      return []
+    }
+  })
+
+  const toggleLikeEntry = (id: string) => {
+    setLikedEntryIds((prev) => {
+      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+      localStorage.setItem('the-commonplace.likes', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const toggleSaveEntry = (id: string) => {
+    setSavedEntryIds((prev) => {
+      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+      localStorage.setItem('the-commonplace.saves', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const toggleCommentsDisabled = (id: string) => {
+    setDisabledCommentEntryIds((prev) => {
+      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+      localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(next))
+      return next
+    })
+  }
+
   const [composerOpen, setComposerOpen] = useState(false)
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [overlayEntry, setOverlayEntry] = useState<Entry | null>(null)
@@ -427,6 +477,7 @@ function AppContent() {
       <UserProfilePage
         onBack={() => setActiveView('feed')}
         entries={entries}
+        savedEntryIds={savedEntryIds}
         onSelectEntry={(entry) => setOverlayEntry(entry)}
         userProfile={userProfile}
         onNavigateToSettings={() => setActiveView('settings')}
@@ -434,6 +485,7 @@ function AppContent() {
         onEditEntry={(entry) => openComposer(entry)}
         categoryFilter={profileCategoryFilter}
         onCategoryFilterChange={setProfileCategoryFilter}
+        isOwnProfile={true}
       />
     )
   }
@@ -445,6 +497,8 @@ function AppContent() {
         onClearAllData={() => {
           setEntries([])
           localStorage.removeItem(storageKey)
+          localStorage.removeItem('the-commonplace.likes')
+          localStorage.removeItem('the-commonplace.saves')
         }}
         userProfile={userProfile}
         onSaveProfile={(updated) => setUserProfile(updated)}
@@ -716,6 +770,12 @@ function AppContent() {
                   onOpenProfile={() => setActiveView('profile')}
                   typeIcon={typeMeta.Icon}
                   typeLabel={typeMeta.label}
+                  isLiked={likedEntryIds.includes(entry.id)}
+                  isSaved={savedEntryIds.includes(entry.id)}
+                  onToggleLike={() => toggleLikeEntry(entry.id)}
+                  onToggleSave={() => toggleSaveEntry(entry.id)}
+                  commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
+                  onToggleCommentsDisabled={() => toggleCommentsDisabled(entry.id)}
                 />
               </div>
             )
@@ -766,6 +826,10 @@ function AppContent() {
         <CardOverlayModal
           entry={overlayEntry}
           onClose={() => setOverlayEntry(null)}
+          isLiked={overlayEntry ? likedEntryIds.includes(overlayEntry.id) : false}
+          isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
+          onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
+          onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
         />
 
         {/* Confirm Delete Card Modal */}

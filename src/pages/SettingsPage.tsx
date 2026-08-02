@@ -108,6 +108,8 @@ export type UserProfileState = {
   avatarUrl: string
   coverUrl: string
   lastUsernameChangeDate?: string
+  showFollowLists?: boolean
+  allowComments?: boolean
 }
 
 interface SettingsPageProps {
@@ -137,7 +139,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [bio, setBio] = useState(userProfile.bio)
   const [avatarUrl, setAvatarUrl] = useState(userProfile.avatarUrl)
   const [coverUrl, setCoverUrl] = useState(userProfile.coverUrl)
+  const [showFollowLists, setShowFollowLists] = useState(userProfile.showFollowLists ?? true)
+  const [allowComments, setAllowComments] = useState(userProfile.allowComments ?? true)
   const [savedNotice, setSavedNotice] = useState(false)
+
+  // Activity Modals State
+  const [activeActivityModal, setActiveActivityModal] = useState<'likes' | 'comments' | null>(null)
 
   // Sync form state if props update
   useEffect(() => {
@@ -149,6 +156,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setBio(userProfile.bio)
     setAvatarUrl(userProfile.avatarUrl)
     setCoverUrl(userProfile.coverUrl)
+    setShowFollowLists(userProfile.showFollowLists ?? true)
+    setAllowComments(userProfile.allowComments ?? true)
   }, [userProfile])
 
   // Account Statuses Map (Google & GitHub connected by default)
@@ -204,15 +213,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setTimeout(() => setPasswordNotice(''), 3000)
   }
 
-  // General toggles state
-  const [warnUnratedEntry, setWarnUnratedEntry] = useState(() => {
-    const stored = localStorage.getItem('the-commonplace.warn-unrated')
-    return stored === null ? true : stored !== 'false'
-  })
-  const [dropCapEnabled, setDropCapEnabled] = useState(true)
-  const [gpuAccelerated, setGpuAccelerated] = useState(true)
-  const [smoothAccordion, setSmoothAccordion] = useState(true)
-  const [weeklyDigest, setWeeklyDigest] = useState(true)
+  // Toggles state
+  const [deepSearchIndexing, setDeepSearchIndexing] = useState(true)
   const [publicIndexing, setPublicIndexing] = useState(true)
   const [privateProfile, setPrivateProfile] = useState(false)
 
@@ -226,7 +228,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     email.trim() !== userProfile.email ||
     bio.trim() !== userProfile.bio ||
     avatarUrl.trim() !== userProfile.avatarUrl ||
-    coverUrl.trim() !== userProfile.coverUrl
+    coverUrl.trim() !== userProfile.coverUrl ||
+    showFollowLists !== (userProfile.showFollowLists ?? true) ||
+    allowComments !== (userProfile.allowComments ?? true)
 
   // 14-Day Cooldown Calculation
   const lastChangeMs = userProfile.lastUsernameChangeDate
@@ -255,6 +259,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setBio(userProfile.bio)
     setAvatarUrl(userProfile.avatarUrl)
     setCoverUrl(userProfile.coverUrl)
+    setShowFollowLists(userProfile.showFollowLists ?? true)
+    setAllowComments(userProfile.allowComments ?? true)
   }
 
   const handleSave = (e?: React.FormEvent) => {
@@ -282,6 +288,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       avatarUrl: avatarUrl.trim(),
       coverUrl: coverUrl.trim(),
       lastUsernameChangeDate: usernameChanged ? new Date().toISOString() : userProfile.lastUsernameChangeDate,
+      showFollowLists,
+      allowComments,
     }
 
     onSaveProfile(updated)
@@ -320,18 +328,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           {/* PAGE 1: PROFILE */}
           {activeTab === 'profile' && (
             <div className="settings-page-content">
-              {/* Profile Page Header */}
               <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Profile</h1>
+                <h1 className="settings-page-title">Profile Information</h1>
                 <p className="settings-page-desc">
-                  Manage your public profile information and how others see you.
+                  Manage your public profile identity, avatar, and social list preferences.
                 </p>
               </div>
 
-              {/* Section 1: Picture & Cover */}
               <SettingsSection
                 title="Profile Picture & Cover"
-                description="Upload custom artwork or choose from editorial presets."
+                description="Upload custom artwork or paste image links."
               >
                 <div className="settings-block">
                   <div className="uploader-sublabel">Avatar Photo</div>
@@ -344,10 +350,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
               </SettingsSection>
 
-              {/* Section 2: Profile Information */}
               <SettingsSection
-                title="Profile Information"
-                description="Your personal identity details on The Commonplace."
+                title="Identity Details"
+                description="Personal information shown on your public commonplace."
               >
                 <div className="settings-form-grid">
                   <div className="form-row-two-col">
@@ -455,8 +460,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
               </SettingsSection>
 
-              {/* Section 3: Biography */}
-              <SettingsSection title="Biography" description="Share a short introduction about your taste and library.">
+              <SettingsSection title="Biography" description="Share a short introduction about your taste.">
                 <SettingsField
                   label="Bio"
                   helperText={<span className="char-count">{bio.length} / 300 characters</span>}
@@ -469,134 +473,84 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     value={bio}
                     maxLength={300}
                     onChange={(e) => setBio(e.target.value)}
-                    placeholder="Collector of timeless passages, album impressions, cinematic notes, and personal reflections..."
+                    placeholder="Collector of timeless passages, album impressions, cinematic notes..."
                   />
                 </SettingsField>
               </SettingsSection>
 
-              {/* Section 4: Visibility */}
-              <SettingsSection title="Visibility & Preferences" description="Control how your profile appears to others.">
+              <SettingsSection title="Social List Preferences" description="Control visibility of your followers and following lists.">
                 <SettingsToggle
-                  label="Display Full Name"
-                  description="Show your full name publicly alongside your username handle."
-                  checked={showFullName}
-                  onChange={setShowFullName}
+                  label="Show Followers & Following Lists"
+                  description="Allow visitors to click your follower and following counts on your profile to view your connections."
+                  checked={showFollowLists}
+                  onChange={setShowFollowLists}
                 />
               </SettingsSection>
             </div>
           )}
 
-          {/* PAGE 2: GENERAL */}
-          {activeTab === 'general' && (
+          {/* PAGE 2: SOCIAL & INTERACTIONS */}
+          {activeTab === 'social' && (
             <div className="settings-page-content">
               <div className="settings-header-minimal">
-                <h1 className="settings-page-title">General Settings</h1>
-                <p className="settings-page-desc">Interface behavior and reading preferences.</p>
+                <h1 className="settings-page-title">Social & Interactions</h1>
+                <p className="settings-page-desc">Manage comments, replies, and view your activity logs.</p>
               </div>
 
-              <SettingsSection title="Publishing Preferences">
+              <SettingsSection title="Comment Settings">
                 <SettingsToggle
-                  label="Warn Before Publishing Unrated Entries"
-                  description="Display a confirmation prompt when publishing an entry without a star rating."
-                  checked={warnUnratedEntry}
-                  onChange={(val) => {
-                    setWarnUnratedEntry(val)
-                    localStorage.setItem('the-commonplace.warn-unrated', String(val))
-                  }}
+                  label="Allow Comments on Entries"
+                  description="Allow other readers to post comments and replies on your catalog entries."
+                  checked={allowComments}
+                  onChange={setAllowComments}
                 />
               </SettingsSection>
 
-              <SettingsSection title="Reading Experience">
-                <SettingsToggle
-                  label="Drop Cap Initial Letter"
-                  description="Display large serif drop cap letters at the start of reflections by default."
-                  checked={dropCapEnabled}
-                  onChange={setDropCapEnabled}
-                />
-                <SettingsToggle
-                  label="GPU Accelerated Column Layout"
-                  description="Use hardware-accelerated transforms for dynamic masonry card repositioning."
-                  checked={gpuAccelerated}
-                  onChange={setGpuAccelerated}
-                />
-                <SettingsToggle
-                  label="Smooth Accordion Expansion"
-                  description="Fluid Framer Motion spring physics when expanding reflections inline."
-                  checked={smoothAccordion}
-                  onChange={setSmoothAccordion}
-                />
-              </SettingsSection>
-            </div>
-          )}
-
-          {/* PAGE 3: APPEARANCE */}
-          {activeTab === 'appearance' && (
-            <div className="settings-page-content">
-              <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Appearance</h1>
-                <p className="settings-page-desc">Customize typography and visual palette.</p>
-              </div>
-
-              <SettingsSection title="Theme Palette">
-                <div className="theme-badge-card">
-                  <div className="theme-badge-info">
-                    <span className="theme-title">Warm Obsidian Antique Gold</span>
-                    <span className="theme-sub">#0f0d0a base with #c8a26a accents and serif typography</span>
-                  </div>
-                  <span className="theme-active-tag">Active Theme</span>
+              <SettingsSection title="Personal Activity Logs" description="View entries you have liked or commented on.">
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="secondary-action-btn"
+                    onClick={() => setActiveActivityModal('likes')}
+                  >
+                    <span>❤️ View My Liked Entries</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-btn"
+                    onClick={() => setActiveActivityModal('comments')}
+                  >
+                    <span>💬 View My Comments History</span>
+                  </button>
                 </div>
               </SettingsSection>
             </div>
           )}
 
-          {/* PAGE 4: NOTIFICATIONS */}
-          {activeTab === 'notifications' && (
+          {/* PAGE 3: READING PREFERENCES */}
+          {activeTab === 'reading' && (
             <div className="settings-page-content">
               <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Notifications</h1>
-                <p className="settings-page-desc">Manage digest and updates.</p>
+                <h1 className="settings-page-title">Reading Preferences</h1>
+                <p className="settings-page-desc">Adjust search and reading behavior.</p>
               </div>
 
-              <SettingsSection title="Email Updates">
+              <SettingsSection title="Search Behavior">
                 <SettingsToggle
-                  label="Weekly Commonplace Digest"
-                  description="Receive a weekly curated summary of catalog entries and passages."
-                  checked={weeklyDigest}
-                  onChange={setWeeklyDigest}
+                  label="Deep Search Indexing"
+                  description="Include quote passages and review reflections in header search queries."
+                  checked={deepSearchIndexing}
+                  onChange={setDeepSearchIndexing}
                 />
               </SettingsSection>
             </div>
           )}
 
-          {/* PAGE 5: LINKED ACCOUNTS */}
-          {activeTab === 'linked' && (
-            <div className="settings-page-content">
-              <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Linked Accounts</h1>
-                <p className="settings-page-desc">Connect trusted services to simplify sign in and enrich your profile.</p>
-              </div>
-
-              <div className="linked-accounts-editorial-list">
-                {PROVIDERS.map((provider) => {
-                  const status = accountStatuses[provider.id] || 'disconnected'
-                  return (
-                    <LinkedAccountCard
-                      key={provider.id}
-                      provider={provider}
-                      status={status}
-                      onToggle={() => handleToggleProvider(provider.id)}
-                    />
-                  )
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* PAGE 6: PRIVACY */}
+          {/* PAGE 4: PRIVACY */}
           {activeTab === 'privacy' && (
             <div className="settings-page-content">
               <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Privacy</h1>
+                <h1 className="settings-page-title">Privacy & Visibility</h1>
                 <p className="settings-page-desc">Control who can see your profile and how it appears online.</p>
               </div>
 
@@ -606,60 +560,39 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               >
                 <SettingsToggle
                   label="Private Profile"
-                  description="When enabled, your profile and catalog will be hidden from all other users and public search results."
+                  description="When enabled, your profile and catalog will be hidden from all other users."
                   checked={privateProfile}
                   onChange={setPrivateProfile}
                 />
 
-                {/* Status badge + context box */}
-                <div style={{ marginTop: 14 }}>
-                  <span className={`privacy-badge ${privateProfile ? 'private' : ''}`}>
-                    {privateProfile ? '🔒 Private' : '🌐 Public'}
-                  </span>
-
-                  <div className={`privacy-info-box ${privateProfile ? 'private' : ''}`} style={{ marginTop: 10 }}>
-                    <p className="privacy-info-text">
-                      {privateProfile ? (
-                        <>
-                          <strong>Your library is private.</strong> Only you can view your profile,
-                          catalog, and collected passages. No one else can find or follow your commonplace.
-                        </>
-                      ) : (
-                        <>
-                          <strong>Your library is public.</strong> Anyone can view your profile and
-                          catalog. Your collected passages are visible to other readers on The Commonplace.
-                        </>
-                      )}
-                    </p>
-                  </div>
-                </div>
+                <SettingsToggle
+                  label="Display Full Name"
+                  description="Show your full name publicly alongside your username handle."
+                  checked={showFullName}
+                  onChange={setShowFullName}
+                />
               </SettingsSection>
 
               <SettingsSection title="Search Engine Indexing">
                 <SettingsToggle
                   label="Allow Search Engine Indexing"
-                  description="Allow search engines to index your public commonplace profile. Has no effect when profile is set to Private."
+                  description="Allow search engines to index your public commonplace profile."
                   checked={publicIndexing && !privateProfile}
                   onChange={(val) => {
                     if (privateProfile) return
                     setPublicIndexing(val)
                   }}
                 />
-                {privateProfile && (
-                  <p className="privacy-info-text" style={{ marginTop: 10, opacity: 0.55 }}>
-                    Indexing is automatically disabled while your profile is private.
-                  </p>
-                )}
               </SettingsSection>
             </div>
           )}
 
-          {/* PAGE 7: SECURITY */}
+          {/* PAGE 5: SECURITY */}
           {activeTab === 'security' && (
             <div className="settings-page-content">
               <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Security & Password</h1>
-                <p className="settings-page-desc">Manage two-factor authentication, passwords, and active sessions.</p>
+                <h1 className="settings-page-title">Account & Security</h1>
+                <p className="settings-page-desc">Manage two-factor authentication, passwords, and linked accounts.</p>
               </div>
 
               {passwordNotice && (
@@ -669,7 +602,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
               )}
 
-              {/* Two-Factor Authentication (2FA) */}
               <SettingsSection
                 title="Two-Factor Authentication (2FA)"
                 description="Add an extra layer of security using an authenticator app (TOTP)."
@@ -677,29 +609,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <div className="security-2fa-card">
                   <SettingsToggle
                     label="Enable Two-Factor Authentication"
-                    description="Require a 6-digit verification code from your authenticator app when signing in."
+                    description="Require a verification code when signing in."
                     checked={twoFactorEnabled}
                     onChange={setTwoFactorEnabled}
                   />
-
-                  {twoFactorEnabled && (
-                    <div className="two-factor-active-box">
-                      <div className="two-factor-badge-active">
-                        <CheckCircle2 aria-hidden="true" />
-                        <span>2FA Protection Active</span>
-                      </div>
-                      <p className="two-factor-hint">
-                        Your account is secured with time-based multi-factor authentication. Keep your backup security keys stored in a safe place.
-                      </p>
-                    </div>
-                  )}
                 </div>
               </SettingsSection>
 
-              {/* Change Password */}
               <SettingsSection
                 title="Change Password"
-                description="Update your account password regularly to keep your library secure."
+                description="Update your account password regularly."
               >
                 <form onSubmit={handlePasswordUpdate} className="settings-form-grid">
                   <SettingsField label="Current Password" htmlFor="current-password">
@@ -749,19 +668,42 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </form>
               </SettingsSection>
 
-              <SettingsSection title="Active Sessions">
-                <p className="settings-section-desc">You are currently signed in from this browser session.</p>
+              <SettingsSection title="Linked Accounts">
+                <div className="linked-accounts-editorial-list">
+                  {PROVIDERS.map((provider) => {
+                    const status = accountStatuses[provider.id] || 'disconnected'
+                    return (
+                      <LinkedAccountCard
+                        key={provider.id}
+                        provider={provider}
+                        status={status}
+                        onToggle={() => handleToggleProvider(provider.id)}
+                      />
+                    )
+                  })}
+                </div>
               </SettingsSection>
             </div>
           )}
 
-          {/* PAGE 8: DATA & STORAGE */}
+          {/* PAGE 6: DATA & STORAGE */}
           {activeTab === 'storage' && (
             <div className="settings-page-content">
               <div className="settings-header-minimal">
                 <h1 className="settings-page-title">Data & Storage</h1>
-                <p className="settings-page-desc">Manage local storage and database resets.</p>
+                <p className="settings-page-desc">Export backups or clear local storage data.</p>
               </div>
+
+              <SettingsSection title="Export Library Archive">
+                <button
+                  type="button"
+                  className="secondary-action-btn"
+                  onClick={() => alert('Catalog export JSON downloaded successfully.')}
+                >
+                  <Download aria-hidden="true" />
+                  <span>Download JSON Archive</span>
+                </button>
+              </SettingsSection>
 
               <SettingsSection title="Catalog Reset" isDanger>
                 <div className="settings-action-row">
@@ -786,60 +728,34 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </SettingsSection>
             </div>
           )}
-
-          {/* PAGE 9: EXPORT DATA */}
-          {activeTab === 'export' && (
-            <div className="settings-page-content">
-              <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Export Data</h1>
-                <p className="settings-page-desc">Download a backup copy of your catalog entries.</p>
-              </div>
-
-              <SettingsSection title="Download Catalog Archive">
-                <button
-                  type="button"
-                  className="secondary-action-btn"
-                  onClick={() => alert('Catalog export JSON downloaded successfully.')}
-                >
-                  <Download aria-hidden="true" />
-                  <span>Download JSON Archive</span>
-                </button>
-              </SettingsSection>
-            </div>
-          )}
-
-          {/* PAGE 10: DELETE ACCOUNT */}
-          {activeTab === 'delete' && (
-            <div className="settings-page-content">
-              <div className="settings-header-minimal">
-                <h1 className="settings-page-title danger">Delete Account</h1>
-                <p className="settings-page-desc">Permanently remove your profile and clear all data.</p>
-              </div>
-
-              <SettingsSection title="Irreversible Action" isDanger>
-                <p className="settings-section-desc" style={{ marginBottom: 16 }}>
-                  Deleting your account will permanently remove your profile, username, and all saved reviews.
-                </p>
-                <button
-                  type="button"
-                  className="action-btn danger"
-                  onClick={() => {
-                    if (window.confirm('Permanently delete account and reset all data?')) {
-                      onClearAllData()
-                      onBack()
-                    }
-                  }}
-                >
-                  <Trash2 aria-hidden="true" />
-                  Delete Account
-                </button>
-              </SettingsSection>
-            </div>
-          )}
         </main>
       </div>
 
-      {/* Floating Sticky Save Bar at Bottom-Right (Only visible when form changes exist!) */}
+      {/* Activity Log Modal */}
+      {activeActivityModal && (
+        <div className="modal-backdrop" onClick={() => setActiveActivityModal(null)}>
+          <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-header">
+              <h2>{activeActivityModal === 'likes' ? '❤️ My Liked Entries' : '💬 My Comments & Replies'}</h2>
+            </div>
+            <p style={{ color: 'var(--secondary)', margin: '14px 0 20px', lineHeight: 1.5 }}>
+              {activeActivityModal === 'likes'
+                ? 'Below is the list of entries you have recently liked across The Commonplace.'
+                : 'Below is your recent comment activity and replies across reviews.'}
+            </p>
+            <div style={{ padding: '16px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', textAlign: 'center', color: 'var(--secondary)', fontSize: '14px' }}>
+              {activeActivityModal === 'likes' ? 'No liked entries saved yet.' : 'No recent comments posted.'}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+              <button type="button" className="ghost-btn" onClick={() => setActiveActivityModal(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Sticky Save Bar at Bottom-Right */}
       {hasChanges && (
         <div className="settings-sticky-save-bar">
           <div className="save-bar-info">

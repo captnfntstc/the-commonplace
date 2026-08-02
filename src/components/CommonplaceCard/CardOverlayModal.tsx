@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   X,
@@ -9,6 +9,10 @@ import {
   Clapperboard,
   Gamepad2,
   Tv,
+  Heart,
+  MessageSquare,
+  Bookmark,
+  Send,
 } from 'lucide-react'
 import { FormattedText, stripHtmlAlignment } from './FormattedText'
 import { StarRating } from './CardHeader'
@@ -36,9 +40,20 @@ export interface OverlayEntry {
   coverTone: string
 }
 
+interface CommentItem {
+  id: string
+  author: string
+  text: string
+  createdAt: string
+}
+
 interface CardOverlayModalProps {
   entry: OverlayEntry | null
   onClose: () => void
+  isLiked?: boolean
+  isSaved?: boolean
+  onToggleLike?: () => void
+  onToggleSave?: () => void
 }
 
 const typeIconMap = {
@@ -53,7 +68,17 @@ const typeIconMap = {
 export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   entry,
   onClose,
+  isLiked = false,
+  isSaved = false,
+  onToggleLike,
+  onToggleSave,
 }) => {
+  const [comments, setComments] = useState<CommentItem[]>([
+    { id: 'c1', author: 'Elena Rostova', text: 'Beautiful reflection! This passage resonated deeply with me as well.', createdAt: '2 hours ago' },
+    { id: 'c2', author: 'Marcus Vance', text: 'Stunning review. Added to my personal reading list!', createdAt: '5 hours ago' },
+  ])
+  const [newCommentText, setNewCommentText] = useState('')
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -79,6 +104,19 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
 
   const showDropCap = Boolean(entry.enableDropCap)
   const { firstChar, restText, isEmoji, isLowercase } = getDropCapParts(entry.reflection)
+
+  const handlePostComment = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!newCommentText.trim()) return
+    const item: CommentItem = {
+      id: `c-${Date.now()}`,
+      author: 'jimboii',
+      text: newCommentText.trim(),
+      createdAt: 'Just now',
+    }
+    setComments((prev) => [...prev, item])
+    setNewCommentText('')
+  }
 
   return (
     <AnimatePresence>
@@ -174,6 +212,66 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
             ) : (
               <FormattedText text={entry.reflection} align={entry.reflectionAlign} />
             )}
+          </div>
+
+          {/* Social Stats & Actions Bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '24px', paddingTop: '16px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onToggleLike}
+              style={{ color: isLiked ? '#e57373' : 'var(--primary)', display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <Heart size={16} fill={isLiked ? '#e57373' : 'none'} />
+              <span>{12 + (isLiked ? 1 : 0)} Likes</span>
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onToggleSave}
+              style={{ color: isSaved ? '#f5b74c' : 'var(--primary)', display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <Bookmark size={16} fill={isSaved ? '#f5b74c' : 'none'} />
+              <span>{isSaved ? 'Saved to Profile' : 'Save Entry'}</span>
+            </button>
+            <span style={{ color: 'var(--secondary)', fontSize: '13px', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <MessageSquare size={15} />
+              <span>{comments.length} Comments</span>
+            </span>
+          </div>
+
+          {/* Dedicated Comments Thread Section */}
+          <div className="overlay-comments-section" style={{ marginTop: '20px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--primary)', marginBottom: '12px' }}>
+              Comments & Discussion
+            </h3>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+              {comments.map((c) => (
+                <div key={c.id} style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--primary)' }}>{c.author}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--secondary)' }}>{c.createdAt}</span>
+                  </div>
+                  <p style={{ fontSize: '13px', color: 'var(--secondary)', margin: 0, lineHeight: 1.4 }}>{c.text}</p>
+                </div>
+              ))}
+            </div>
+
+            <form onSubmit={handlePostComment} style={{ display: 'flex', gap: '10px' }}>
+              <input
+                type="text"
+                className="dark-setting-input"
+                placeholder="Write a comment or reply…"
+                value={newCommentText}
+                onChange={(e) => setNewCommentText(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button type="submit" className="primary-btn" style={{ padding: '0 16px' }}>
+                <Send size={14} />
+                <span>Post</span>
+              </button>
+            </form>
           </div>
         </motion.div>
       </div>

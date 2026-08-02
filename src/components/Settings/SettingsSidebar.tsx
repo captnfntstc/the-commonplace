@@ -14,15 +14,12 @@ import {
 
 export type SettingsNavTab =
   | 'profile'
-  | 'general'
-  | 'appearance'
-  | 'notifications'
-  | 'linked'
+  | 'social'
+  | 'reading'
   | 'privacy'
   | 'security'
   | 'storage'
   | 'export'
-  | 'delete'
 
 interface SettingsSidebarProps {
   activeTab: SettingsNavTab
@@ -41,28 +38,19 @@ type NavGroup = {
 
 const NAV_GROUPS: NavGroup[] = [
   {
-    title: 'GENERAL',
+    title: 'PERSONAL',
     items: [
-      { id: 'profile', label: 'Profile', Icon: User },
-      { id: 'general', label: 'General', Icon: Sliders },
-      { id: 'appearance', label: 'Appearance', Icon: Moon },
-      { id: 'notifications', label: 'Notifications', Icon: Bell },
+      { id: 'profile', label: 'Profile Information', Icon: User },
+      { id: 'social', label: 'Social & Interactions', Icon: Bell },
+      { id: 'reading', label: 'Reading Preferences', Icon: Sliders },
     ],
   },
   {
-    title: 'ACCOUNT',
+    title: 'ACCOUNT & PRIVACY',
     items: [
-      { id: 'linked', label: 'Linked Accounts', Icon: LinkIcon },
-      { id: 'privacy', label: 'Privacy', Icon: Shield },
-      { id: 'security', label: 'Security', Icon: Lock },
+      { id: 'privacy', label: 'Privacy & Visibility', Icon: Shield },
+      { id: 'security', label: 'Account & Security', Icon: Lock },
       { id: 'storage', label: 'Data & Storage', Icon: Database },
-    ],
-  },
-  {
-    title: 'ADVANCED',
-    items: [
-      { id: 'export', label: 'Export Data', Icon: Download },
-      { id: 'delete', label: 'Delete Account', Icon: Trash2, isDanger: true },
     ],
   },
 ]
