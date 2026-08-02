@@ -18,6 +18,9 @@ import {
   Bookmark,
   Users,
   Lock,
+  UserCheck,
+  UserPlus,
+  MessageCircle,
 } from 'lucide-react'
 import { Card, type CardEntry } from '../components/CommonplaceCard/Card'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
@@ -28,7 +31,12 @@ interface UserProfilePageProps {
   onBack: () => void
   entries: CardEntry[]
   savedEntryIds?: string[]
+  likedEntryIds?: string[]
+  disabledCommentEntryIds?: string[]
   onSelectEntry?: (entry: CardEntry) => void
+  onToggleLike?: (id: string) => void
+  onToggleSave?: (id: string) => void
+  onToggleCommentsDisabled?: (id: string) => void
   userProfile: UserProfileState
   onNavigateToSettings: () => void
   onDeleteEntry?: (id: string) => void
@@ -39,21 +47,26 @@ interface UserProfilePageProps {
 }
 
 const SAMPLE_FOLLOWERS = [
-  { id: 'f1', name: 'Elena Rostova', handle: '@elena_r', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop' },
-  { id: 'f2', name: 'Marcus Vance', handle: '@marcus_v', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop' },
-  { id: 'f3', name: 'Sophia Chen', handle: '@sophiac', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop' },
+  { id: 'f1', name: 'Elena Rostova', handle: '@elena_r', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop', reviews: 34, mutuals: 2 },
+  { id: 'f2', name: 'Marcus Vance', handle: '@marcus_v', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop', reviews: 18, mutuals: 1 },
+  { id: 'f3', name: 'Sophia Chen', handle: '@sophiac', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop', reviews: 57, mutuals: 3 },
 ]
 
 const SAMPLE_FOLLOWING = [
-  { id: 'g1', name: 'Julian Thorne', handle: '@jthorne', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop' },
-  { id: 'g2', name: 'Clara Oswald', handle: '@clara_o', avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&auto=format&fit=crop' },
+  { id: 'g1', name: 'Julian Thorne', handle: '@jthorne', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop', reviews: 21, mutuals: 0 },
+  { id: 'g2', name: 'Clara Oswald', handle: '@clara_o', avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&auto=format&fit=crop', reviews: 43, mutuals: 2 },
 ]
 
 export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onBack,
   entries,
   savedEntryIds = [],
+  likedEntryIds = [],
+  disabledCommentEntryIds = [],
   onSelectEntry,
+  onToggleLike,
+  onToggleSave,
+  onToggleCommentsDisabled,
   userProfile,
   onNavigateToSettings,
   onDeleteEntry,
@@ -68,6 +81,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [expandedCardId, setExpandedCardId] = useState<string>('')
   const [isFilterSwitching, setIsFilterSwitching] = useState(false)
   const [activeFollowModal, setActiveFollowModal] = useState<'followers' | 'following' | null>(null)
+  const [savedPanelOpen, setSavedPanelOpen] = useState(false)
+  const [savedPanelFilter, setSavedPanelFilter] = useState('all')
+  const [followSearch, setFollowSearch] = useState('')
   const profileGridRef = useRef<HTMLElement>(null)
 
   const booksCount = entries.filter((e) => e.type === 'book').length
@@ -96,9 +112,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   const filteredProfileEntries = useMemo(() => {
     let result = entries
-    if (profileCategoryFilter === 'saved') {
-      result = result.filter((e) => savedEntryIds.includes(e.id))
-    } else if (profileCategoryFilter !== 'all') {
+    if (profileCategoryFilter !== 'all') {
       result = result.filter((e) => e.type === profileCategoryFilter)
     }
 
@@ -116,6 +130,15 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     )
   }, [entries, savedEntryIds, profileSearchQuery, profileCategoryFilter])
 
+  // Saved entries for the saved panel
+  const savedEntries = useMemo(() => {
+    let result = entries.filter((e) => savedEntryIds.includes(e.id))
+    if (savedPanelFilter !== 'all') {
+      result = result.filter((e) => e.type === savedPanelFilter)
+    }
+    return result
+  }, [entries, savedEntryIds, savedPanelFilter])
+
   const masonryLayout = useMasonryLayout(
     profileGridRef,
     filteredProfileEntries.length,
@@ -130,9 +153,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     }
   }, [masonryLayout, profileCategoryFilter, profileSearchQuery])
 
+  // Stats — no Saved button; it moved to the search bar area
   const stats = [
     { id: 'all', label: 'All', count: entries.length, Icon: Layers },
-    ...(isOwnProfile ? [{ id: 'saved', label: 'Saved (Private)', count: savedCount, Icon: Bookmark }] : []),
     { id: 'album', label: 'Albums', count: albumsCount, Icon: Disc3 },
     { id: 'book', label: 'Books', count: booksCount, Icon: BookOpen },
     { id: 'film', label: 'Films', count: filmsCount, Icon: Clapperboard },
@@ -146,6 +169,15 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     : userProfile.firstName
   const handleFormatted = `@${userProfile.handle.replace(/^@/, '')}`
   const canViewFollowLists = userProfile.showFollowLists ?? true
+
+  const currentFollowList = activeFollowModal === 'followers' ? SAMPLE_FOLLOWERS : SAMPLE_FOLLOWING
+  const filteredFollowList = followSearch.trim()
+    ? currentFollowList.filter(
+        (p) =>
+          p.name.toLowerCase().includes(followSearch.toLowerCase()) ||
+          p.handle.toLowerCase().includes(followSearch.toLowerCase()),
+      )
+    : currentFollowList
 
   return (
     <motion.div
@@ -221,7 +253,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               type="button"
               className="profile-pill-badge"
               style={{ cursor: 'pointer' }}
-              onClick={() => setActiveFollowModal('followers')}
+              onClick={() => { setActiveFollowModal('followers'); setFollowSearch('') }}
             >
               <Users aria-hidden="true" />
               <span>142 Followers</span>
@@ -230,7 +262,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               type="button"
               className="profile-pill-badge"
               style={{ cursor: 'pointer' }}
-              onClick={() => setActiveFollowModal('following')}
+              onClick={() => { setActiveFollowModal('following'); setFollowSearch('') }}
             >
               <Users aria-hidden="true" />
               <span>89 Following</span>
@@ -268,29 +300,131 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               Reviewed Catalog ({filteredProfileEntries.length})
             </h2>
 
-            {/* Compact Search Box */}
-            <div className="profile-search-box">
-              <Search aria-hidden="true" className="profile-search-icon" />
-              <input
-                type="text"
-                className="profile-search-input"
-                value={profileSearchQuery}
-                onChange={(e) => handleSearchChange(e.target.value)}
-                placeholder="Search profile"
-                aria-label="Search profile"
-              />
-              {profileSearchQuery && (
+            <div className="profile-catalog-actions">
+              {/* Saved bookmark icon — opens saved panel (own profile only) */}
+              {isOwnProfile && (
                 <button
                   type="button"
-                  className="profile-search-clear"
-                  onClick={() => handleSearchChange('')}
-                  aria-label="Clear search"
+                  className={`profile-saved-icon-btn ${savedPanelOpen ? 'active' : ''}`}
+                  onClick={() => setSavedPanelOpen((v) => !v)}
+                  title="View saved entries (only visible to you)"
+                  aria-label="Saved entries"
                 >
-                  <X aria-hidden="true" />
+                  <Bookmark size={16} fill={savedPanelOpen ? 'currentColor' : 'none'} />
+                  {savedCount > 0 && <span className="profile-saved-badge">{savedCount}</span>}
                 </button>
               )}
+
+              {/* Compact Search Box */}
+              <div className="profile-search-box">
+                <Search aria-hidden="true" className="profile-search-icon" />
+                <input
+                  type="text"
+                  className="profile-search-input"
+                  value={profileSearchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  placeholder="Search profile"
+                  aria-label="Search profile"
+                />
+                {profileSearchQuery && (
+                  <button
+                    type="button"
+                    className="profile-search-clear"
+                    onClick={() => handleSearchChange('')}
+                    aria-label="Clear search"
+                  >
+                    <X aria-hidden="true" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
+
+          {/* Saved Panel */}
+          <AnimatePresence>
+            {savedPanelOpen && (
+              <motion.div
+                className="saved-panel"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.18 }}
+              >
+                <div className="saved-panel-header">
+                  <div className="saved-panel-title">
+                    <Bookmark size={14} />
+                    <span>Saved Entries</span>
+                  </div>
+                  <p className="saved-panel-note">
+                    Saved entries are only visible to you.
+                  </p>
+                  <button
+                    type="button"
+                    className="saved-panel-close"
+                    onClick={() => setSavedPanelOpen(false)}
+                    aria-label="Close saved panel"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+
+                {/* Saved type filters */}
+                <div className="saved-panel-filters">
+                  {['all', 'book', 'album', 'song', 'film', 'game', 'tv'].map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      className={`saved-filter-pill ${savedPanelFilter === f ? 'active' : ''}`}
+                      onClick={() => setSavedPanelFilter(f)}
+                    >
+                      {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1) + 's'}
+                    </button>
+                  ))}
+                </div>
+
+                {savedEntries.length === 0 ? (
+                  <div className="saved-panel-empty">
+                    <Bookmark size={22} opacity={0.4} />
+                    <p>No saved entries in this category.</p>
+                  </div>
+                ) : (
+                  <div className="saved-panel-list">
+                    {savedEntries.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="saved-panel-item"
+                        onClick={() => onSelectEntry?.(entry)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => e.key === 'Enter' && onSelectEntry?.(entry)}
+                      >
+                        {entry.coverUrl ? (
+                          <img src={entry.coverUrl} alt={entry.title} className="saved-item-cover" />
+                        ) : (
+                          <div className="saved-item-cover-fallback">
+                            <BookOpen size={14} />
+                          </div>
+                        )}
+                        <div className="saved-item-info">
+                          <span className="saved-item-title">{entry.title}</span>
+                          <span className="saved-item-creator">{entry.creator}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="saved-item-unsave"
+                          onClick={(e) => { e.stopPropagation(); onToggleSave?.(entry.id) }}
+                          title="Unsave"
+                          aria-label="Remove from saved"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Skeleton Loading Grid with Fade In Animation */}
           <AnimatePresence mode="wait">
@@ -307,7 +441,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             ) : null}
           </AnimatePresence>
 
-          {/* Review Cards Grid Reusing Home Card Component with True Masonry Layout & Fade In */}
+          {/* Review Cards Grid */}
           {filteredProfileEntries.length === 0 ? (
             <div className="profile-empty">
               <BookOpen aria-hidden="true" />
@@ -374,6 +508,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       onOpenProfile={() => {}}
                       typeIcon={Icon}
                       typeLabel={label}
+                      isLiked={likedEntryIds.includes(entry.id)}
+                      isSaved={savedEntryIds.includes(entry.id)}
+                      onToggleLike={() => onToggleLike?.(entry.id)}
+                      onToggleSave={() => onToggleSave?.(entry.id)}
+                      commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
+                      onToggleCommentsDisabled={() => onToggleCommentsDisabled?.(entry.id)}
                     />
                   </div>
                 )
@@ -383,63 +523,119 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         </section>
       </div>
 
-      {/* Followers / Following List Modal */}
+      {/* ── Followers / Following Modal — redesigned ── */}
       <AnimatePresence>
         {activeFollowModal && (
           <div className="modal-backdrop" onClick={() => setActiveFollowModal(null)}>
             <motion.div
-              className="settings-modal"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
+              className="follow-modal"
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="settings-header" style={{ justifyContent: 'space-between', display: 'flex', alignItems: 'center' }}>
-                <div className="settings-header-title">
-                  <Users aria-hidden="true" />
-                  <h2>{activeFollowModal === 'followers' ? 'Followers' : 'Following'}</h2>
+              {/* Modal header with tab switcher */}
+              <div className="follow-modal-header">
+                <div className="follow-modal-tabs">
+                  <button
+                    type="button"
+                    className={`follow-modal-tab ${activeFollowModal === 'followers' ? 'active' : ''}`}
+                    onClick={() => { setActiveFollowModal('followers'); setFollowSearch('') }}
+                  >
+                    Followers
+                    <span className="follow-tab-count">142</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`follow-modal-tab ${activeFollowModal === 'following' ? 'active' : ''}`}
+                    onClick={() => { setActiveFollowModal('following'); setFollowSearch('') }}
+                  >
+                    Following
+                    <span className="follow-tab-count">89</span>
+                  </button>
                 </div>
-                <button type="button" className="composer-close-icon" onClick={() => setActiveFollowModal(null)}>
-                  <X aria-hidden="true" />
+                <button
+                  type="button"
+                  className="follow-modal-close"
+                  onClick={() => setActiveFollowModal(null)}
+                  aria-label="Close"
+                >
+                  <X size={16} />
                 </button>
               </div>
 
+              {/* Search within follow list */}
+              <div className="follow-modal-search">
+                <Search size={14} />
+                <input
+                  type="text"
+                  placeholder={`Search ${activeFollowModal}…`}
+                  value={followSearch}
+                  onChange={(e) => setFollowSearch(e.target.value)}
+                  className="follow-search-input"
+                  autoFocus
+                />
+                {followSearch && (
+                  <button type="button" onClick={() => setFollowSearch('')} className="follow-search-clear">
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+
+              {/* List */}
               {!canViewFollowLists && !isOwnProfile ? (
-                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--secondary)' }}>
-                  <Lock style={{ marginBottom: '8px', opacity: 0.6 }} />
-                  <p>Followers and Following lists are hidden by this user in their privacy settings.</p>
+                <div className="follow-modal-locked">
+                  <Lock size={24} opacity={0.5} />
+                  <p>Followers and Following lists are hidden by this user.</p>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-                  {(activeFollowModal === 'followers' ? SAMPLE_FOLLOWERS : SAMPLE_FOLLOWING).map((item) => (
-                    <div
-                      key={item.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justify: 'space-between',
-                        padding: '10px 14px',
-                        borderRadius: '8px',
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.06)',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div className="follow-modal-list">
+                  {filteredFollowList.length === 0 ? (
+                    <div className="follow-modal-empty">
+                      <p>No results for "{followSearch}"</p>
+                    </div>
+                  ) : (
+                    filteredFollowList.map((person) => (
+                      <div key={person.id} className="follow-person-row">
                         <img
-                          src={item.avatar}
-                          alt={item.name}
-                          style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'cover' }}
+                          src={person.avatar}
+                          alt={person.name}
+                          className="follow-person-avatar"
                         />
-                        <div>
-                          <div style={{ fontWeight: 600, color: 'var(--primary)', fontSize: '14px' }}>{item.name}</div>
-                          <div style={{ fontSize: '12px', color: 'var(--secondary)' }}>{item.handle}</div>
+                        <div className="follow-person-info">
+                          <span className="follow-person-name">{person.name}</span>
+                          <span className="follow-person-meta">
+                            {person.handle}
+                            <span className="follow-person-dot">·</span>
+                            {person.reviews} reviews
+                            {person.mutuals > 0 && (
+                              <>
+                                <span className="follow-person-dot">·</span>
+                                <span className="follow-mutual">{person.mutuals} mutual</span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                        <div className="follow-person-actions">
+                          <button type="button" className="follow-person-btn follow-btn-secondary">
+                            <MessageCircle size={13} />
+                          </button>
+                          {activeFollowModal === 'followers' ? (
+                            <button type="button" className="follow-person-btn follow-btn-primary">
+                              <UserCheck size={13} />
+                              <span>Following</span>
+                            </button>
+                          ) : (
+                            <button type="button" className="follow-person-btn follow-btn-primary is-following">
+                              <UserCheck size={13} />
+                              <span>Following</span>
+                            </button>
+                          )}
                         </div>
                       </div>
-                      <button type="button" className="ghost-btn" style={{ padding: '6px 12px', fontSize: '12px' }}>
-                        View
-                      </button>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               )}
             </motion.div>

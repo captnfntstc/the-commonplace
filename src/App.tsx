@@ -474,19 +474,78 @@ function AppContent() {
   // Render Standalone Pages
   if (activeView === 'profile') {
     return (
-      <UserProfilePage
-        onBack={() => setActiveView('feed')}
-        entries={entries}
-        savedEntryIds={savedEntryIds}
-        onSelectEntry={(entry) => setOverlayEntry(entry)}
-        userProfile={userProfile}
-        onNavigateToSettings={() => setActiveView('settings')}
-        onDeleteEntry={(id) => promptDeleteEntry(id)}
-        onEditEntry={(entry) => openComposer(entry)}
-        categoryFilter={profileCategoryFilter}
-        onCategoryFilterChange={setProfileCategoryFilter}
-        isOwnProfile={true}
-      />
+      <>
+        <UserProfilePage
+          onBack={() => setActiveView('feed')}
+          entries={entries}
+          savedEntryIds={savedEntryIds}
+          likedEntryIds={likedEntryIds}
+          disabledCommentEntryIds={disabledCommentEntryIds}
+          onSelectEntry={(entry) => setOverlayEntry(entry)}
+          onToggleLike={toggleLikeEntry}
+          onToggleSave={toggleSaveEntry}
+          onToggleCommentsDisabled={toggleCommentsDisabled}
+          userProfile={userProfile}
+          onNavigateToSettings={() => setActiveView('settings')}
+          onDeleteEntry={(id) => promptDeleteEntry(id)}
+          onEditEntry={(entry) => openComposer(entry)}
+          categoryFilter={profileCategoryFilter}
+          onCategoryFilterChange={setProfileCategoryFilter}
+          isOwnProfile={true}
+        />
+        <CardOverlayModal
+          entry={overlayEntry}
+          onClose={() => setOverlayEntry(null)}
+          isLiked={overlayEntry ? likedEntryIds.includes(overlayEntry.id) : false}
+          isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
+          onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
+          onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
+        />
+        <AnimatePresence>
+          {deletingEntry && (
+            <div className="modal-backdrop" style={{ zIndex: 120 }} onClick={() => setDeletingEntry(null)}>
+              <motion.div
+                className="settings-modal"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="settings-header">
+                  <div className="settings-header-title">
+                    <Trash2 style={{ color: '#e57373' }} aria-hidden="true" />
+                    <h2>Delete Entry?</h2>
+                  </div>
+                </div>
+                <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 20 }}>
+                  Are you sure you want to delete <strong>"{deletingEntry.title}"</strong>? This action cannot be undone.
+                </p>
+                <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                  <button type="button" className="ghost-btn" onClick={() => setDeletingEntry(null)}>Cancel</button>
+                  <button
+                    type="button"
+                    className="action-btn danger"
+                    onClick={() => { if (deletingEntry) { deleteEntry(deletingEntry.id); setDeletingEntry(null) } }}
+                  >
+                    Delete Entry
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {composerOpen ? (
+            <EntryComposer
+              entry={editingEntry}
+              onClose={closeComposer}
+              onSave={handleSave}
+              commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
+              onToggleCommentsDisabled={() => editingEntry && toggleCommentsDisabled(editingEntry.id)}
+            />
+          ) : null}
+        </AnimatePresence>
+      </>
     )
   }
 
@@ -950,6 +1009,8 @@ function AppContent() {
             entry={editingEntry}
             onClose={closeComposer}
             onSave={handleSave}
+            commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
+            onToggleCommentsDisabled={() => editingEntry && toggleCommentsDisabled(editingEntry.id)}
           />
         ) : null}
       </AnimatePresence>
@@ -997,10 +1058,14 @@ function EntryComposer({
   entry,
   onClose,
   onSave,
+  commentsDisabled = false,
+  onToggleCommentsDisabled,
 }: {
   entry: Entry | null
   onClose: () => void
   onSave: (draft: EntryDraft) => void
+  commentsDisabled?: boolean
+  onToggleCommentsDisabled?: () => void
 }) {
   const initialDraft = entry
     ? {
@@ -1009,11 +1074,14 @@ function EntryComposer({
         creator: entry.creator,
         provider: entry.provider,
         providerId: entry.providerId,
+        genre: entry.genre,
+        year: entry.year,
         rating: entry.rating,
         favoritePassage: entry.favoritePassage,
         reflection: entry.reflection,
         reflectionAlign: entry.reflectionAlign || 'left',
         passageAlign: entry.passageAlign || 'left',
+        enableDropCap: entry.enableDropCap ?? false,
         coverUrl: entry.coverUrl,
         summary: entry.summary,
         coverTone: entry.coverTone,
@@ -1032,7 +1100,8 @@ function EntryComposer({
   const [showPassage, setShowPassage] = useState(() => Boolean(entry?.favoritePassage?.trim()))
   const [lyricsStatus, setLyricsStatus] = useState<
     'idle' | 'loading' | 'ready' | 'not-found'
-  >('idle')
+  >(entry ? 'idle' : 'idle') // on edit, we skip auto-fetch; set to 'loaded-skip' sentinel
+  const isEditMode = Boolean(entry)
   const [lyrics, setLyrics] = useState('')
   const [showUnratedConfirm, setShowUnratedConfirm] = useState(false)
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false)
@@ -1092,7 +1161,7 @@ function EntryComposer({
       })
 
     return () => abortController.abort()
-  }, [draft.type, draft.title, draft.creator, lyricsStatus, draft.favoritePassage])
+  }, [isEditMode, draft.type, draft.title, draft.creator, lyricsStatus, draft.favoritePassage])
 
   useEffect(() => {
     const normalizedQuery = metadataQuery.trim()
@@ -1564,6 +1633,16 @@ function EntryComposer({
                 }
               />
               <div className="composer-action-btns">
+                {entry && onToggleCommentsDisabled && (
+                  <label className="dont-show-again-label" style={{ marginRight: 'auto', fontSize: '12px' }}>
+                    <input
+                      type="checkbox"
+                      checked={commentsDisabled}
+                      onChange={onToggleCommentsDisabled}
+                    />
+                    <span>Disable comments</span>
+                  </label>
+                )}
                 <button className="ghost-btn" type="button" onClick={handleRequestClose}>
                   Cancel
                 </button>
