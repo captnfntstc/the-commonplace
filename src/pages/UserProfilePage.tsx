@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft,
+  ArrowLeftCircle,
   User,
   Search,
   X,
@@ -19,13 +20,15 @@ import {
   Users,
   Lock,
   UserCheck,
-  UserPlus,
   MessageCircle,
 } from 'lucide-react'
 import { Card, type CardEntry } from '../components/CommonplaceCard/Card'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { CardSkeletonGrid } from '../components/CommonplaceCard/CardSkeleton'
 import type { UserProfileState } from './SettingsPage'
+
+// ─── Catalog mode ────────────────────────────────────────────────────────────
+type CatalogMode = 'reviewed' | 'shelf'
 
 interface UserProfilePageProps {
   onBack: () => void
@@ -75,23 +78,44 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onCategoryFilterChange,
   isOwnProfile = true,
 }) => {
+  // ── Catalog mode ────────────────────────────────────────────────────────────
+  const [catalogMode, setCatalogMode] = useState<CatalogMode>('reviewed')
+
+  // ── Reviewed catalog state ──────────────────────────────────────────────────
   const [profileSearchQuery, setProfileSearchQuery] = useState('')
   const profileCategoryFilter = categoryFilter
   const setProfileCategoryFilter = onCategoryFilterChange
   const [expandedCardId, setExpandedCardId] = useState<string>('')
   const [isFilterSwitching, setIsFilterSwitching] = useState(false)
+
+  // ── Shelf state (independent from reviewed) ─────────────────────────────────
+  const [shelfSearchQuery, setShelfSearchQuery] = useState('')
+  const [shelfCategoryFilter, setShelfCategoryFilter] = useState('all')
+  const [shelfExpandedCardId, setShelfExpandedCardId] = useState<string>('')
+  const [isShelfSwitching, setIsShelfSwitching] = useState(false)
+
+  // ── Bookmark press animation ────────────────────────────────────────────────
+  const [bookmarkPressing, setBookmarkPressing] = useState(false)
+
+  // ── Follow modal ────────────────────────────────────────────────────────────
   const [activeFollowModal, setActiveFollowModal] = useState<'followers' | 'following' | null>(null)
-  const [savedPanelOpen, setSavedPanelOpen] = useState(false)
-  const [savedPanelFilter, setSavedPanelFilter] = useState('all')
   const [followSearch, setFollowSearch] = useState('')
+
   const profileGridRef = useRef<HTMLElement>(null)
 
-  const booksCount = entries.filter((e) => e.type === 'book').length
-  const albumsCount = entries.filter((e) => e.type === 'album').length
-  const filmsCount = entries.filter((e) => e.type === 'film').length
-  const songsCount = entries.filter((e) => e.type === 'song').length
-  const gamesCount = entries.filter((e) => e.type === 'game').length
-  const showsCount = entries.filter((e) => e.type === 'tv').length
+  // ── Counts (switches dynamically based on catalogMode) ───────────────────────
+  const activeDataset = useMemo(() => {
+    return catalogMode === 'reviewed'
+      ? entries
+      : entries.filter((e) => savedEntryIds.includes(e.id))
+  }, [catalogMode, entries, savedEntryIds])
+
+  const booksCount = activeDataset.filter((e) => e.type === 'book').length
+  const albumsCount = activeDataset.filter((e) => e.type === 'album').length
+  const filmsCount = activeDataset.filter((e) => e.type === 'film').length
+  const songsCount = activeDataset.filter((e) => e.type === 'song').length
+  const gamesCount = activeDataset.filter((e) => e.type === 'game').length
+  const showsCount = activeDataset.filter((e) => e.type === 'tv').length
   const savedCount = entries.filter((e) => savedEntryIds.includes(e.id)).length
 
   const avgRating =
@@ -99,25 +123,39 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       ? (entries.reduce((acc, curr) => acc + curr.rating, 0) / entries.length).toFixed(1)
       : '0.0'
 
+  // ── Category change handlers ────────────────────────────────────────────────
   const handleCategoryChange = (id: string) => {
-    if (id === profileCategoryFilter) return
-    setIsFilterSwitching(true)
-    setProfileCategoryFilter(id)
+    if (catalogMode === 'reviewed') {
+      if (id === profileCategoryFilter) return
+      setIsFilterSwitching(true)
+      setProfileCategoryFilter(id)
+    } else {
+      if (id === shelfCategoryFilter) return
+      setIsShelfSwitching(true)
+      setShelfCategoryFilter(id)
+    }
   }
 
+  // ── Search change handlers ──────────────────────────────────────────────────
   const handleSearchChange = (val: string) => {
-    setIsFilterSwitching(true)
-    setProfileSearchQuery(val)
+    if (catalogMode === 'reviewed') {
+      setIsFilterSwitching(true)
+      setProfileSearchQuery(val)
+    } else {
+      setIsShelfSwitching(true)
+      setShelfSearchQuery(val)
+    }
   }
 
+  const currentSearchQuery = catalogMode === 'reviewed' ? profileSearchQuery : shelfSearchQuery
+
+  // ── Filtered datasets ───────────────────────────────────────────────────────
   const filteredProfileEntries = useMemo(() => {
     let result = entries
     if (profileCategoryFilter !== 'all') {
       result = result.filter((e) => e.type === profileCategoryFilter)
     }
-
     if (!profileSearchQuery.trim()) return result
-
     const q = profileSearchQuery.toLowerCase()
     return result.filter(
       (entry) =>
@@ -128,34 +166,63 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         entry.favoritePassage.toLowerCase().includes(q) ||
         entry.reflection.toLowerCase().includes(q),
     )
-  }, [entries, savedEntryIds, profileSearchQuery, profileCategoryFilter])
+  }, [entries, profileSearchQuery, profileCategoryFilter])
 
-  // Saved entries for the saved panel
-  const savedEntries = useMemo(() => {
+  const filteredShelfEntries = useMemo(() => {
     let result = entries.filter((e) => savedEntryIds.includes(e.id))
-    if (savedPanelFilter !== 'all') {
-      result = result.filter((e) => e.type === savedPanelFilter)
+    if (shelfCategoryFilter !== 'all') {
+      result = result.filter((e) => e.type === shelfCategoryFilter)
     }
-    return result
-  }, [entries, savedEntryIds, savedPanelFilter])
+    if (!shelfSearchQuery.trim()) return result
+    const q = shelfSearchQuery.toLowerCase()
+    return result.filter(
+      (entry) =>
+        entry.title.toLowerCase().includes(q) ||
+        entry.creator.toLowerCase().includes(q) ||
+        entry.provider.toLowerCase().includes(q) ||
+        (entry.genre && entry.genre.toLowerCase().includes(q)) ||
+        entry.favoritePassage.toLowerCase().includes(q) ||
+        entry.reflection.toLowerCase().includes(q),
+    )
+  }, [entries, savedEntryIds, shelfSearchQuery, shelfCategoryFilter])
 
-  const masonryLayout = useMasonryLayout(
+  // Active dataset for rendering
+  const activeEntries = catalogMode === 'reviewed' ? filteredProfileEntries : filteredShelfEntries
+  const activeExpandedCardId = catalogMode === 'reviewed' ? expandedCardId : shelfExpandedCardId
+  const activeIsFilterSwitching = catalogMode === 'reviewed' ? isFilterSwitching : isShelfSwitching
+  const activeFilter = catalogMode === 'reviewed' ? profileCategoryFilter : shelfCategoryFilter
+
+  // ── Masonry layout ─────────────────────────────────────────────────────────
+  const activeMasonryLayout = useMasonryLayout(
     profileGridRef,
-    filteredProfileEntries.length,
-    expandedCardId,
-    profileCategoryFilter,
+    activeEntries.length,
+    activeExpandedCardId,
+    `${catalogMode}-${activeFilter}-${currentSearchQuery}`,
   )
 
+  // ── Filter switching cooldown ───────────────────────────────────────────────
   useEffect(() => {
-    if (masonryLayout) {
-      const timer = setTimeout(() => setIsFilterSwitching(false), 140)
+    if (activeMasonryLayout) {
+      const timer = setTimeout(() => {
+        setIsFilterSwitching(false)
+        setIsShelfSwitching(false)
+      }, 140)
       return () => clearTimeout(timer)
     }
-  }, [masonryLayout, profileCategoryFilter, profileSearchQuery])
+  }, [activeMasonryLayout, activeFilter, currentSearchQuery, catalogMode])
 
-  // Stats — no Saved button; it moved to the search bar area
+  // ── Bookmark toggle ─────────────────────────────────────────────────────────
+  const handleBookmarkToggle = () => {
+    setBookmarkPressing(true)
+    setTimeout(() => setBookmarkPressing(false), 120)
+    setCatalogMode((prev) => (prev === 'reviewed' ? 'shelf' : 'reviewed'))
+    // Clear shelf switching state so grid animates in cleanly
+    setIsShelfSwitching(false)
+  }
+
+  // ── Stats ───────────────────────────────────────────────────────────────────
   const stats = [
-    { id: 'all', label: 'All', count: entries.length, Icon: Layers },
+    { id: 'all', label: 'All', count: activeDataset.length, Icon: Layers },
     { id: 'album', label: 'Albums', count: albumsCount, Icon: Disc3 },
     { id: 'book', label: 'Books', count: booksCount, Icon: BookOpen },
     { id: 'film', label: 'Films', count: filmsCount, Icon: Clapperboard },
@@ -178,6 +245,19 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           p.handle.toLowerCase().includes(followSearch.toLowerCase()),
       )
     : currentFollowList
+
+  // ── Type icon helper ────────────────────────────────────────────────────────
+  const getTypeMeta = (type: string) => {
+    switch (type) {
+      case 'album': return { Icon: Disc3, label: 'Albums' }
+      case 'book': return { Icon: BookOpen, label: 'Books' }
+      case 'film': return { Icon: Clapperboard, label: 'Films' }
+      case 'game': return { Icon: Gamepad2, label: 'Games' }
+      case 'song': return { Icon: Music4, label: 'Songs' }
+      case 'tv': return { Icon: Tv, label: 'Shows' }
+      default: return { Icon: BookOpen, label: 'Books' }
+    }
+  }
 
   return (
     <motion.div
@@ -273,7 +353,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         {/* Interactive Stats Grid (Clickable Filter Buttons) */}
         <div className="profile-stats-grid">
           {stats.map(({ id, label, count, Icon }) => {
-            const isActive = profileCategoryFilter === id
+            const isActive = activeFilter === id
             return (
               <button
                 key={id}
@@ -293,40 +373,77 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
         <div className="profile-section-divider" />
 
-        {/* Catalog Section */}
+        {/* ── Catalog Section ────────────────────────────────────────────────── */}
         <section className="profile-catalog-section">
           <div className="profile-catalog-header">
-            <h2 className="profile-catalog-title">
-              Reviewed Catalog ({filteredProfileEntries.length})
-            </h2>
+
+            {/* Title area — animated crossfade between modes */}
+            <AnimatePresence mode="wait" initial={false}>
+              {catalogMode === 'reviewed' ? (
+                <motion.div
+                  key="header-reviewed"
+                  className="catalog-header-title-group"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                >
+                  <h2 className="profile-catalog-title">
+                    Reviewed Catalog ({filteredProfileEntries.length})
+                  </h2>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="header-shelf"
+                  className="catalog-header-title-group"
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                >
+                  <h2 className="profile-catalog-title">
+                    My Shelf ({savedCount > 0 ? filteredShelfEntries.length : 0})
+                  </h2>
+                  <span className="catalog-privacy-note">
+                    Saved entries are only visible to you
+                  </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className="profile-catalog-actions">
-              {/* Saved bookmark icon — opens saved panel (own profile only) */}
+              {/* Bookmark toggle — own profile only */}
               {isOwnProfile && (
                 <button
                   type="button"
-                  className={`profile-saved-icon-btn ${savedPanelOpen ? 'active' : ''}`}
-                  onClick={() => setSavedPanelOpen((v) => !v)}
-                  title="View saved entries (only visible to you)"
-                  aria-label="Saved entries"
+                  className={`profile-saved-icon-btn ${catalogMode === 'shelf' ? 'active' : ''} ${bookmarkPressing ? 'is-pressing' : ''}`}
+                  onClick={handleBookmarkToggle}
+                  title={catalogMode === 'shelf' ? 'Return to Reviewed Catalog' : 'Open Saved Shelf'}
+                  aria-label="Open Saved Shelf"
                 >
-                  <Bookmark size={16} fill={savedPanelOpen ? 'currentColor' : 'none'} />
-                  {savedCount > 0 && <span className="profile-saved-badge">{savedCount}</span>}
+                  <Bookmark
+                    size={16}
+                    fill={catalogMode === 'shelf' ? 'currentColor' : 'none'}
+                    aria-hidden="true"
+                  />
+                  {savedCount > 0 && (
+                    <span className="profile-saved-badge">{savedCount}</span>
+                  )}
                 </button>
               )}
 
-              {/* Compact Search Box */}
+              {/* Search box — placeholder swaps by mode */}
               <div className="profile-search-box">
                 <Search aria-hidden="true" className="profile-search-icon" />
                 <input
                   type="text"
                   className="profile-search-input"
-                  value={profileSearchQuery}
+                  value={currentSearchQuery}
                   onChange={(e) => handleSearchChange(e.target.value)}
-                  placeholder="Search profile"
-                  aria-label="Search profile"
+                  placeholder={catalogMode === 'reviewed' ? 'Search catalog…' : 'Search shelf…'}
+                  aria-label={catalogMode === 'reviewed' ? 'Search catalog' : 'Search shelf'}
                 />
-                {profileSearchQuery && (
+                {currentSearchQuery && (
                   <button
                     type="button"
                     className="profile-search-clear"
@@ -340,190 +457,117 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             </div>
           </div>
 
-          {/* Saved Panel */}
-          <AnimatePresence>
-            {savedPanelOpen && (
-              <motion.div
-                className="saved-panel"
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={{ duration: 0.18 }}
-              >
-                <div className="saved-panel-header">
-                  <div className="saved-panel-title">
-                    <Bookmark size={14} />
-                    <span>Saved Entries</span>
-                  </div>
-                  <p className="saved-panel-note">
-                    Saved entries are only visible to you.
-                  </p>
+          {/* ── Card Grid — smooth masonry calculation & opacity fade ────────── */}
+          <div key={catalogMode}>
+            {/* Skeleton */}
+            {(activeIsFilterSwitching || !activeMasonryLayout) && activeEntries.length > 0 ? (
+              <CardSkeletonGrid count={activeEntries.length > 6 ? 6 : Math.max(2, activeEntries.length)} />
+            ) : null}
+
+            {/* Empty states */}
+            {activeEntries.length === 0 && catalogMode === 'reviewed' && (
+              <div className="profile-empty">
+                <BookOpen aria-hidden="true" />
+                <h3>No matching reviews found</h3>
+                <p>
+                  {profileSearchQuery
+                    ? `No reviews match "${profileSearchQuery}" in ${displayName}'s profile.`
+                    : 'No entries cataloged in this category.'}
+                </p>
+              </div>
+            )}
+
+            {activeEntries.length === 0 && catalogMode === 'shelf' && (
+              <div className="profile-empty shelf-empty">
+                <span className="shelf-empty-icon" aria-hidden="true">📚</span>
+                <h3>Your shelf is empty.</h3>
+                <p>
+                  {shelfSearchQuery || shelfCategoryFilter !== 'all'
+                    ? 'No saved entries match your current filter.'
+                    : 'Save books, albums, films, games, or notes to return to them later.'}
+                </p>
+                {!shelfSearchQuery && shelfCategoryFilter === 'all' && (
                   <button
                     type="button"
-                    className="saved-panel-close"
-                    onClick={() => setSavedPanelOpen(false)}
-                    aria-label="Close saved panel"
+                    className="shelf-empty-cta"
+                    onClick={() => {
+                      setIsFilterSwitching(true)
+                      setIsShelfSwitching(true)
+                      setCatalogMode('reviewed')
+                    }}
                   >
-                    <X size={14} />
+                    Explore Catalog
                   </button>
-                </div>
+                )}
+              </div>
+            )}
 
-                {/* Saved type filters */}
-                <div className="saved-panel-filters">
-                  {['all', 'book', 'album', 'song', 'film', 'game', 'tv'].map((f) => (
-                    <button
-                      key={f}
-                      type="button"
-                      className={`saved-filter-pill ${savedPanelFilter === f ? 'active' : ''}`}
-                      onClick={() => setSavedPanelFilter(f)}
-                    >
-                      {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1) + 's'}
-                    </button>
-                  ))}
-                </div>
+            {/* Cards masonry grid */}
+            {activeEntries.length > 0 && (
+              <section
+                key={`${catalogMode}-cards`}
+                className="card-grid profile-masonry-grid"
+                ref={profileGridRef as React.RefObject<HTMLElement>}
+                style={{
+                  position: 'relative',
+                  height: activeMasonryLayout ? activeMasonryLayout.height : 'auto',
+                  minHeight: 320,
+                  opacity: (activeMasonryLayout && !activeIsFilterSwitching) ? 1 : 0,
+                  transition: 'opacity 220ms ease-out',
+                }}
+              >
+                  {activeEntries.map((entry) => {
+                    const pos = activeMasonryLayout?.positions.get(entry.id)
+                    const { Icon, label } = getTypeMeta(entry.type)
 
-                {savedEntries.length === 0 ? (
-                  <div className="saved-panel-empty">
-                    <Bookmark size={22} opacity={0.4} />
-                    <p>No saved entries in this category.</p>
-                  </div>
-                ) : (
-                  <div className="saved-panel-list">
-                    {savedEntries.map((entry) => (
+                    return (
                       <div
                         key={entry.id}
-                        className="saved-panel-item"
-                        onClick={() => onSelectEntry?.(entry)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => e.key === 'Enter' && onSelectEntry?.(entry)}
+                        data-id={entry.id}
+                        className="masonry-item"
+                        style={pos ? {
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: pos.width,
+                          transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
+                          transition: 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
+                          willChange: 'transform',
+                        } : { width: '100%', marginBottom: 14 }}
                       >
-                        {entry.coverUrl ? (
-                          <img src={entry.coverUrl} alt={entry.title} className="saved-item-cover" />
-                        ) : (
-                          <div className="saved-item-cover-fallback">
-                            <BookOpen size={14} />
-                          </div>
-                        )}
-                        <div className="saved-item-info">
-                          <span className="saved-item-title">{entry.title}</span>
-                          <span className="saved-item-creator">{entry.creator}</span>
-                        </div>
-                        <button
-                          type="button"
-                          className="saved-item-unsave"
-                          onClick={(e) => { e.stopPropagation(); onToggleSave?.(entry.id) }}
-                          title="Unsave"
-                          aria-label="Remove from saved"
-                        >
-                          <X size={12} />
-                        </button>
+                        <Card
+                          entry={entry}
+                          expanded={activeExpandedCardId === entry.id}
+                          onDelete={() => onDeleteEntry?.(entry.id)}
+                          onEdit={() => onEditEntry?.(entry)}
+                          onToggle={() => {
+                            if (catalogMode === 'reviewed') {
+                              setExpandedCardId(expandedCardId === entry.id ? '' : entry.id)
+                            } else {
+                              setShelfExpandedCardId(shelfExpandedCardId === entry.id ? '' : entry.id)
+                            }
+                          }}
+                          onExpandOverlay={() => onSelectEntry?.(entry)}
+                          onOpenProfile={() => {}}
+                          typeIcon={Icon}
+                          typeLabel={label}
+                          isLiked={likedEntryIds.includes(entry.id)}
+                          isSaved={savedEntryIds.includes(entry.id)}
+                          onToggleLike={() => onToggleLike?.(entry.id)}
+                          onToggleSave={() => onToggleSave?.(entry.id)}
+                          commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
+                          onToggleCommentsDisabled={() => onToggleCommentsDisabled?.(entry.id)}
+                        />
                       </div>
-                    ))}
-                  </div>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Skeleton Loading Grid with Fade In Animation */}
-          <AnimatePresence mode="wait">
-            {(isFilterSwitching || !masonryLayout) && filteredProfileEntries.length > 0 ? (
-              <motion.div
-                key="profile-skeleton"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.18 }}
-              >
-                <CardSkeletonGrid count={filteredProfileEntries.length > 6 ? 6 : Math.max(2, filteredProfileEntries.length)} />
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-
-          {/* Review Cards Grid */}
-          {filteredProfileEntries.length === 0 ? (
-            <div className="profile-empty">
-              <BookOpen aria-hidden="true" />
-              <h3>No matching reviews found</h3>
-              <p>
-                {profileSearchQuery
-                  ? `No reviews match "${profileSearchQuery}" in ${displayName}'s profile.`
-                  : 'No entries cataloged in this category.'}
-              </p>
+                    )
+                  })}
+                </section>
+              )}
             </div>
-          ) : (
-            <motion.section
-              key="profile-cards"
-              className="card-grid profile-masonry-grid"
-              ref={profileGridRef as React.RefObject<HTMLElement>}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: (masonryLayout && !isFilterSwitching) ? 1 : 0 }}
-              transition={{ duration: 0.28 }}
-              style={{
-                position: 'relative',
-                height: masonryLayout ? masonryLayout.height : 'auto',
-                minHeight: 320,
-              }}
-            >
-              {filteredProfileEntries.map((entry) => {
-                const pos = masonryLayout?.positions.get(entry.id)
-                const getMeta = () => {
-                  switch (entry.type) {
-                    case 'album': return { Icon: Disc3, label: 'Albums' }
-                    case 'book': return { Icon: BookOpen, label: 'Books' }
-                    case 'film': return { Icon: Clapperboard, label: 'Films' }
-                    case 'game': return { Icon: Gamepad2, label: 'Games' }
-                    case 'song': return { Icon: Music4, label: 'Songs' }
-                    case 'tv': return { Icon: Tv, label: 'Shows' }
-                    default: return { Icon: BookOpen, label: 'Books' }
-                  }
-                }
-                const { Icon, label } = getMeta()
+          </section>
+        </div>
 
-                return (
-                  <div
-                    key={entry.id}
-                    data-id={entry.id}
-                    className="masonry-item"
-                    style={pos ? {
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: pos.width,
-                      transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
-                      transition: 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
-                      willChange: 'transform',
-                    } : { width: '100%', marginBottom: 14 }}
-                  >
-                    <Card
-                      entry={entry}
-                      expanded={expandedCardId === entry.id}
-                      onDelete={() => onDeleteEntry?.(entry.id)}
-                      onEdit={() => onEditEntry?.(entry)}
-                      onToggle={() =>
-                        setExpandedCardId(expandedCardId === entry.id ? '' : entry.id)
-                      }
-                      onExpandOverlay={() => onSelectEntry?.(entry)}
-                      onOpenProfile={() => {}}
-                      typeIcon={Icon}
-                      typeLabel={label}
-                      isLiked={likedEntryIds.includes(entry.id)}
-                      isSaved={savedEntryIds.includes(entry.id)}
-                      onToggleLike={() => onToggleLike?.(entry.id)}
-                      onToggleSave={() => onToggleSave?.(entry.id)}
-                      commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
-                      onToggleCommentsDisabled={() => onToggleCommentsDisabled?.(entry.id)}
-                    />
-                  </div>
-                )
-              })}
-            </motion.section>
-          )}
-        </section>
-      </div>
-
-      {/* ── Followers / Following Modal — redesigned ── */}
+      {/* ── Followers / Following Modal ── */}
       <AnimatePresence>
         {activeFollowModal && (
           <div className="modal-backdrop" onClick={() => setActiveFollowModal(null)}>

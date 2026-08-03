@@ -149,6 +149,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
       initials: 'JB',
       text: newCommentText.trim(),
       createdAt: 'Just now',
+      replies: [],
     }
     setComments((prev) => [...prev, item])
     setNewCommentText('')

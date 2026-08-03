@@ -64,22 +64,30 @@ export function useMasonryLayout(
         const heights = Array<number>(numCols).fill(M_PAD_TOP)
         const positions = new Map<string, MasonryPos>()
 
-        items.forEach((item, index) => {
+        items.forEach((item) => {
           const id = item.dataset.id
           if (!id) return
-          const col = index % numCols
+
+          // Shortest-column algorithm: place item in column with lowest height
+          let minCol = 0
+          let minHeight = heights[0]
+          for (let c = 1; c < numCols; c++) {
+            if (heights[c] < minHeight) {
+              minHeight = heights[c]
+              minCol = c
+            }
+          }
+
           const isExpanded = id === expandedId
-
           item.style.width = `${colWidth}px`
-
           const itemHeight = getItemTargetHeight(item, isExpanded)
 
           positions.set(id, {
-            left: M_PAD_X + col * (colWidth + M_GAP),
-            top: heights[col],
+            left: M_PAD_X + minCol * (colWidth + M_GAP),
+            top: heights[minCol],
             width: colWidth,
           })
-          heights[col] += itemHeight + M_GAP
+          heights[minCol] += itemHeight + M_GAP
         })
 
         setLayout({ positions, height: Math.max(...heights) + 60 })

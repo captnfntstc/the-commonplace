@@ -5420,12 +5420,74 @@ code.detail-value {
   flex-wrap: wrap;
 }
 
+/* Title group — contains h2 + optional back button */
+.catalog-header-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
 .profile-catalog-title {
   font-family: var(--display);
   font-size: 22px;
   font-weight: 600;
   color: var(--text-strong);
   margin: 0;
+}
+
+/* ── Saved privacy note ── */
+.catalog-privacy-note {
+  font-family: var(--display);
+  font-size: 12.5px;
+  color: var(--secondary);
+  opacity: 0.75;
+  margin-top: 2px;
+}
+
+/* ── Bookmark press keyframe ── */
+@keyframes bookmark-press {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+
+.profile-saved-icon-btn.is-pressing {
+  animation: bookmark-press 120ms ease-out forwards;
+}
+
+/* ── Shelf empty state ── */
+.shelf-empty {
+  text-align: center;
+}
+
+.shelf-empty-icon {
+  font-size: 38px;
+  line-height: 1;
+  display: block;
+  margin-bottom: 4px;
+  filter: grayscale(0.2);
+}
+
+.shelf-empty-cta {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 20px;
+  border-radius: 99px;
+  background: transparent;
+  border: 1px solid rgba(201, 169, 110, 0.35);
+  color: var(--accent);
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.shelf-empty-cta:hover {
+  background: rgba(201, 169, 110, 0.1);
+  border-color: rgba(201, 169, 110, 0.55);
 }
 
 .profile-search-box {
