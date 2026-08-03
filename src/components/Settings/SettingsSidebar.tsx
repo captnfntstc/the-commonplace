@@ -2,14 +2,10 @@ import React from 'react'
 import {
   User,
   Sliders,
-  Moon,
   Bell,
-  Link as LinkIcon,
   Shield,
   Lock,
   Database,
-  Download,
-  Trash2,
 } from 'lucide-react'
 
 export type SettingsNavTab =
