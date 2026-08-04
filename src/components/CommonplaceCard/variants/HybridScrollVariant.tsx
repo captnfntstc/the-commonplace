@@ -8,8 +8,8 @@ interface VariantProps {
   reflectionAlign?: Alignment
   enableDropCap?: boolean
   expanded: boolean
-  onEdit: () => void
-  onDelete: () => void
+  onEdit?: () => void
+  onDelete?: () => void
   onExpandOverlay?: () => void
 }
 
@@ -168,24 +168,28 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
                   <Maximize2 aria-hidden="true" />
                 </button>
               )}
-              <button
-                className="action-btn icon-only"
-                type="button"
-                onClick={onEdit}
-                title="Edit Entry"
-                aria-label="Edit Entry"
-              >
-                <Edit3 aria-hidden="true" />
-              </button>
-              <button
-                className="action-btn danger icon-only"
-                type="button"
-                onClick={onDelete}
-                title="Delete Entry"
-                aria-label="Delete Entry"
-              >
-                <Trash2 aria-hidden="true" />
-              </button>
+              {onEdit && (
+                <button
+                  className="action-btn icon-only"
+                  type="button"
+                  onClick={onEdit}
+                  title="Edit Entry"
+                  aria-label="Edit Entry"
+                >
+                  <Edit3 aria-hidden="true" />
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  className="action-btn danger icon-only"
+                  type="button"
+                  onClick={onDelete}
+                  title="Delete Entry"
+                  aria-label="Delete Entry"
+                >
+                  <Trash2 aria-hidden="true" />
+                </button>
+              )}
             </div>
           </div>
         </motion.div>

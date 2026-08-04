@@ -64,30 +64,22 @@ export function useMasonryLayout(
         const heights = Array<number>(numCols).fill(M_PAD_TOP)
         const positions = new Map<string, MasonryPos>()
 
-        items.forEach((item) => {
+        items.forEach((item, index) => {
           const id = item.dataset.id
           if (!id) return
 
-          // Shortest-column algorithm: place item in column with lowest height
-          let minCol = 0
-          let minHeight = heights[0]
-          for (let c = 1; c < numCols; c++) {
-            if (heights[c] < minHeight) {
-              minHeight = heights[c]
-              minCol = c
-            }
-          }
-
+          // Fixed column assignment: card remains in its column when cards above expand/collapse
+          const col = index % numCols
           const isExpanded = id === expandedId
           item.style.width = `${colWidth}px`
           const itemHeight = getItemTargetHeight(item, isExpanded)
 
           positions.set(id, {
-            left: M_PAD_X + minCol * (colWidth + M_GAP),
-            top: heights[minCol],
+            left: M_PAD_X + col * (colWidth + M_GAP),
+            top: heights[col],
             width: colWidth,
           })
-          heights[minCol] += itemHeight + M_GAP
+          heights[col] += itemHeight + M_GAP
         })
 
         setLayout({ positions, height: Math.max(...heights) + 60 })
@@ -100,13 +92,19 @@ export function useMasonryLayout(
     container.addEventListener('load', recalculate, true)
 
     recalculate()
-    const timer = setTimeout(recalculate, 60)
+    const t1 = setTimeout(recalculate, 30)
+    const t2 = setTimeout(recalculate, 100)
+    const t3 = setTimeout(recalculate, 220)
+    const t4 = setTimeout(recalculate, 360)
 
     return () => {
       ro.disconnect()
       container.removeEventListener('load', recalculate, true)
       cancelAnimationFrame(frameId)
-      clearTimeout(timer)
+      clearTimeout(t1)
+      clearTimeout(t2)
+      clearTimeout(t3)
+      clearTimeout(t4)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [containerRef, itemCount, expandedId, activeSignal])

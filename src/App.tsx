@@ -19,6 +19,8 @@ import {
   Tv,
   X,
   AlertCircle,
+  Lock,
+  MessageSquareOff,
 } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
@@ -28,6 +30,9 @@ import {
   type MetadataResult,
   type MetadataType,
   searchMetadata,
+  fetchWikipediaPortrait,
+  entityImageCacheMap,
+  albumEntityMap,
 } from './metadata'
 import { ExpansionProvider, useCardExpansion } from './context/ExpansionContext'
 import { Card } from './components/CommonplaceCard/Card'
@@ -36,9 +41,14 @@ import { FormattingToolbar } from './components/FormattingToolbar/FormattingTool
 import { RichTextEditor } from './components/RichTextEditor/RichTextEditor'
 import { stripHtmlAlignment, type Alignment } from './components/CommonplaceCard/FormattedText'
 import { CardSkeletonGrid } from './components/CommonplaceCard/CardSkeleton'
-import { UserProfilePage } from './pages/UserProfilePage'
+import { UserProfilePage, USER_DIRECTORY } from './pages/UserProfilePage'
 import { SettingsPage, type UserProfileState } from './pages/SettingsPage'
 import { useMasonryLayout } from './hooks/useMasonryLayout'
+import { NotificationBell, NotifSimulator, type Notification as AppNotification } from './components/Notifications/NotificationPanel'
+import { MOCK_ENTITY_PROFILES } from './data/entityProfiles'
+import { UniversalMediaProfilePage } from './pages/UniversalMediaProfilePage'
+import { UNIVERSAL_MEDIA_ENTITIES } from './data/universalMediaEntities'
+import type { UniversalMediaEntity } from './types/mediaEntity'
 
 const WARN_UNRATED_KEY = 'the-commonplace.warn-unrated'
 
@@ -130,6 +140,9 @@ type Entry = {
   createdAt: string
   updatedAt: string
   coverTone: CoverTone
+  authorHandle?: string
+  authorName?: string
+  authorAvatarUrl?: string
 }
 
 type EntryDraft = Omit<Entry, 'id' | 'createdAt' | 'updatedAt'>
@@ -231,6 +244,70 @@ function getTypeMeta(type: EntryType) {
   return entryTypes.find((entryType) => entryType.id === type) ?? entryTypes[0]
 }
 
+const EntitySearchItem: React.FC<{
+  entity: {
+    id: string
+    title: string
+    artworkUrl: string
+    type: string
+    creatorValue: string
+  }
+  onSelect: () => void
+}> = ({ entity, onSelect }) => {
+  const cacheKey = entity.id || `${entity.title}:${entity.creatorValue}`.toLowerCase()
+  const cached = entityImageCacheMap.get(cacheKey) || entity.artworkUrl
+  const [photo, setPhoto] = useState(cached)
+
+  useEffect(() => {
+    setPhoto(entityImageCacheMap.get(cacheKey) || entity.artworkUrl)
+  }, [entity.id, entity.artworkUrl, cacheKey])
+
+  useEffect(() => {
+    let active = true
+    if (['artist', 'author', 'director', 'actor'].includes(entity.type)) {
+      fetchWikipediaPortrait(entity.title)
+        .then((url) => {
+          if (active && url) {
+            entityImageCacheMap.set(cacheKey, url)
+            setPhoto(url)
+          }
+        })
+        .catch(() => {})
+    } else if (['album', 'song'].includes(entity.type) && !entity.artworkUrl && !photo) {
+      searchMetadata('album', entity.title)
+        .then((res) => {
+          if (active && res && res[0]?.coverUrl) {
+            entityImageCacheMap.set(cacheKey, res[0].coverUrl)
+            setPhoto(res[0].coverUrl)
+          }
+        })
+        .catch(() => {})
+    }
+    return () => {
+      active = false
+    }
+  }, [entity.id, entity.title, entity.type, entity.artworkUrl, cacheKey, photo])
+
+  return (
+    <button
+      type="button"
+      className="search-user-item search-entity-item"
+      onClick={onSelect}
+    >
+      <div className="search-user-left">
+        <div className={`search-entity-thumb ${['artist', 'author', 'album', 'song'].includes(entity.type) ? 'is-square' : ''}`}>
+          <img src={photo} alt={entity.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        </div>
+        <div className="search-user-info">
+          <span className="search-user-name">{entity.title}</span>
+          <span className="search-user-handle">{entity.creatorValue}</span>
+        </div>
+      </div>
+      <span className="search-entity-type-badge">{entity.type.replace('_', ' ').toUpperCase()}</span>
+    </button>
+  )
+}
+
 function draftFromMetadata(
   result: MetadataResult,
   current: EntryDraft,
@@ -255,14 +332,192 @@ function draftFromMetadata(
   }
 }
 
+const MOCK_EXTERNAL_PROFILES: Record<string, { profile: UserProfileState; entries: Entry[] }> = {
+  elena_r: {
+    profile: {
+      firstName: 'Elena',
+      lastName: 'Rostova',
+      showFullName: true,
+      handle: 'elena_r',
+      email: 'elena.rostova@commonplace.app',
+      bio: 'Lit, classical music, and architecture enthusiast. Archiving thoughts on Tolstoy, Dostoevsky, and Rachmaninoff.',
+      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop',
+      coverUrl: 'https://images.unsplash.com/photo-1507842217343-583bb7270b66?w=1200&auto=format&fit=crop',
+      showFollowLists: true,
+      allowComments: true,
+    },
+    entries: [
+      {
+        id: 'ext-elena-1',
+        type: 'book',
+        title: 'War and Peace',
+        creator: 'Leo Tolstoy',
+        provider: 'The Russian Messenger, 1869',
+        providerId: 'gb-war-peace',
+        genre: 'Classics',
+        rating: 5,
+        favoritePassage: 'A refined simplicity is the first condition of all grace and nobility of soul.',
+        reflection: 'Reading Tolstoy during quiet evenings is a meditation on the human condition. His capacity to capture both grand historical movements and subtle interior shifts remains unmatched.',
+        createdAt: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
+        updatedAt: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
+        coverTone: 'gold',
+        coverUrl: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=600&auto=format&fit=crop',
+        authorHandle: 'elena_r',
+        authorName: 'Elena Rostova',
+        authorAvatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop',
+      },
+      {
+        id: 'ext-elena-2',
+        type: 'album',
+        title: 'Rachmaninoff: Piano Concerto No. 2',
+        creator: 'Sergei Rachmaninoff / London Symphony',
+        provider: 'Classical',
+        providerId: 'itunes-rach2',
+        genre: 'Classical',
+        rating: 5,
+        favoritePassage: 'The second movement is an unbearable beauty—every chord feels weighted with melancholic grace.',
+        reflection: 'The opening chords build like an ocean wave breaking against stone. No piece of music speaks to longing quite like this concerto.',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(),
+        updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(),
+        coverTone: 'blue',
+        coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop',
+        authorHandle: 'elena_r',
+        authorName: 'Elena Rostova',
+        authorAvatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop',
+      },
+      {
+        id: 'ext-elena-3',
+        type: 'film',
+        title: 'Stalker',
+        creator: 'Andrei Tarkovsky',
+        provider: 'Mosfilm (1979)',
+        providerId: 'tmdb-stalker',
+        genre: 'Sci-Fi / Drama',
+        rating: 5,
+        favoritePassage: 'Weakness is a great thing, and strength is nothing. When a man is born, he is weak and supple; when he dies, he is strong and hard.',
+        reflection: 'Tarkovsky treats cinema as poetic time-sculpting. The Room inside the Zone is not a physical place; it is a mirror reflecting our deepest unstated desires.',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
+        updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 3).toISOString(),
+        coverTone: 'sage',
+        coverUrl: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=600&auto=format&fit=crop',
+        authorHandle: 'elena_r',
+        authorName: 'Elena Rostova',
+        authorAvatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop',
+      },
+    ],
+  },
+  marcus_v: {
+    profile: {
+      firstName: 'Marcus',
+      lastName: 'Vance',
+      showFullName: true,
+      handle: 'marcus_v',
+      email: 'marcus.vance@commonplace.app',
+      bio: 'Film critic, indie gamer, and vinyl collector. Passionate about atmospheric storytelling.',
+      avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop',
+      coverUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200&auto=format&fit=crop',
+      showFollowLists: true,
+      allowComments: true,
+    },
+    entries: [
+      {
+        id: 'ext-marcus-1',
+        type: 'film',
+        title: 'Blade Runner 2049',
+        creator: 'Denis Villeneuve',
+        provider: 'Warner Bros (2017)',
+        providerId: 'tmdb-br2049',
+        genre: 'Sci-Fi',
+        rating: 5,
+        favoritePassage: 'All the best memories are hers.',
+        reflection: 'Deakins’ cinematography coupled with Zimmer & Wallfisch’s synth score creates an oppressive yet mesmerizing future. A masterclass in world-building.',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 14).toISOString(),
+        updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 14).toISOString(),
+        coverTone: 'ember',
+        coverUrl: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop',
+        authorHandle: 'marcus_v',
+        authorName: 'Marcus Vance',
+        authorAvatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop',
+      },
+      {
+        id: 'ext-marcus-2',
+        type: 'album',
+        title: 'In Rainbows',
+        creator: 'Radiohead',
+        provider: 'XL Recordings (2007)',
+        providerId: 'itunes-inrainbows',
+        genre: 'Alternative / Rock',
+        rating: 5,
+        favoritePassage: 'You are all I need. You are all I need. I’m in the middle of your picture.',
+        reflection: 'Warm, organic, and perfectly paced. Reckoner is one of the most transcendent tracks ever recorded.',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),
+        updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),
+        coverTone: 'rose',
+        coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop',
+        authorHandle: 'marcus_v',
+        authorName: 'Marcus Vance',
+        authorAvatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop',
+      },
+    ],
+  },
+  aria_s: {
+    profile: {
+      firstName: 'Aria',
+      lastName: 'Sterling',
+      showFullName: true,
+      handle: 'aria_s',
+      email: 'aria.sterling@commonplace.app',
+      bio: 'Archivist of rare books, private reflections, and quiet nocturnal notes.',
+      avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&auto=format&fit=crop',
+      coverUrl: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?w=1200&auto=format&fit=crop',
+      showFollowLists: false,
+      allowComments: false,
+      isPrivate: true,
+    },
+    entries: [
+      {
+        id: 'ext-aria-1',
+        type: 'book',
+        title: 'The Book of Disquiet',
+        creator: 'Fernando Pessoa',
+        provider: 'Tinta da China, 1982',
+        providerId: 'gb-disquiet',
+        genre: 'Poetry / Prose',
+        rating: 5,
+        favoritePassage: 'My past is everything I failed to be.',
+        reflection: 'Pessoa writes with an exquisite solitude. A private record of interior landscapes.',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+        updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+        coverTone: 'violet',
+        coverUrl: 'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?w=600&auto=format&fit=crop',
+        authorHandle: 'aria_s',
+        authorName: 'Aria Sterling',
+        authorAvatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&auto=format&fit=crop',
+      },
+    ],
+  },
+}
+
 function AppContent() {
   const [entries, setEntries] = useState<Entry[]>(loadEntries)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<EntryType | 'all'>('all')
   const { expandedCardId, setExpandedCardId, toggleCardExpanded } = useCardExpansion()
 
-  const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings'>('feed')
+  const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings' | 'entity'>('feed')
+  const [selectedProfileHandle, setSelectedProfileHandle] = useState<string | null>(null)
+  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
+  const [searchTab, setSearchTab] = useState<'media' | 'users'>('media')
+  const [headerAlbumResults, setHeaderAlbumResults] = useState<MetadataResult[]>([])
+  const [headerAlbumSearchLoading, setHeaderAlbumSearchLoading] = useState(false)
   const [profileCategoryFilter, setProfileCategoryFilter] = useState<string>('all')
+
+  const handleOpenEntity = (entityId: string) => {
+    setSelectedEntityId(entityId)
+    setActiveView('entity')
+    setSearchOpen(false)
+  }
+
   const [userProfile, setUserProfile] = useState<UserProfileState>({
     firstName: 'Jimmy',
     lastName: 'Boy',
@@ -332,6 +587,40 @@ function AppContent() {
   const [isLoggedOut, setIsLoggedOut] = useState(false)
   const gridRef = useRef<HTMLElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
+  const [searchLimit, setSearchLimit] = useState(8)
+
+  useEffect(() => {
+    setSearchLimit(8)
+  }, [query, searchOpen])
+
+  useEffect(() => {
+    const normalizedQuery = query.trim()
+    if (!searchOpen || searchTab !== 'media' || normalizedQuery.length < 2) {
+      setHeaderAlbumResults([])
+      setHeaderAlbumSearchLoading(false)
+      return
+    }
+
+    const abortController = new AbortController()
+    const timer = window.setTimeout(() => {
+      setHeaderAlbumSearchLoading(true)
+      searchMetadata('album', normalizedQuery, abortController.signal)
+        .then((results) => {
+          setHeaderAlbumResults(results)
+        })
+        .catch((err) => {
+          if ((err as Error)?.name !== 'AbortError') setHeaderAlbumResults([])
+        })
+        .finally(() => {
+          if (!abortController.signal.aborted) setHeaderAlbumSearchLoading(false)
+        })
+    }, 250)
+
+    return () => {
+      abortController.abort()
+      window.clearTimeout(timer)
+    }
+  }, [query, searchOpen, searchTab])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -347,26 +636,110 @@ function AppContent() {
     ? `${userProfile.firstName} ${userProfile.lastName}`.trim()
     : userProfile.firstName
 
-  const filteredEntries = useMemo(() => {
-    let byType = entries
-    if (typeFilter !== 'all') {
-      byType = entries.filter((entry) => entry.type === typeFilter)
+  const handleOpenUserProfile = (handle?: string) => {
+    const cleanHandle = (handle || userProfile.handle).replace(/^@/, '')
+    if (cleanHandle === userProfile.handle) {
+      setSelectedProfileHandle(null)
+    } else if (MOCK_EXTERNAL_PROFILES[cleanHandle]) {
+      setSelectedProfileHandle(cleanHandle)
     }
+    setActiveView('profile')
+  }
 
-    if (!query.trim()) return byType
+  const [followedUserHandles, setFollowedUserHandles] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('the-commonplace.following-users') || '["elena_r"]')
+    } catch {
+      return ['elena_r']
+    }
+  })
 
-    const q = query.toLowerCase()
-    return byType.filter(
-      (entry) =>
-        entry.title.toLowerCase().includes(q) ||
-        entry.creator.toLowerCase().includes(q) ||
-        entry.provider.toLowerCase().includes(q) ||
-        (entry.genre && entry.genre.toLowerCase().includes(q)) ||
-        entry.favoritePassage.toLowerCase().includes(q) ||
-        entry.reflection.toLowerCase().includes(q) ||
-        userProfileName.toLowerCase().includes(q)
-    )
-  }, [entries, query, typeFilter, userProfileName])
+  const toggleFollowUser = (handle: string) => {
+    const clean = handle.replace(/^@/, '')
+    setFollowedUserHandles((prev) => {
+      const next = prev.includes(clean) ? prev.filter((h) => h !== clean) : [...prev, clean]
+      localStorage.setItem('the-commonplace.following-users', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const [followRequestedHandles, setFollowRequestedHandles] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('the-commonplace.follow-requests') || '[]')
+    } catch {
+      return []
+    }
+  })
+
+  const toggleFollowRequest = (handle: string) => {
+    const clean = handle.replace(/^@/, '')
+    setFollowRequestedHandles((prev) => {
+      const next = prev.includes(clean) ? prev.filter((h) => h !== clean) : [...prev, clean]
+      localStorage.setItem('the-commonplace.follow-requests', JSON.stringify(next))
+      return next
+    })
+  }
+
+  // ── Notifications ────────────────────────────────────────────────────────────
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('the-commonplace.notifications') || '[]')
+    } catch {
+      return []
+    }
+  })
+
+  const addNotification = (n: AppNotification) => {
+    setNotifications((prev) => {
+      const next = [n, ...prev]
+      localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const markAllNotificationsRead = () => {
+    setNotifications((prev) => {
+      const next = prev.map((n) => ({ ...n, read: true }))
+      localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const dismissNotification = (id: string) => {
+    setNotifications((prev) => {
+      const next = prev.filter((n) => n.id !== id)
+      localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const clearAllNotifications = () => {
+    setNotifications([])
+    localStorage.removeItem('the-commonplace.notifications')
+  }
+
+  const allHomepageEntries = useMemo(() => {
+    const ownWithAuthor = entries.map((e) => ({
+      ...e,
+      authorHandle: e.authorHandle || userProfile.handle,
+      authorName: e.authorName || userProfileName,
+      authorAvatarUrl: e.authorAvatarUrl || userProfile.avatarUrl,
+    }))
+    // Only include external profile entries if the profile is public OR the user follows them
+    const externalEntries = Object.entries(MOCK_EXTERNAL_PROFILES).flatMap(([handle, p]) => {
+      if (p.profile.isPrivate && !followedUserHandles.includes(handle)) return []
+      return p.entries
+    })
+    const combined = [...ownWithAuthor, ...externalEntries]
+    return combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  }, [entries, userProfile.handle, userProfile.avatarUrl, userProfileName, followedUserHandles])
+
+  const filteredEntries = useMemo(() => {
+    if (typeFilter !== 'all') {
+      return allHomepageEntries.filter((entry) => entry.type === typeFilter)
+    }
+    return allHomepageEntries
+  }, [allHomepageEntries, typeFilter])
 
   const masonryLayout = useMasonryLayout(gridRef, filteredEntries.length, expandedCardId, activeView)
   const [isInitialRender, setIsInitialRender] = useState(true)
@@ -431,7 +804,7 @@ function AppContent() {
     setEditingEntry(null)
   }
 
-  const handleSave = (draft: EntryDraft) => {
+  const handleSave = (draft: EntryDraft, disableComments?: boolean) => {
     const timestamp = new Date().toISOString()
 
     if (editingEntry) {
@@ -441,15 +814,39 @@ function AppContent() {
           : entry,
       )
       saveEntries(nextEntries)
+      if (disableComments !== undefined) {
+        setDisabledCommentEntryIds((prev) => {
+          const has = prev.includes(editingEntry.id)
+          if (disableComments && !has) {
+            const next = [...prev, editingEntry.id]
+            localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(next))
+            return next
+          }
+          if (!disableComments && has) {
+            const next = prev.filter((id) => id !== editingEntry.id)
+            localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(next))
+            return next
+          }
+          return prev
+        })
+      }
       setExpandedCardId(editingEntry.id)
     } else {
+      const newId = makeId()
       const newEntry: Entry = {
         ...draft,
-        id: makeId(),
+        id: newId,
         createdAt: timestamp,
         updatedAt: timestamp,
       }
       saveEntries([newEntry, ...entries])
+      if (disableComments) {
+        setDisabledCommentEntryIds((prev) => {
+          const next = [...prev, newId]
+          localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(next))
+          return next
+        })
+      }
       setExpandedCardId('')
     }
 
@@ -473,11 +870,19 @@ function AppContent() {
 
   // Render Standalone Pages
   if (activeView === 'profile') {
+    const isViewingOwn = selectedProfileHandle === null || selectedProfileHandle === userProfile.handle
+    const currentProfileData = isViewingOwn
+      ? { profile: userProfile, entries: entries }
+      : MOCK_EXTERNAL_PROFILES[selectedProfileHandle || ''] || { profile: userProfile, entries: entries }
+
     return (
       <>
         <UserProfilePage
-          onBack={() => setActiveView('feed')}
-          entries={entries}
+          onBack={() => {
+            setSelectedProfileHandle(null)
+            setActiveView('feed')
+          }}
+          entries={currentProfileData.entries}
           savedEntryIds={savedEntryIds}
           likedEntryIds={likedEntryIds}
           disabledCommentEntryIds={disabledCommentEntryIds}
@@ -485,13 +890,26 @@ function AppContent() {
           onToggleLike={toggleLikeEntry}
           onToggleSave={toggleSaveEntry}
           onToggleCommentsDisabled={toggleCommentsDisabled}
-          userProfile={userProfile}
+          userProfile={currentProfileData.profile}
           onNavigateToSettings={() => setActiveView('settings')}
           onDeleteEntry={(id) => promptDeleteEntry(id)}
           onEditEntry={(entry) => openComposer(entry)}
           categoryFilter={profileCategoryFilter}
           onCategoryFilterChange={setProfileCategoryFilter}
-          isOwnProfile={true}
+          isOwnProfile={isViewingOwn}
+          onSelectUserProfile={(handle) => {
+            const cleanHandle = handle.replace(/^@/, '')
+            if (cleanHandle === userProfile.handle) {
+              setSelectedProfileHandle(null)
+            } else if (MOCK_EXTERNAL_PROFILES[cleanHandle]) {
+              setSelectedProfileHandle(cleanHandle)
+            }
+          }}
+          followedUserHandles={followedUserHandles}
+          onToggleFollowUser={toggleFollowUser}
+          currentUserProfile={userProfile}
+          followRequestedHandles={followRequestedHandles}
+          onToggleFollowRequest={toggleFollowRequest}
         />
         <CardOverlayModal
           entry={overlayEntry}
@@ -541,12 +959,116 @@ function AppContent() {
               onClose={closeComposer}
               onSave={handleSave}
               commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
-              onToggleCommentsDisabled={() => editingEntry && toggleCommentsDisabled(editingEntry.id)}
             />
           ) : null}
         </AnimatePresence>
       </>
     )
+  }
+
+  if (activeView === 'entity' && selectedEntityId) {
+    let universalEntity: UniversalMediaEntity | null =
+      UNIVERSAL_MEDIA_ENTITIES[selectedEntityId] ||
+      (MOCK_ENTITY_PROFILES[selectedEntityId]
+        ? {
+            id: MOCK_ENTITY_PROFILES[selectedEntityId].id,
+            name: MOCK_ENTITY_PROFILES[selectedEntityId].title,
+            type: MOCK_ENTITY_PROFILES[selectedEntityId].type as any,
+            categoryLabel: MOCK_ENTITY_PROFILES[selectedEntityId].type.toUpperCase(),
+            artworkUrl: MOCK_ENTITY_PROFILES[selectedEntityId].coverUrl,
+            description: MOCK_ENTITY_PROFILES[selectedEntityId].bio,
+            metadataChips: [
+              {
+                label: MOCK_ENTITY_PROFILES[selectedEntityId].creatorLabel,
+                value: MOCK_ENTITY_PROFILES[selectedEntityId].creatorValue,
+              },
+            ],
+            communityRating: {
+              average: 4.8,
+              count: 2413,
+              distribution: { 5: 85, 4: 11, 3: 3, 2: 1, 1: 0 },
+            },
+            primaryCollection: {
+              title: MOCK_ENTITY_PROFILES[selectedEntityId].topItemsTitle,
+              items: MOCK_ENTITY_PROFILES[selectedEntityId].topItems.map((item, idx) => ({
+                id: item.id,
+                rank: idx + 1,
+                title: item.name,
+                subtitle: item.detail,
+                rating: item.rating,
+              })),
+            },
+          }
+        : null)
+
+    if (!universalEntity) {
+      const mapItem = albumEntityMap.get(selectedEntityId) || albumEntityMap.get(selectedEntityId.toLowerCase())
+      const cleanName = mapItem
+        ? mapItem.name
+        : selectedEntityId
+            .replace(/^album-\d+/i, '')
+            .replace(/^album-/i, '')
+            .replace(/^song-\d+/i, '')
+            .replace(/^song-/i, '')
+            .replace(/-/g, ' ')
+            .replace(/\b\w/g, (l) => l.toUpperCase())
+
+      const isSong = selectedEntityId.startsWith('song-')
+      const isAlbum = selectedEntityId.startsWith('album-') || selectedEntityId.includes('ep')
+
+      universalEntity = {
+        id: selectedEntityId,
+        name: cleanName,
+        type: isSong ? 'song' : isAlbum ? 'album' : 'artist',
+        categoryLabel: isSong ? 'Song' : isAlbum ? 'Album' : 'Artist',
+        artworkUrl:
+          mapItem?.artworkUrl ||
+          entityImageCacheMap.get(cleanName) ||
+          'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/bf/f9/57/bff9574d-71b3-4654-8e1d-847291a13e20/23UMGIM47494.rgb.jpg/1000x1000bb.jpg',
+        description: `Official catalog entry for ${cleanName} in The Commonplace community reflections archive.`,
+        metadataChips: [
+          { label: 'Artist', value: mapItem?.artist || 'Artist' },
+          { label: 'Category', value: isSong ? 'Song' : isAlbum ? 'Album' : 'Artist' },
+          { label: 'Release Year', value: mapItem?.year || '2023' },
+        ],
+        communityRating: {
+          average: 4.9,
+          count: 1250,
+          distribution: { 5: 88, 4: 10, 3: 2, 2: 0, 1: 0 },
+        },
+      }
+    }
+
+    if (universalEntity) {
+      return (
+        <>
+          <UniversalMediaProfilePage
+            entity={universalEntity}
+            onBack={() => {
+              setSelectedEntityId(null)
+              setActiveView('feed')
+            }}
+            communityEntries={allHomepageEntries}
+            onSelectEntry={setOverlayEntry}
+            onOpenUserProfile={handleOpenUserProfile}
+            onNavigateToEntity={(newId) => setSelectedEntityId(newId)}
+            likedEntryIds={likedEntryIds}
+            savedEntryIds={savedEntryIds}
+            disabledCommentEntryIds={disabledCommentEntryIds}
+            onToggleLike={toggleLikeEntry}
+            onToggleSave={toggleSaveEntry}
+          />
+          <CardOverlayModal
+            entry={overlayEntry}
+            onClose={() => setOverlayEntry(null)}
+            isLiked={overlayEntry ? likedEntryIds.includes(overlayEntry.id) : false}
+            isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
+            onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
+            onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
+          />
+        </>
+      )
+    }
   }
 
   if (activeView === 'settings') {
@@ -612,44 +1134,201 @@ function AppContent() {
                   </>
                 )}
 
-                {/* Search Dropdown with Users */}
+                {/* Search Dropdown with Tabs for Users vs Media/Entities */}
                 {searchOpen && query.trim().length > 0 && (
                   <div className="search-results-dropdown">
+                    <div className="search-tabs-row">
+                      <button
+                        type="button"
+                        className={`search-tab-btn ${searchTab === 'media' ? 'active' : ''}`}
+                        onClick={() => setSearchTab('media')}
+                      >
+                        Media Profiles
+                      </button>
+                      <button
+                        type="button"
+                        className={`search-tab-btn ${searchTab === 'users' ? 'active' : ''}`}
+                        onClick={() => setSearchTab('users')}
+                      >
+                        Users
+                      </button>
+                    </div>
+
                     <div className="search-dropdown-section">
-                      <span className="search-dropdown-header">Matching Users</span>
-                      {['jimboii', 'jim', 'user', 'collector', 'catalog'].some((term) =>
-                        'jimboii'.includes(query.toLowerCase()) || term.includes(query.toLowerCase())
-                      ) ? (
-                        <button
-                          type="button"
-                          className="search-user-item"
-                          onClick={() => {
-                            setActiveView('profile')
-                            setSearchOpen(false)
-                          }}
-                        >
-                          <div className="search-user-left">
-                            <div className="search-user-avatar">
-                              <User aria-hidden="true" />
-                            </div>
-                            <div className="search-user-info">
-                              <span className="search-user-name">
-                                {userProfile.showFullName ? `${userProfile.firstName} ${userProfile.lastName}` : userProfile.firstName}
-                              </span>
-                              <span className="search-user-handle">@{userProfile.handle.replace(/^@/, '')} &bull; {entries.length} reviews</span>
-                            </div>
-                          </div>
-                          <span className="search-user-action">View Profile</span>
-                        </button>
+                      {searchTab === 'users' ? (
+                        (() => {
+                          const q = query.trim().toLowerCase()
+                          const matched = USER_DIRECTORY.filter(
+                            (u) => !q || u.name.toLowerCase().includes(q) || u.handle.toLowerCase().includes(q)
+                          )
+                          if (matched.length === 0) {
+                            return (
+                              <div className="search-no-results">
+                                No users matching "{query}"
+                              </div>
+                            )
+                          }
+                          return matched.map((u) => {
+                            const isOwn = u.handle === userProfile.handle
+                            return (
+                              <button
+                                key={u.handle}
+                                type="button"
+                                className="search-user-item"
+                                onClick={() => {
+                                  setSelectedProfileHandle(isOwn ? null : u.handle)
+                                  setActiveView('profile')
+                                  setSearchOpen(false)
+                                }}
+                              >
+                                <div className="search-user-left">
+                                  <div className="search-user-avatar">
+                                    {u.avatar ? (
+                                      <img src={u.avatar} alt={u.name} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
+                                    ) : (
+                                      <User aria-hidden="true" />
+                                    )}
+                                  </div>
+                                  <div className="search-user-info">
+                                    <span className="search-user-name">
+                                      {u.name}
+                                      {u.isPrivate && <Lock size={12} style={{ marginLeft: 5, verticalAlign: 'middle', color: 'var(--secondary)' }} />}
+                                    </span>
+                                    <span className="search-user-handle">@{u.handle} &bull; {u.reviews} reviews</span>
+                                  </div>
+                                </div>
+                                <span className="search-user-action">{isOwn ? 'My Profile' : 'View Profile'}</span>
+                              </button>
+                            )
+                          })
+                        })()
                       ) : (
-                        <div style={{ padding: '6px', fontSize: '12px', color: 'var(--secondary)' }}>
-                          No users matching "{query}"
-                        </div>
+                        (() => {
+                          const q = query.trim().toLowerCase()
+                          const universalList = Object.values(UNIVERSAL_MEDIA_ENTITIES).map((u, idx) => ({
+                            id: u.id,
+                            title: u.name,
+                            artworkUrl: u.artworkUrl,
+                            type: u.type,
+                            creatorValue: u.metadataChips[0] ? `${u.metadataChips[0].label}: ${u.metadataChips[0].value}` : u.categoryLabel,
+                            bio: u.description,
+                            isUniversal: true,
+                            apiIndex: idx,
+                          }))
+                          const mockList = Object.values(MOCK_ENTITY_PROFILES)
+                            .filter((m) => !UNIVERSAL_MEDIA_ENTITIES[m.id])
+                            .map((m, idx) => ({
+                              id: m.id,
+                              title: m.title,
+                              artworkUrl: m.coverUrl,
+                              type: m.type,
+                              creatorValue: `${m.creatorLabel}: ${m.creatorValue}`,
+                              bio: m.bio,
+                              isUniversal: true,
+                              apiIndex: universalList.length + idx,
+                            }))
+                          const liveAlbumList = headerAlbumResults.map((result, idx) => {
+                            const entityId = result.id || (result.providerId
+                              ? `album-${result.providerId}`
+                              : `album-${result.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`)
+                            return {
+                              id: entityId,
+                              title: result.title,
+                              artworkUrl: result.coverUrl || '',
+                              type: 'album',
+                              creatorValue: `Artist: ${result.creator}`,
+                              bio: [result.genre || result.provider, result.year].filter(Boolean).join(' '),
+                              isUniversal: false,
+                              apiIndex: universalList.length + mockList.length + idx,
+                            }
+                          })
+
+                          const combinedAll = [...universalList, ...mockList, ...liveAlbumList]
+
+                          const seenKeys = new Set<string>()
+                          const deduplicated = combinedAll.filter((item) => {
+                            const normTitle = item.title.toLowerCase().replace(/[^a-z0-9]+/g, '').trim()
+                            const normCreator = item.creatorValue.toLowerCase().replace(/^artist:\s*/, '').replace(/[^a-z0-9]+/g, '').trim()
+                            const key = `${item.type}:${normTitle}:${normCreator}`
+                            const idKey = item.id.toLowerCase()
+
+                            if (seenKeys.has(idKey) || seenKeys.has(key)) return false
+                            seenKeys.add(idKey)
+                            seenKeys.add(key)
+                            return true
+                          })
+
+                          const matched = deduplicated.filter(
+                            (e) =>
+                              !q ||
+                              e.title.toLowerCase().includes(q) ||
+                              e.creatorValue.toLowerCase().includes(q) ||
+                              e.bio.toLowerCase().includes(q)
+                          )
+
+                          const isPersonType = (type: string) => ['artist', 'author', 'director', 'actor'].includes(type)
+
+                          matched.sort((a, b) => {
+                            const aIsPerson = isPersonType(a.type)
+                            const bIsPerson = isPersonType(b.type)
+                            if (aIsPerson && !bIsPerson) return -1
+                            if (!aIsPerson && bIsPerson) return 1
+
+                            const aExact = a.title.toLowerCase() === q
+                            const bExact = b.title.toLowerCase() === q
+                            if (aExact && !bExact) return -1
+                            if (!aExact && bExact) return 1
+
+                            return a.apiIndex - b.apiIndex
+                          })
+
+                          if (matched.length === 0) {
+                            return (
+                              <div className="search-no-results">
+                                {headerAlbumSearchLoading ? 'Searching albums...' : `No media profiles matching "${query}"`}
+                              </div>
+                            )
+                          }
+
+                          const visibleItems = matched.slice(0, searchLimit)
+                          const remainingCount = matched.length - visibleItems.length
+
+                          return (
+                            <>
+                              {visibleItems.map((e) => (
+                                <EntitySearchItem
+                                  key={e.id}
+                                  entity={e}
+                                  onSelect={() => handleOpenEntity(e.id)}
+                                />
+                              ))}
+                              {remainingCount > 0 && (
+                                <div className="search-load-more-container">
+                                  <button
+                                    type="button"
+                                    className="search-load-more-btn"
+                                    onClick={() => setSearchLimit((prev) => prev + 8)}
+                                  >
+                                    <span>Load more</span>
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )
+                        })()
                       )}
                     </div>
                   </div>
                 )}
               </div>
+
+              <NotificationBell
+                notifications={notifications}
+                onMarkAllRead={markAllNotificationsRead}
+                onClearAll={clearAllNotifications}
+                onDismiss={dismissNotification}
+              />
+              <NotifSimulator onAddNotification={addNotification} />
 
               <div className="profile-menu-wrapper" ref={profileMenuRef}>
                 <button
@@ -668,31 +1347,33 @@ function AppContent() {
 
                 {profileMenuOpen && (
                   <div className="profile-dropdown-menu">
-                    <button
-                      type="button"
-                      className="menu-header"
-                      onClick={() => {
-                        setActiveView('profile')
-                        setProfileMenuOpen(false)
-                      }}
-                      title="View Profile"
-                    >
-                      <span className="menu-user-name">
-                        {userProfile.showFullName ? `${userProfile.firstName} ${userProfile.lastName}` : userProfile.firstName}
-                      </span>
-                    </button>
+                    {/* Identity block at the top */}
+                    <div className="menu-identity-block">
+                      <div className="menu-identity-avatar">
+                        {userProfile.avatarUrl ? (
+                          <img src={userProfile.avatarUrl} alt="Avatar" className="menu-identity-avatar-img" />
+                        ) : (
+                          <User aria-hidden="true" />
+                        )}
+                      </div>
+                      <div className="menu-identity-info">
+                        <span className="menu-user-name">
+                          {userProfile.showFullName ? `${userProfile.firstName} ${userProfile.lastName}` : userProfile.firstName}
+                        </span>
+                        <button
+                          type="button"
+                          className="menu-view-profile-link"
+                          onClick={() => {
+                            setSelectedProfileHandle(null)
+                            setActiveView('profile')
+                            setProfileMenuOpen(false)
+                          }}
+                        >
+                          View Profile
+                        </button>
+                      </div>
+                    </div>
                     <div className="menu-divider" />
-                    <button
-                      type="button"
-                      className="menu-item"
-                      onClick={() => {
-                        setActiveView('profile')
-                        setProfileMenuOpen(false)
-                      }}
-                    >
-                      <User aria-hidden="true" />
-                      <span>My Profile</span>
-                    </button>
                     <button
                       type="button"
                       className="menu-item"
@@ -826,7 +1507,7 @@ function AppContent() {
                   onEdit={() => openComposer(entry)}
                   onToggle={() => toggleCardExpanded(entry.id)}
                   onExpandOverlay={() => setOverlayEntry(entry)}
-                  onOpenProfile={() => setActiveView('profile')}
+                  onOpenProfile={() => handleOpenUserProfile(entry.authorHandle)}
                   typeIcon={typeMeta.Icon}
                   typeLabel={typeMeta.label}
                   isLiked={likedEntryIds.includes(entry.id)}
@@ -1010,7 +1691,6 @@ function AppContent() {
             onClose={closeComposer}
             onSave={handleSave}
             commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
-            onToggleCommentsDisabled={() => editingEntry && toggleCommentsDisabled(editingEntry.id)}
           />
         ) : null}
       </AnimatePresence>
@@ -1059,14 +1739,13 @@ function EntryComposer({
   onClose,
   onSave,
   commentsDisabled = false,
-  onToggleCommentsDisabled,
 }: {
   entry: Entry | null
   onClose: () => void
-  onSave: (draft: EntryDraft) => void
+  onSave: (draft: EntryDraft, disableComments?: boolean) => void
   commentsDisabled?: boolean
-  onToggleCommentsDisabled?: () => void
 }) {
+  const [isCommentsDisabled, setIsCommentsDisabled] = useState(commentsDisabled)
   const initialDraft = entry
     ? {
         type: entry.type,
@@ -1326,7 +2005,7 @@ function EntryComposer({
       return
     }
 
-    onSave(finalDraft)
+    onSave(finalDraft, isCommentsDisabled)
   }
 
   return (
@@ -1620,29 +2299,29 @@ function EntryComposer({
             </div>
 
             <div className="composer-actions">
-              <FormattingToolbar
-                editorRef={activeRef}
-                value={activeValue}
-                onChange={setActiveValue}
-                enableDropCap={Boolean(draft.enableDropCap)}
-                onToggleDropCap={() =>
-                  setDraft((cur) => ({
-                    ...cur,
-                    enableDropCap: !cur.enableDropCap,
-                  }))
-                }
-              />
+              <div className="composer-toolbar-row">
+                <FormattingToolbar
+                  editorRef={activeRef}
+                  value={activeValue}
+                  onChange={setActiveValue}
+                  enableDropCap={Boolean(draft.enableDropCap)}
+                  onToggleDropCap={() =>
+                    setDraft((cur) => ({
+                      ...cur,
+                      enableDropCap: !cur.enableDropCap,
+                    }))
+                  }
+                />
+                <button
+                  type="button"
+                  className={`disable-comments-square-btn ${isCommentsDisabled ? 'active' : ''}`}
+                  title={isCommentsDisabled ? 'Comments disabled for this entry' : 'Disable comments for this entry'}
+                  onClick={() => setIsCommentsDisabled((v) => !v)}
+                >
+                  <MessageSquareOff size={15} />
+                </button>
+              </div>
               <div className="composer-action-btns">
-                {entry && onToggleCommentsDisabled && (
-                  <label className="dont-show-again-label" style={{ marginRight: 'auto', fontSize: '12px' }}>
-                    <input
-                      type="checkbox"
-                      checked={commentsDisabled}
-                      onChange={onToggleCommentsDisabled}
-                    />
-                    <span>Disable comments</span>
-                  </label>
-                )}
                 <button className="ghost-btn" type="button" onClick={handleRequestClose}>
                   Cancel
                 </button>

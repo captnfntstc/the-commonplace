@@ -19,7 +19,7 @@ import {
   Users,
   Lock,
   UserCheck,
-  MessageCircle,
+  UserPlus,
 } from 'lucide-react'
 import { Card, type CardEntry } from '../components/CommonplaceCard/Card'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
@@ -46,17 +46,20 @@ interface UserProfilePageProps {
   categoryFilter: string
   onCategoryFilterChange: (id: string) => void
   isOwnProfile?: boolean
+  onSelectUserProfile?: (handle: string) => void
+  followedUserHandles?: string[]
+  onToggleFollowUser?: (handle: string) => void
+  currentUserProfile?: UserProfileState
+  followRequestedHandles?: string[]
+  onToggleFollowRequest?: (handle: string) => void
 }
 
-const SAMPLE_FOLLOWERS = [
-  { id: 'f1', name: 'Elena Rostova', handle: '@elena_r', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop', reviews: 34, mutuals: 2 },
-  { id: 'f2', name: 'Marcus Vance', handle: '@marcus_v', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop', reviews: 18, mutuals: 1 },
-  { id: 'f3', name: 'Sophia Chen', handle: '@sophiac', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop', reviews: 57, mutuals: 3 },
-]
-
-const SAMPLE_FOLLOWING = [
-  { id: 'g1', name: 'Julian Thorne', handle: '@jthorne', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop', reviews: 21, mutuals: 0 },
-  { id: 'g2', name: 'Clara Oswald', handle: '@clara_o', avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&auto=format&fit=crop', reviews: 43, mutuals: 2 },
+export const USER_DIRECTORY = [
+  { id: 'jimboii', name: 'Jimmy Boy', handle: 'jimboii', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop', reviews: 14, isPrivate: false },
+  { id: 'elena_r', name: 'Elena Rostova', handle: 'elena_r', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop', reviews: 34, isPrivate: false },
+  { id: 'marcus_v', name: 'Marcus Vance', handle: 'marcus_v', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop', reviews: 18, isPrivate: false },
+  { id: 'aria_s', name: 'Aria Sterling', handle: 'aria_s', avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop', reviews: 12, isPrivate: true },
+  { id: 'sophiac', name: 'Sophia Chen', handle: 'sophiac', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop', reviews: 27, isPrivate: false },
 ]
 
 export const UserProfilePage: React.FC<UserProfilePageProps> = ({
@@ -76,7 +79,19 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   categoryFilter,
   onCategoryFilterChange,
   isOwnProfile = true,
+  onSelectUserProfile,
+  followedUserHandles = [],
+  onToggleFollowUser,
+  currentUserProfile,
+  followRequestedHandles = [],
+  onToggleFollowRequest,
 }) => {
+  // ── External profile follow & private state ──────────────────────────────
+  const isFollowingUser = followedUserHandles.includes(userProfile.handle)
+  const isFollowRequested = followRequestedHandles.includes(userProfile.handle)
+  const isPrivateProfile = Boolean(userProfile.isPrivate)
+  const isLockedPrivate = !isOwnProfile && isPrivateProfile && !isFollowingUser
+
   // ── Catalog mode ────────────────────────────────────────────────────────────
   const [catalogMode, setCatalogMode] = useState<CatalogMode>('reviewed')
 
@@ -101,6 +116,33 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [followSearch, setFollowSearch] = useState('')
 
   const profileGridRef = useRef<HTMLElement>(null)
+
+  // ── Dynamic Followers & Following lists ─────────────────────────────────────
+  const dynamicFollowersList = useMemo(() => {
+    const cleanHandle = userProfile.handle.replace(/^@/, '')
+    if (cleanHandle === 'jimboii') {
+      return USER_DIRECTORY.filter((u) => u.handle !== 'jimboii')
+    }
+    return USER_DIRECTORY.filter((u) => u.handle !== cleanHandle && u.handle !== 'aria_s')
+  }, [userProfile.handle])
+
+  const dynamicFollowingList = useMemo(() => {
+    const cleanHandle = userProfile.handle.replace(/^@/, '')
+    if (cleanHandle === 'jimboii') {
+      return USER_DIRECTORY.filter((u) => followedUserHandles.includes(u.handle))
+    }
+    return USER_DIRECTORY.filter((u) => u.handle !== cleanHandle && u.handle !== 'aria_s')
+  }, [userProfile.handle, followedUserHandles])
+
+  const activeFollowList = activeFollowModal === 'followers' ? dynamicFollowersList : dynamicFollowingList
+
+  const filteredFollowList = useMemo(() => {
+    if (!followSearch.trim()) return activeFollowList
+    const q = followSearch.toLowerCase()
+    return activeFollowList.filter(
+      (p) => p.name.toLowerCase().includes(q) || p.handle.toLowerCase().includes(q)
+    )
+  }, [activeFollowList, followSearch])
 
   // ── Counts (switches dynamically based on catalogMode) ───────────────────────
   const activeDataset = useMemo(() => {
@@ -148,23 +190,25 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   const currentSearchQuery = catalogMode === 'reviewed' ? profileSearchQuery : shelfSearchQuery
 
-  // ── Filtered datasets ───────────────────────────────────────────────────────
+  // ── Filtered datasets (default sorted by newest first) ───────────────────
   const filteredProfileEntries = useMemo(() => {
     let result = entries
     if (profileCategoryFilter !== 'all') {
       result = result.filter((e) => e.type === profileCategoryFilter)
     }
-    if (!profileSearchQuery.trim()) return result
-    const q = profileSearchQuery.toLowerCase()
-    return result.filter(
-      (entry) =>
-        entry.title.toLowerCase().includes(q) ||
-        entry.creator.toLowerCase().includes(q) ||
-        entry.provider.toLowerCase().includes(q) ||
-        (entry.genre && entry.genre.toLowerCase().includes(q)) ||
-        entry.favoritePassage.toLowerCase().includes(q) ||
-        entry.reflection.toLowerCase().includes(q),
-    )
+    if (profileSearchQuery.trim()) {
+      const q = profileSearchQuery.toLowerCase()
+      result = result.filter(
+        (entry) =>
+          entry.title.toLowerCase().includes(q) ||
+          entry.creator.toLowerCase().includes(q) ||
+          entry.provider.toLowerCase().includes(q) ||
+          (entry.genre && entry.genre.toLowerCase().includes(q)) ||
+          entry.favoritePassage.toLowerCase().includes(q) ||
+          entry.reflection.toLowerCase().includes(q),
+      )
+    }
+    return [...result].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }, [entries, profileSearchQuery, profileCategoryFilter])
 
   const filteredShelfEntries = useMemo(() => {
@@ -172,17 +216,19 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     if (shelfCategoryFilter !== 'all') {
       result = result.filter((e) => e.type === shelfCategoryFilter)
     }
-    if (!shelfSearchQuery.trim()) return result
-    const q = shelfSearchQuery.toLowerCase()
-    return result.filter(
-      (entry) =>
-        entry.title.toLowerCase().includes(q) ||
-        entry.creator.toLowerCase().includes(q) ||
-        entry.provider.toLowerCase().includes(q) ||
-        (entry.genre && entry.genre.toLowerCase().includes(q)) ||
-        entry.favoritePassage.toLowerCase().includes(q) ||
-        entry.reflection.toLowerCase().includes(q),
-    )
+    if (shelfSearchQuery.trim()) {
+      const q = shelfSearchQuery.toLowerCase()
+      result = result.filter(
+        (entry) =>
+          entry.title.toLowerCase().includes(q) ||
+          entry.creator.toLowerCase().includes(q) ||
+          entry.provider.toLowerCase().includes(q) ||
+          (entry.genre && entry.genre.toLowerCase().includes(q)) ||
+          entry.favoritePassage.toLowerCase().includes(q) ||
+          entry.reflection.toLowerCase().includes(q),
+      )
+    }
+    return [...result].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }, [entries, savedEntryIds, shelfSearchQuery, shelfCategoryFilter])
 
   // Active dataset for rendering
@@ -234,17 +280,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     ? `${userProfile.firstName} ${userProfile.lastName}`.trim()
     : userProfile.firstName
   const handleFormatted = `@${userProfile.handle.replace(/^@/, '')}`
-  const canViewFollowLists = userProfile.showFollowLists ?? true
-
-  const currentFollowList = activeFollowModal === 'followers' ? SAMPLE_FOLLOWERS : SAMPLE_FOLLOWING
-  const filteredFollowList = followSearch.trim()
-    ? currentFollowList.filter(
-        (p) =>
-          p.name.toLowerCase().includes(followSearch.toLowerCase()) ||
-          p.handle.toLowerCase().includes(followSearch.toLowerCase()),
-      )
-    : currentFollowList
-
   // ── Type icon helper ────────────────────────────────────────────────────────
   const getTypeMeta = (type: string) => {
     switch (type) {
@@ -294,15 +329,45 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             )}
           </div>
 
-          <button
-            type="button"
-            className="edit-profile-btn"
-            onClick={onNavigateToSettings}
-            title="Edit Profile Settings"
-          >
-            <Edit3 aria-hidden="true" />
-            <span>Edit Profile</span>
-          </button>
+          {isOwnProfile ? (
+            <button
+              type="button"
+              className="edit-profile-btn"
+              onClick={onNavigateToSettings}
+              title="Edit Profile Settings"
+            >
+              <Edit3 aria-hidden="true" />
+              <span>Edit Profile</span>
+            </button>
+          ) : isLockedPrivate ? (
+            <button
+              type="button"
+              className={`edit-profile-btn ${isFollowRequested ? 'is-following' : ''}`}
+              onClick={() => onToggleFollowRequest?.(userProfile.handle)}
+              style={{
+                background: isFollowRequested ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
+                color: isFollowRequested ? 'var(--text-strong)' : '#0e0b06',
+                borderColor: isFollowRequested ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
+              }}
+            >
+              {isFollowRequested ? <UserCheck size={14} /> : <UserPlus size={14} />}
+              <span>{isFollowRequested ? 'Requested' : 'Request to Follow'}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={`edit-profile-btn ${isFollowingUser ? 'is-following' : ''}`}
+              onClick={() => onToggleFollowUser?.(userProfile.handle)}
+              style={{
+                background: isFollowingUser ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
+                color: isFollowingUser ? 'var(--text-strong)' : '#0e0b06',
+                borderColor: isFollowingUser ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
+              }}
+            >
+              {isFollowingUser ? <UserCheck size={14} /> : <UserPlus size={14} />}
+              <span>{isFollowingUser ? 'Following' : 'Follow'}</span>
+            </button>
+          )}
         </div>
 
         {/* Identity Details */}
@@ -335,7 +400,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               onClick={() => { setActiveFollowModal('followers'); setFollowSearch('') }}
             >
               <Users aria-hidden="true" />
-              <span>142 Followers</span>
+              <span>{dynamicFollowersList.length} Followers</span>
             </button>
             <button
               type="button"
@@ -344,177 +409,215 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               onClick={() => { setActiveFollowModal('following'); setFollowSearch('') }}
             >
               <Users aria-hidden="true" />
-              <span>89 Following</span>
+              <span>{dynamicFollowingList.length} Following</span>
             </button>
           </div>
         </div>
 
-        {/* Interactive Stats Grid (Clickable Filter Buttons) */}
-        <div className="profile-stats-grid">
-          {stats.map(({ id, label, count, Icon }) => {
-            const isActive = activeFilter === id
-            return (
-              <button
-                key={id}
-                type="button"
-                className={`stat-card stat-btn ${isActive ? 'active' : ''}`}
-                onClick={() => handleCategoryChange(id)}
-              >
-                <div className="stat-icon-wrapper">
-                  <Icon aria-hidden="true" />
-                </div>
-                <span className="stat-value">{count}</span>
-                <span className="stat-label">{label}</span>
-              </button>
-            )
-          })}
-        </div>
+        {/* Interactive Stats Grid (Clickable Filter Buttons) — Hidden on private profiles */}
+        {!isLockedPrivate && (
+          <div className="profile-stats-grid">
+            {stats.map(({ id, label, count, Icon }) => {
+              const isActive = activeFilter === id
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={`stat-card stat-btn ${isActive ? 'active' : ''}`}
+                  onClick={() => handleCategoryChange(id)}
+                >
+                  <div className="stat-icon-wrapper">
+                    <Icon aria-hidden="true" />
+                  </div>
+                  <span className="stat-value">{count}</span>
+                  <span className="stat-label">{label}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         <div className="profile-section-divider" />
 
-        {/* ── Catalog Section ────────────────────────────────────────────────── */}
-        <section className="profile-catalog-section">
-          <div className="profile-catalog-header">
-
-            {/* Title area — animated crossfade between modes */}
-            <AnimatePresence mode="wait" initial={false}>
-              {catalogMode === 'reviewed' ? (
-                <motion.div
-                  key="header-reviewed"
-                  className="catalog-header-title-group"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }}
-                >
-                  <h2 className="profile-catalog-title">
-                    Reviewed Catalog ({filteredProfileEntries.length})
-                  </h2>
-                </motion.div>
+        {/* ── Catalog Section (locked if private & not following) ─────────────── */}
+        {isLockedPrivate ? (
+          <div className="profile-private-locked">
+            <div className="private-locked-icon">
+              <Lock size={32} />
+            </div>
+            <h3 className="private-locked-title">This Profile is Private</h3>
+            <p className="private-locked-subtitle">
+              Follow @{userProfile.handle.replace(/^@/, '')} to see their reviewed catalog, shelf entries, and reflections.
+            </p>
+            <button
+              type="button"
+              className="edit-profile-btn"
+              style={{
+                position: 'static',
+                background: isFollowRequested ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
+                color: isFollowRequested ? 'var(--text-strong)' : '#0e0b06',
+                borderColor: isFollowRequested ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
+                padding: '10px 24px',
+                fontSize: '13px',
+              }}
+              onClick={() => onToggleFollowRequest?.(userProfile.handle)}
+            >
+              {isFollowRequested ? (
+                <>
+                  <UserCheck size={14} />
+                  <span>Requested</span>
+                </>
               ) : (
-                <motion.div
-                  key="header-shelf"
-                  className="catalog-header-title-group"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }}
-                >
-                  <h2 className="profile-catalog-title">
-                    My Shelf ({savedCount > 0 ? filteredShelfEntries.length : 0})
-                  </h2>
-                  <span className="catalog-privacy-note">
-                    Saved entries are only visible to you
-                  </span>
-                </motion.div>
+                <>
+                  <UserPlus size={14} />
+                  <span>Request to Follow</span>
+                </>
               )}
-            </AnimatePresence>
+            </button>
+          </div>
+        ) : (
+          <section className="profile-catalog-section">
+            <div className="profile-catalog-header">
 
-            <div className="profile-catalog-actions">
-              {/* Bookmark toggle — own profile only */}
-              {isOwnProfile && (
-                <button
-                  type="button"
-                  className={`profile-saved-icon-btn ${catalogMode === 'shelf' ? 'active' : ''} ${bookmarkPressing ? 'is-pressing' : ''}`}
-                  onClick={handleBookmarkToggle}
-                  title={catalogMode === 'shelf' ? 'Return to Reviewed Catalog' : 'Open Saved Shelf'}
-                  aria-label="Open Saved Shelf"
-                >
-                  <Bookmark
-                    size={16}
-                    fill={catalogMode === 'shelf' ? 'currentColor' : 'none'}
-                    aria-hidden="true"
-                  />
-                  {savedCount > 0 && (
-                    <span className="profile-saved-badge">{savedCount}</span>
-                  )}
-                </button>
-              )}
+              {/* Title area — animated crossfade between modes */}
+              <AnimatePresence mode="wait" initial={false}>
+                {catalogMode === 'reviewed' ? (
+                  <motion.div
+                    key="header-reviewed"
+                    className="catalog-header-title-group"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                  >
+                    <h2 className="profile-catalog-title">
+                      Reviewed Catalog ({filteredProfileEntries.length})
+                    </h2>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="header-shelf"
+                    className="catalog-header-title-group"
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                  >
+                    <h2 className="profile-catalog-title">
+                      My Shelf ({savedCount > 0 ? filteredShelfEntries.length : 0})
+                    </h2>
+                    <span className="catalog-privacy-note">
+                      Saved entries are only visible to you
+                    </span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
-              {/* Search box — placeholder swaps by mode */}
-              <div className="profile-search-box">
-                <Search aria-hidden="true" className="profile-search-icon" />
-                <input
-                  type="text"
-                  className="profile-search-input"
-                  value={currentSearchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  placeholder={catalogMode === 'reviewed' ? 'Search catalog…' : 'Search shelf…'}
-                  aria-label={catalogMode === 'reviewed' ? 'Search catalog' : 'Search shelf'}
-                />
-                {currentSearchQuery && (
+              <div className="profile-catalog-actions">
+                {/* Bookmark toggle — own profile only */}
+                {isOwnProfile && (
                   <button
                     type="button"
-                    className="profile-search-clear"
-                    onClick={() => handleSearchChange('')}
-                    aria-label="Clear search"
+                    className={`profile-saved-icon-btn ${catalogMode === 'shelf' ? 'active' : ''} ${bookmarkPressing ? 'is-pressing' : ''}`}
+                    onClick={handleBookmarkToggle}
+                    title={catalogMode === 'shelf' ? 'Return to Reviewed Catalog' : 'Open Saved Shelf'}
+                    aria-label="Open Saved Shelf"
                   >
-                    <X aria-hidden="true" />
+                    <Bookmark
+                      size={16}
+                      fill={catalogMode === 'shelf' ? 'currentColor' : 'none'}
+                      aria-hidden="true"
+                    />
+                    {savedCount > 0 && (
+                      <span className="profile-saved-badge">{savedCount}</span>
+                    )}
                   </button>
                 )}
+
+                {/* Search box — placeholder swaps by mode */}
+                <div className="profile-search-box">
+                  <Search aria-hidden="true" className="profile-search-icon" />
+                  <input
+                    type="text"
+                    className="profile-search-input"
+                    value={currentSearchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    placeholder={catalogMode === 'reviewed' ? 'Search catalog…' : 'Search shelf…'}
+                    aria-label={catalogMode === 'reviewed' ? 'Search catalog' : 'Search shelf'}
+                  />
+                  {currentSearchQuery && (
+                    <button
+                      type="button"
+                      className="profile-search-clear"
+                      onClick={() => handleSearchChange('')}
+                      aria-label="Clear search"
+                    >
+                      <X aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* ── Card Grid — smooth masonry calculation & opacity fade ────────── */}
-          <div key={catalogMode}>
-            {/* Skeleton */}
-            {(activeIsFilterSwitching || !activeMasonryLayout) && activeEntries.length > 0 ? (
-              <CardSkeletonGrid count={activeEntries.length > 6 ? 6 : Math.max(2, activeEntries.length)} />
-            ) : null}
+            {/* ── Card Grid — smooth masonry calculation & opacity fade ────────── */}
+            <div key={catalogMode}>
+              {/* Skeleton */}
+              {(activeIsFilterSwitching || !activeMasonryLayout) && activeEntries.length > 0 ? (
+                <CardSkeletonGrid count={activeEntries.length > 6 ? 6 : Math.max(2, activeEntries.length)} />
+              ) : null}
 
-            {/* Empty states */}
-            {activeEntries.length === 0 && catalogMode === 'reviewed' && (
-              <div className="profile-empty">
-                <BookOpen aria-hidden="true" />
-                <h3>No matching reviews found</h3>
-                <p>
-                  {profileSearchQuery
-                    ? `No reviews match "${profileSearchQuery}" in ${displayName}'s profile.`
-                    : 'No entries cataloged in this category.'}
-                </p>
-              </div>
-            )}
+              {/* Empty states */}
+              {activeEntries.length === 0 && catalogMode === 'reviewed' && (
+                <div className="profile-empty">
+                  <BookOpen aria-hidden="true" />
+                  <h3>No matching reviews found</h3>
+                  <p>
+                    {profileSearchQuery
+                      ? `No reviews match "${profileSearchQuery}" in ${displayName}'s profile.`
+                      : 'No entries cataloged in this category.'}
+                  </p>
+                </div>
+              )}
 
-            {activeEntries.length === 0 && catalogMode === 'shelf' && (
-              <div className="profile-empty shelf-empty">
-                <span className="shelf-empty-icon" aria-hidden="true">📚</span>
-                <h3>Your shelf is empty.</h3>
-                <p>
-                  {shelfSearchQuery || shelfCategoryFilter !== 'all'
-                    ? 'No saved entries match your current filter.'
-                    : 'Save books, albums, films, games, or notes to return to them later.'}
-                </p>
-                {!shelfSearchQuery && shelfCategoryFilter === 'all' && (
-                  <button
-                    type="button"
-                    className="shelf-empty-cta"
-                    onClick={() => {
-                      setIsFilterSwitching(true)
-                      setIsShelfSwitching(true)
-                      setCatalogMode('reviewed')
-                    }}
-                  >
-                    Explore Catalog
-                  </button>
-                )}
-              </div>
-            )}
+              {activeEntries.length === 0 && catalogMode === 'shelf' && (
+                <div className="profile-empty shelf-empty">
+                  <BookOpen size={32} opacity={0.5} aria-hidden="true" />
+                  <h3>Your shelf is empty.</h3>
+                  <p>
+                    {shelfSearchQuery || shelfCategoryFilter !== 'all'
+                      ? 'No saved entries match your current filter.'
+                      : 'Save books, albums, films, games, or notes to return to them later.'}
+                  </p>
+                  {!shelfSearchQuery && shelfCategoryFilter === 'all' && (
+                    <button
+                      type="button"
+                      className="shelf-empty-cta"
+                      onClick={() => {
+                        setIsFilterSwitching(true)
+                        setIsShelfSwitching(true)
+                        setCatalogMode('reviewed')
+                      }}
+                    >
+                      Explore Catalog
+                    </button>
+                  )}
+                </div>
+              )}
 
-            {/* Cards masonry grid */}
-            {activeEntries.length > 0 && (
-              <section
-                key={`${catalogMode}-cards`}
-                className="card-grid profile-masonry-grid"
-                ref={profileGridRef as React.RefObject<HTMLElement>}
-                style={{
-                  position: 'relative',
-                  height: activeMasonryLayout ? activeMasonryLayout.height : 'auto',
-                  minHeight: 320,
-                  opacity: (activeMasonryLayout && !activeIsFilterSwitching) ? 1 : 0,
-                  transition: 'opacity 220ms ease-out',
-                }}
-              >
+              {/* Cards masonry grid */}
+              {activeEntries.length > 0 && (
+                <section
+                  key={`${catalogMode}-cards`}
+                  className="card-grid profile-masonry-grid"
+                  ref={profileGridRef as React.RefObject<HTMLElement>}
+                  style={{
+                    position: 'relative',
+                    height: activeMasonryLayout ? activeMasonryLayout.height : 'auto',
+                    minHeight: 320,
+                    opacity: (activeMasonryLayout && !activeIsFilterSwitching) ? 1 : 0,
+                    transition: 'opacity 220ms ease-out',
+                  }}
+                >
                   {activeEntries.map((entry) => {
                     const pos = activeMasonryLayout?.positions.get(entry.id)
                     const { Icon, label } = getTypeMeta(entry.type)
@@ -564,7 +667,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               )}
             </div>
           </section>
-        </div>
+        )}
+      </div>
 
       {/* ── Followers / Following Modal ── */}
       <AnimatePresence>
@@ -587,7 +691,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     onClick={() => { setActiveFollowModal('followers'); setFollowSearch('') }}
                   >
                     Followers
-                    <span className="follow-tab-count">142</span>
+                    <span className="follow-tab-count">{dynamicFollowersList.length}</span>
                   </button>
                   <button
                     type="button"
@@ -595,7 +699,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     onClick={() => { setActiveFollowModal('following'); setFollowSearch('') }}
                   >
                     Following
-                    <span className="follow-tab-count">89</span>
+                    <span className="follow-tab-count">{dynamicFollowingList.length}</span>
                   </button>
                 </div>
                 <button
@@ -627,7 +731,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               </div>
 
               {/* List */}
-              {!canViewFollowLists && !isOwnProfile ? (
+              {!userProfile.showFollowLists && !isOwnProfile ? (
                 <div className="follow-modal-locked">
                   <Lock size={24} opacity={0.5} />
                   <p>Followers and Following lists are hidden by this user.</p>
@@ -640,41 +744,102 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     </div>
                   ) : (
                     filteredFollowList.map((person) => (
-                      <div key={person.id} className="follow-person-row">
-                        <img
-                          src={person.avatar}
-                          alt={person.name}
-                          className="follow-person-avatar"
-                        />
+                      <div
+                        key={person.id}
+                        className="follow-person-row"
+                        style={{ cursor: onSelectUserProfile ? 'pointer' : 'default' }}
+                        onClick={() => {
+                          if (onSelectUserProfile) {
+                            onSelectUserProfile(person.handle)
+                            setActiveFollowModal(null)
+                          }
+                        }}
+                      >
+                        <div className="follow-person-avatar-wrapper">
+                          <img
+                            src={person.avatar}
+                            alt={person.name}
+                            className="follow-person-avatar-img"
+                          />
+                        </div>
                         <div className="follow-person-info">
                           <span className="follow-person-name">{person.name}</span>
                           <span className="follow-person-meta">
-                            {person.handle}
+                            @{person.handle}
                             <span className="follow-person-dot">·</span>
                             {person.reviews} reviews
-                            {person.mutuals > 0 && (
-                              <>
-                                <span className="follow-person-dot">·</span>
-                                <span className="follow-mutual">{person.mutuals} mutual</span>
-                              </>
-                            )}
                           </span>
                         </div>
                         <div className="follow-person-actions">
-                          <button type="button" className="follow-person-btn follow-btn-secondary">
-                            <MessageCircle size={13} />
-                          </button>
-                          {activeFollowModal === 'followers' ? (
-                            <button type="button" className="follow-person-btn follow-btn-primary">
-                              <UserCheck size={13} />
-                              <span>Following</span>
-                            </button>
-                          ) : (
-                            <button type="button" className="follow-person-btn follow-btn-primary is-following">
-                              <UserCheck size={13} />
-                              <span>Following</span>
-                            </button>
-                          )}
+                          {(() => {
+                            const isPersonFollowing = followedUserHandles.includes(person.handle)
+                            const isPersonRequested = followRequestedHandles.includes(person.handle)
+                            const isCurrentUser = person.handle === (currentUserProfile?.handle || 'jimboii')
+
+                            if (isCurrentUser) {
+                              return <span className="follow-you-badge">You</span>
+                            }
+                            if (isPersonFollowing) {
+                              return (
+                                <button
+                                  type="button"
+                                  className="follow-person-btn follow-btn-primary is-following"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onToggleFollowUser?.(person.handle)
+                                  }}
+                                  title="Click to unfollow"
+                                >
+                                  <UserCheck size={13} />
+                                  <span>Following</span>
+                                </button>
+                              )
+                            }
+                            if (isPersonRequested) {
+                              return (
+                                <button
+                                  type="button"
+                                  className="follow-person-btn follow-btn-secondary"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onToggleFollowRequest?.(person.handle)
+                                  }}
+                                  title="Click to cancel request"
+                                >
+                                  <UserCheck size={13} />
+                                  <span>Requested</span>
+                                </button>
+                              )
+                            }
+                            if (person.isPrivate) {
+                              return (
+                                <button
+                                  type="button"
+                                  className="follow-person-btn follow-btn-primary"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    onToggleFollowRequest?.(person.handle)
+                                  }}
+                                >
+                                  <UserPlus size={13} />
+                                  <span>Request</span>
+                                </button>
+                              )
+                            }
+                            return (
+                              <button
+                                type="button"
+                                className="follow-person-btn follow-btn-primary"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onToggleFollowUser?.(person.handle)
+                                }}
+                              >
+                                <UserPlus size={13} />
+                                <span>Follow</span>
+                              </button>
+                            )
+                          })()}
                         </div>
                       </div>
                     ))

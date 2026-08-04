@@ -110,6 +110,7 @@ export type UserProfileState = {
   lastUsernameChangeDate?: string
   showFollowLists?: boolean
   allowComments?: boolean
+  isPrivate?: boolean
 }
 
 interface SettingsPageProps {

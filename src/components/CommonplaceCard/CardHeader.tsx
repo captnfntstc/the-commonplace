@@ -1,11 +1,15 @@
 import React from 'react'
 import { User, Star } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { formatRelativeTime, formatFullDateTime } from '../../utils/dateUtils'
 
 interface CardHeaderProps {
-  rating: number
+  rating?: number
   typeIcon: LucideIcon
   typeLabel: string
+  authorHandle?: string
+  authorAvatarUrl?: string
+  createdAt?: string
   onOpenProfile?: () => void
 }
 
@@ -29,11 +33,15 @@ export function StarRating({ rating }: { rating: number }) {
 }
 
 export const CardHeader: React.FC<CardHeaderProps> = ({
-  rating,
   typeIcon: Icon,
   typeLabel,
+  authorHandle = 'jimboii',
+  authorAvatarUrl,
+  createdAt,
   onOpenProfile,
 }) => {
+  const displayHandle = authorHandle.replace(/^@/, '')
+
   return (
     <div className="card-toprow">
       <div className="card-user-row">
@@ -44,17 +52,25 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
             e.stopPropagation()
             onOpenProfile?.()
           }}
-          title="View jimboii's profile"
-          aria-label="View jimboii's profile"
+          title={`View @${displayHandle}'s profile`}
+          aria-label={`View @${displayHandle}'s profile`}
         >
           <div className="avatar" aria-hidden="true">
-            <User />
+            {authorAvatarUrl ? (
+              <img src={authorAvatarUrl} alt={displayHandle} className="avatar-img" />
+            ) : (
+              <User />
+            )}
           </div>
-          <span className="username">jimboii</span>
+          <span className="username">@{displayHandle}</span>
         </button>
-        <StarRating rating={rating} />
+        {createdAt && (
+          <span className="card-timestamp" title={formatFullDateTime(createdAt)}>
+            &bull; {formatRelativeTime(createdAt)}
+          </span>
+        )}
       </div>
-      <div className="card-type-icon" aria-label={typeLabel}>
+      <div className="card-type-icon" aria-label={typeLabel} title={typeLabel}>
         <Icon aria-hidden="true" />
       </div>
     </div>

@@ -7,8 +7,8 @@ interface CardReflectionProps {
   reflectionAlign?: Alignment
   enableDropCap?: boolean
   expanded: boolean
-  onEdit: () => void
-  onDelete: () => void
+  onEdit?: () => void
+  onDelete?: () => void
   onExpandOverlay?: () => void
 }
 

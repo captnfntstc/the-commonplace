@@ -1,5 +1,6 @@
 import React from 'react'
 import type { LucideIcon } from 'lucide-react'
+import { StarRating } from './CardHeader'
 
 interface CardMediaProps {
   type: string
@@ -9,6 +10,7 @@ interface CardMediaProps {
   provider?: string
   year?: string
   coverUrl?: string
+  rating: number
   typeIcon: LucideIcon
   onToggle: () => void
 }
@@ -43,6 +45,7 @@ export const CardMedia: React.FC<CardMediaProps> = ({
   provider,
   year,
   coverUrl,
+  rating,
   typeIcon: Icon,
   onToggle,
 }) => {
@@ -69,6 +72,7 @@ export const CardMedia: React.FC<CardMediaProps> = ({
         )}
       </button>
       <div className="card-meta">
+        {rating > 0 && <StarRating rating={rating} />}
         <h2 className="card-title">{title}</h2>
 
         {type === 'book' && (

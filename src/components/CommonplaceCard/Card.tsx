@@ -26,13 +26,16 @@ export type CardEntry = {
   createdAt: string
   updatedAt: string
   coverTone: 'gold' | 'rose' | 'sage' | 'blue' | 'violet' | 'ember'
+  authorHandle?: string
+  authorName?: string
+  authorAvatarUrl?: string
 }
 
 interface CardProps {
   entry: CardEntry
   expanded: boolean
-  onDelete: () => void
-  onEdit: () => void
+  onDelete?: () => void
+  onEdit?: () => void
   onToggle: () => void
   onExpandOverlay?: () => void
   onOpenProfile?: () => void
@@ -71,9 +74,11 @@ export const Card: React.FC<CardProps> = ({
     <article className={`entry-card tone-${entry.coverTone}`}>
       {/* Top Header Row */}
       <CardHeader
-        rating={entry.rating}
         typeIcon={typeIcon}
         typeLabel={typeLabel}
+        authorHandle={entry.authorHandle}
+        authorAvatarUrl={entry.authorAvatarUrl}
+        createdAt={entry.createdAt}
         onOpenProfile={onOpenProfile}
       />
 
@@ -86,6 +91,7 @@ export const Card: React.FC<CardProps> = ({
         provider={entry.provider}
         year={entry.year}
         coverUrl={entry.coverUrl}
+        rating={entry.rating}
         typeIcon={typeIcon}
         onToggle={onToggle}
       />
@@ -98,7 +104,10 @@ export const Card: React.FC<CardProps> = ({
           onClick={onToggle}
           aria-expanded={expanded}
         >
-          <FormattedText text={entry.favoritePassage} align={entry.passageAlign} />
+          <span className="card-passage-quote-mark" aria-hidden="true">&#x201C;</span>
+          <div className="card-passage-text">
+            <FormattedText text={entry.favoritePassage} align={entry.passageAlign} />
+          </div>
         </button>
       )}
 

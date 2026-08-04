@@ -133,6 +133,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
       <div
         ref={ref as any}
         contentEditable
+        spellCheck={false}
         className="rich-editor-content"
         style={{ minHeight: `${minHeight}px` }}
         onInput={handleInput}
