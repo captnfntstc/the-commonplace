@@ -17,6 +17,7 @@ import {
   LogOut,
   Star,
   Tv,
+  Wrench,
   X,
   AlertCircle,
   Lock,
@@ -44,13 +45,18 @@ import { CardSkeletonGrid } from './components/CommonplaceCard/CardSkeleton'
 import { UserProfilePage, USER_DIRECTORY } from './pages/UserProfilePage'
 import { SettingsPage, type UserProfileState } from './pages/SettingsPage'
 import { useMasonryLayout } from './hooks/useMasonryLayout'
-import { NotificationBell, NotifSimulator, type Notification as AppNotification } from './components/Notifications/NotificationPanel'
+import { NotificationBell, type Notification as AppNotification } from './components/Notifications/NotificationPanel'
 import { MOCK_ENTITY_PROFILES } from './data/entityProfiles'
 import { UniversalMediaProfilePage } from './pages/UniversalMediaProfilePage'
 import { UNIVERSAL_MEDIA_ENTITIES } from './data/universalMediaEntities'
-import type { UniversalMediaEntity } from './types/mediaEntity'
+import type { MediaEntityType, UniversalMediaEntity } from './types/mediaEntity'
+import { resolveArtworkUrl, createArtworkPlaceholder } from './utils/artwork'
+import { ApiUsageTracker } from './components/DeveloperTools/ApiUsageTracker'
 
 const WARN_UNRATED_KEY = 'the-commonplace.warn-unrated'
+const DEV_ALT_SEARCH_ENABLED_KEY = 'the-commonplace.dev.alternate-search-enabled'
+const DEV_ALT_SEARCH_TYPES_KEY = 'the-commonplace.dev.alternate-search-types'
+const DEV_ALT_SEARCH_PEOPLE_KEY = 'the-commonplace.dev.alternate-search-people'
 
 function getWarnUnratedPreference(): boolean {
   const stored = localStorage.getItem(WARN_UNRATED_KEY)
@@ -117,7 +123,6 @@ function isDraftDirty(current: EntryDraft, base: EntryDraft): boolean {
 }
 
 type EntryType = MetadataType
-
 type CoverTone = 'gold' | 'rose' | 'sage' | 'blue' | 'violet' | 'ember'
 
 type Entry = {
@@ -161,6 +166,14 @@ const entryTypes: Array<{
   { id: 'song', label: 'Songs', Icon: Music4 },
   { id: 'tv', label: 'Shows', Icon: Tv },
 ]
+
+const peopleEntityTypes = new Set<MediaEntityType>([
+  'artist',
+  'author',
+  'director',
+  'actor',
+  'game_studio',
+])
 
 const defaultCoverToneByType: Record<EntryType, CoverTone> = {
   album: 'gold',
@@ -244,6 +257,33 @@ function getTypeMeta(type: EntryType) {
   return entryTypes.find((entryType) => entryType.id === type) ?? entryTypes[0]
 }
 
+const portraitEntityTypes = new Set(['artist', 'author', 'director', 'actor', 'game_studio'])
+
+function getSearchEntityArtwork(entity: {
+  id: string
+  title: string
+  artworkUrl: string
+  type: string
+}) {
+  const cleanTitle = entity.title.toLowerCase()
+  const mockProfile = MOCK_ENTITY_PROFILES[entity.id]
+  const universalEntity = UNIVERSAL_MEDIA_ENTITIES[entity.id]
+
+  return (
+    entityImageCacheMap.get(`${entity.type}:${entity.id}`) ||
+    entityImageCacheMap.get(`${entity.type}:${cleanTitle}`) ||
+    entityImageCacheMap.get(`artist:${entity.id}`) ||
+    entityImageCacheMap.get(`artist:${cleanTitle}`) ||
+    entityImageCacheMap.get(`wiki-portrait:${cleanTitle}`) ||
+    entityImageCacheMap.get(entity.id) ||
+    entityImageCacheMap.get(cleanTitle) ||
+    universalEntity?.artworkUrl ||
+    mockProfile?.coverUrl ||
+    entity.artworkUrl ||
+    createArtworkPlaceholder(entity.title, entity.type)
+  )
+}
+
 const EntitySearchItem: React.FC<{
   entity: {
     id: string
@@ -251,61 +291,195 @@ const EntitySearchItem: React.FC<{
     artworkUrl: string
     type: string
     creatorValue: string
+    bio: string
   }
   onSelect: () => void
 }> = ({ entity, onSelect }) => {
-  const cacheKey = entity.id || `${entity.title}:${entity.creatorValue}`.toLowerCase()
-  const cached = entityImageCacheMap.get(cacheKey) || entity.artworkUrl
-  const [photo, setPhoto] = useState(cached)
+  const [photo, setPhoto] = useState(() => getSearchEntityArtwork(entity))
+  const isSquareThumb = ['artist', 'author', 'director', 'actor', 'game_studio', 'album', 'song'].includes(entity.type)
 
   useEffect(() => {
-    setPhoto(entityImageCacheMap.get(cacheKey) || entity.artworkUrl)
-  }, [entity.id, entity.artworkUrl, cacheKey])
+    let cancelled = false
+    setPhoto(getSearchEntityArtwork(entity))
 
-  useEffect(() => {
-    let active = true
-    if (['artist', 'author', 'director', 'actor'].includes(entity.type)) {
+    if (portraitEntityTypes.has(entity.type)) {
       fetchWikipediaPortrait(entity.title)
-        .then((url) => {
-          if (active && url) {
-            entityImageCacheMap.set(cacheKey, url)
-            setPhoto(url)
-          }
+        .then((portraitUrl) => {
+          if (!cancelled && portraitUrl) setPhoto(resolveArtworkUrl(portraitUrl, entity.title, entity.type))
         })
-        .catch(() => {})
-    } else if (['album', 'song'].includes(entity.type) && !entity.artworkUrl && !photo) {
-      searchMetadata('album', entity.title)
-        .then((res) => {
-          if (active && res && res[0]?.coverUrl) {
-            entityImageCacheMap.set(cacheKey, res[0].coverUrl)
-            setPhoto(res[0].coverUrl)
-          }
+        .catch(() => {
+          if (!cancelled) setPhoto((current) => current || createArtworkPlaceholder(entity.title, entity.type))
         })
-        .catch(() => {})
     }
+
     return () => {
-      active = false
+      cancelled = true
     }
-  }, [entity.id, entity.title, entity.type, entity.artworkUrl, cacheKey, photo])
+  }, [entity])
 
   return (
     <button
       type="button"
-      className="search-user-item search-entity-item"
+      className="metadata-option search-entity-item"
       onClick={onSelect}
     >
-      <div className="search-user-left">
-        <div className={`search-entity-thumb ${['artist', 'author', 'album', 'song'].includes(entity.type) ? 'is-square' : ''}`}>
-          <img src={photo} alt={entity.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-        </div>
-        <div className="search-user-info">
-          <span className="search-user-name">{entity.title}</span>
-          <span className="search-user-handle">{entity.creatorValue}</span>
-        </div>
-      </div>
+      <span className={isSquareThumb ? 'metadata-thumb metadata-thumb--square' : 'metadata-thumb'}>
+        {photo ? (
+          <img
+            src={photo}
+            alt={entity.title}
+            referrerPolicy="no-referrer"
+            loading="eager"
+            decoding="async"
+            onError={() => {
+              const fallback = createArtworkPlaceholder(entity.title, entity.type)
+              setPhoto(fallback)
+            }}
+          />
+        ) : (
+          <Search aria-hidden="true" />
+        )}
+      </span>
+      <span className="metadata-option-copy">
+        <strong>{entity.title}</strong>
+        <span className="metadata-type-line">
+          <span>{formatMediaSearchSubtitle(entity)}</span>
+        </span>
+      </span>
       <span className="search-entity-type-badge">{entity.type.replace('_', ' ').toUpperCase()}</span>
     </button>
   )
+}
+
+type HeaderSearchEntity = {
+  id: string
+  title: string
+  artworkUrl: string
+  type: string
+  creatorValue: string
+  bio: string
+  source: 'metadata' | 'universal'
+  rank: number
+  metadataResult?: MetadataResult
+  universalEntity?: UniversalMediaEntity
+}
+
+function normalizeSearchText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function albumEntityIdFromMetadata(result: MetadataResult) {
+  return result.providerId
+    ? `album-${result.providerId}`
+    : `album-${normalizeSearchText(result.title).replace(/\s+/g, '-')}`
+}
+
+function metadataResultToSearchEntity(result: MetadataResult, rank: number): HeaderSearchEntity {
+  return {
+    id: result.type === 'album' ? albumEntityIdFromMetadata(result) : result.id,
+    title: result.title,
+    artworkUrl: result.coverUrl || '',
+    type: result.type,
+    creatorValue: result.creator,
+    bio: result.provider || result.genre || '',
+    source: 'metadata',
+    rank,
+    metadataResult: result,
+  }
+}
+
+function universalEntityToSearchEntity(entity: UniversalMediaEntity, rank: number): HeaderSearchEntity {
+  const creatorChip = entity.metadataChips.find((chip) =>
+    /artist|author|director|creator|developer|genre|known for/i.test(chip.label),
+  )
+
+  return {
+    id: entity.id,
+    title: entity.name,
+    artworkUrl: entity.artworkUrl || '',
+    type: entity.type,
+    creatorValue: creatorChip ? `${creatorChip.label}: ${creatorChip.value}` : entity.categoryLabel,
+    bio: entity.description || entity.categoryLabel,
+    source: 'universal',
+    rank,
+    universalEntity: entity,
+  }
+}
+
+function formatMediaSearchSubtitle(entity: { creatorValue: string; bio: string }) {
+  const creator = entity.creatorValue.replace(/^[^:]+:\s*/, '').trim()
+  const detail = entity.bio.replace(/\b(19|20)\d{2}\b/g, '').replace(/\s+/g, ' ').trim()
+  return [creator, detail].filter(Boolean).join(' • ').toUpperCase()
+}
+
+function getEntityPopularityScore(entity: UniversalMediaEntity) {
+  return entity.communityRating.count * entity.communityRating.average
+}
+void getEntityPopularityScore
+
+function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
+  const seen = new Set<string>()
+  return entities.filter((entity) => {
+    const key = `${entity.type}:${normalizeSearchText(entity.title)}:${normalizeSearchText(entity.creatorValue)}`
+    const idKey = entity.id.toLowerCase()
+    if (seen.has(idKey) || seen.has(key)) return false
+    seen.add(idKey)
+    seen.add(key)
+    return true
+  })
+}
+
+function metadataTypeToEntityType(type: MetadataType): MediaEntityType {
+  if (type === 'film') return 'movie'
+  return type
+}
+
+function entityTypeToMetadataFilter(type: MediaEntityType): MetadataType | null {
+  if (type === 'movie') return 'film'
+  if (type === 'album' || type === 'song' || type === 'book' || type === 'tv' || type === 'game') return type
+  return null
+}
+
+function metadataTypeLabel(type: MetadataType) {
+  if (type === 'film') return 'Film'
+  if (type === 'tv') return 'Show'
+  return type.charAt(0).toUpperCase() + type.slice(1)
+}
+
+function creatorLabelForMetadata(type: MetadataType) {
+  if (type === 'book') return 'Author'
+  if (type === 'film') return 'Director'
+  if (type === 'tv') return 'Creator'
+  if (type === 'game') return 'Studio'
+  return 'Artist'
+}
+
+function metadataResultToUniversalEntity(entity: { id: string; metadataResult: MetadataResult }): UniversalMediaEntity {
+  const result = entity.metadataResult
+  const categoryLabel = metadataTypeLabel(result.type)
+  const detail = result.provider || result.genre || result.year || categoryLabel
+
+  return {
+    id: entity.id,
+    name: result.title,
+    type: metadataTypeToEntityType(result.type),
+    categoryLabel,
+    artworkUrl: resolveArtworkUrl(result.coverUrl || '', result.title, result.type),
+    description:
+      result.summary ||
+      `Catalog entry for ${result.title}${result.creator ? ` by ${result.creator}` : ''} in The Commonplace community archive.`,
+    metadataChips: [
+      { label: creatorLabelForMetadata(result.type), value: result.creator || 'Unknown' },
+      { label: 'Category', value: categoryLabel },
+      ...(detail ? [{ label: result.year && detail === result.year ? 'Year' : 'Detail', value: detail }] : []),
+      ...(result.year && detail !== result.year ? [{ label: 'Year', value: result.year }] : []),
+    ],
+    communityRating: {
+      average: 4.7,
+      count: 0,
+      distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+    },
+  }
 }
 
 function draftFromMetadata(
@@ -326,7 +500,7 @@ function draftFromMetadata(
     providerId: result.providerId,
     year: result.year,
     genre: result.genre,
-    coverUrl: result.coverUrl,
+    coverUrl: resolveArtworkUrl(result.coverUrl, result.title, result.type),
     summary: result.summary,
     coverTone: getDefaultCoverTone(result.type),
   }
@@ -453,7 +627,7 @@ const MOCK_EXTERNAL_PROFILES: Record<string, { profile: UserProfileState; entrie
         createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),
         updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),
         coverTone: 'rose',
-        coverUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop',
+        coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/8b/ef/07/8bef075b-e48f-3617-e854-3c8297b830d1/634904032429.png/1000x1000bb.jpg',
         authorHandle: 'marcus_v',
         authorName: 'Marcus Vance',
         authorAvatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop',
@@ -507,15 +681,71 @@ function AppContent() {
   const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings' | 'entity'>('feed')
   const [selectedProfileHandle, setSelectedProfileHandle] = useState<string | null>(null)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
+  const [, setEntityBreadcrumb] = useState<string[]>([])
   const [searchTab, setSearchTab] = useState<'media' | 'users'>('media')
-  const [headerAlbumResults, setHeaderAlbumResults] = useState<MetadataResult[]>([])
-  const [headerAlbumSearchLoading, setHeaderAlbumSearchLoading] = useState(false)
+  const [headerMediaResults, setHeaderMediaResults] = useState<MetadataResult[]>([])
+  const [headerMediaSearchLoading, setHeaderMediaSearchLoading] = useState(false)
+  const headerAlbumResults = headerMediaResults
+  const headerAlbumSearchLoading = headerMediaSearchLoading
+  void headerAlbumResults
+  void headerAlbumSearchLoading
   const [profileCategoryFilter, setProfileCategoryFilter] = useState<string>('all')
+  const searchEntityCacheRef = useRef(new Map<string, UniversalMediaEntity>())
 
   const handleOpenEntity = (entityId: string) => {
+    setEntityBreadcrumb((prev) =>
+      activeView === 'entity' && selectedEntityId && selectedEntityId !== entityId
+        ? [...prev, selectedEntityId]
+        : [],
+    )
     setSelectedEntityId(entityId)
     setActiveView('entity')
     setSearchOpen(false)
+  }
+
+  const handleOpenSearchEntity = (entity: HeaderSearchEntity) => {
+    const universalEntity = entity.universalEntity || (
+      entity.metadataResult ? metadataResultToUniversalEntity({
+        id: entity.id,
+        metadataResult: entity.metadataResult,
+      }) : null
+    )
+
+    if (universalEntity) {
+      searchEntityCacheRef.current.set(entity.id, universalEntity)
+    }
+    handleOpenEntity(entity.id)
+  }
+
+  const handleNavigateEntityBreadcrumb = (entityId: string) => {
+    setEntityBreadcrumb((prev) =>
+      selectedEntityId && selectedEntityId !== entityId ? [...prev, selectedEntityId] : prev,
+    )
+    setSelectedEntityId(entityId)
+    setActiveView('entity')
+  }
+
+  const handleEntityBack = () => {
+    setEntityBreadcrumb((prev) => {
+      const next = [...prev]
+      const previousEntityId = next.pop()
+      if (previousEntityId) {
+        setSelectedEntityId(previousEntityId)
+        setActiveView('entity')
+        return next
+      }
+
+      setSelectedEntityId(null)
+      setActiveView('feed')
+      return []
+    })
+  }
+
+  const handleHome = () => {
+    setEntityBreadcrumb([])
+    setSelectedEntityId(null)
+    setSelectedProfileHandle(null)
+    setActiveView('feed')
   }
 
   const [userProfile, setUserProfile] = useState<UserProfileState>({
@@ -585,42 +815,171 @@ function AppContent() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [isLoggedOut, setIsLoggedOut] = useState(false)
+  const [quickDevToolsOpen, setQuickDevToolsOpen] = useState(false)
+  const [alternateSearchEnabled, setAlternateSearchEnabledState] = useState(() => {
+    return localStorage.getItem(DEV_ALT_SEARCH_ENABLED_KEY) === 'true'
+  })
+  const [alternateSearchTypes, setAlternateSearchTypesState] = useState<MetadataType[]>(() => {
+    const allTypes = entryTypes.map((entryType) => entryType.id)
+    const storedTypes = localStorage.getItem(DEV_ALT_SEARCH_TYPES_KEY)
+    if (storedTypes === null) return allTypes
+
+    try {
+      const parsed = JSON.parse(storedTypes) as MetadataType[]
+      return parsed.filter((type) => allTypes.includes(type))
+    } catch {
+      return allTypes
+    }
+  })
+  const [alternateSearchIncludesPeople, setAlternateSearchIncludesPeopleState] = useState(() => {
+    return localStorage.getItem(DEV_ALT_SEARCH_PEOPLE_KEY) !== 'false'
+  })
   const gridRef = useRef<HTMLElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const [searchLimit, setSearchLimit] = useState(8)
 
+  const setAlternateSearchEnabled = (enabled: boolean) => {
+    setAlternateSearchEnabledState(enabled)
+    localStorage.setItem(DEV_ALT_SEARCH_ENABLED_KEY, String(enabled))
+    if (enabled) {
+      setSearchOpen(true)
+      setSearchTab('media')
+    }
+  }
+
+  const setAlternateSearchTypes = (types: MetadataType[]) => {
+    const allTypes = entryTypes.map((entryType) => entryType.id)
+    const validTypes = types.filter((type) => allTypes.includes(type))
+    const nextTypes = validTypes
+    setAlternateSearchTypesState(nextTypes)
+    localStorage.setItem(DEV_ALT_SEARCH_TYPES_KEY, JSON.stringify(nextTypes))
+  }
+
+  const setAlternateSearchIncludesPeople = (enabled: boolean) => {
+    setAlternateSearchIncludesPeopleState(enabled)
+    localStorage.setItem(DEV_ALT_SEARCH_PEOPLE_KEY, String(enabled))
+  }
+
+  const toggleAlternateSearchPeople = () => {
+    const nextPeopleState = !alternateSearchIncludesPeople
+    if (!nextPeopleState && alternateSearchTypes.length === 0) {
+      setAlternateSearchTypes(entryTypes.map((entryType) => entryType.id))
+    }
+    setAlternateSearchIncludesPeople(nextPeopleState)
+  }
+
+  const toggleAlternateSearchType = (type: MetadataType) => {
+    const nextTypes = alternateSearchTypes.includes(type)
+      ? alternateSearchTypes.filter((item) => item !== type)
+      : [...alternateSearchTypes, type]
+
+    if (nextTypes.length === 0 && !alternateSearchIncludesPeople) {
+      setAlternateSearchIncludesPeople(true)
+    }
+
+    setAlternateSearchTypes(nextTypes)
+  }
+
   useEffect(() => {
     setSearchLimit(8)
-  }, [query, searchOpen])
+  }, [alternateSearchIncludesPeople, alternateSearchTypes, query, searchOpen, searchTab])
+
+  // Pre-warm entity image URL cache and fetch live Wikipedia portraits for artists/authors/directors.
+  useEffect(() => {
+    Object.values(UNIVERSAL_MEDIA_ENTITIES).forEach((entity) => {
+      if (['artist', 'author', 'director', 'actor'].includes(entity.type)) {
+        fetchWikipediaPortrait(entity.name).catch(() => {})
+      }
+      if (entity.artworkUrl) {
+        const safeArtworkUrl = resolveArtworkUrl(entity.artworkUrl, entity.name, entity.categoryLabel)
+        entityImageCacheMap.set(entity.id, safeArtworkUrl)
+        entityImageCacheMap.set(entity.name.toLowerCase(), safeArtworkUrl)
+        entityImageCacheMap.set(`artist:${entity.id}`, safeArtworkUrl)
+        entityImageCacheMap.set(`artist:${entity.name.toLowerCase()}`, safeArtworkUrl)
+      }
+      if (entity.secondaryCollection?.items) {
+        entity.secondaryCollection.items.forEach((item) => {
+          if (item.artworkUrl) {
+            const safeArtworkUrl = resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle)
+            entityImageCacheMap.set(item.id, safeArtworkUrl)
+            entityImageCacheMap.set(item.title.toLowerCase(), safeArtworkUrl)
+            entityImageCacheMap.set(`artist:${item.id}`, safeArtworkUrl)
+            entityImageCacheMap.set(`artist:${item.title.toLowerCase()}`, safeArtworkUrl)
+          }
+        })
+      }
+      if (entity.relatedEntities?.items) {
+        entity.relatedEntities.items.forEach((item) => {
+          if (['artist', 'author', 'director', 'actor'].includes(item.type || '')) {
+            fetchWikipediaPortrait(item.title).catch(() => {})
+          }
+          if (item.artworkUrl) {
+            const safeArtworkUrl = resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle)
+            entityImageCacheMap.set(item.id, safeArtworkUrl)
+            entityImageCacheMap.set(item.title.toLowerCase(), safeArtworkUrl)
+            entityImageCacheMap.set(`artist:${item.id}`, safeArtworkUrl)
+            entityImageCacheMap.set(`artist:${item.title.toLowerCase()}`, safeArtworkUrl)
+          }
+        })
+      }
+    })
+
+    Object.values(MOCK_ENTITY_PROFILES).forEach((profile) => {
+      if (profile.coverUrl) {
+        entityImageCacheMap.set(profile.id, profile.coverUrl)
+        entityImageCacheMap.set(profile.title.toLowerCase(), profile.coverUrl)
+      }
+    })
+  }, [])
 
   useEffect(() => {
     const normalizedQuery = query.trim()
-    if (!searchOpen || searchTab !== 'media' || normalizedQuery.length < 2) {
-      setHeaderAlbumResults([])
-      setHeaderAlbumSearchLoading(false)
+    const shouldSearchMedia = alternateSearchEnabled
+      ? alternateSearchTypes.length > 0
+      : searchTab === 'media'
+
+    if (!searchOpen || !shouldSearchMedia || normalizedQuery.length < 2) {
+      setHeaderMediaResults([])
+      setHeaderMediaSearchLoading(false)
       return
     }
 
     const abortController = new AbortController()
     const timer = window.setTimeout(() => {
-      setHeaderAlbumSearchLoading(true)
-      searchMetadata('album', normalizedQuery, abortController.signal)
-        .then((results) => {
-          setHeaderAlbumResults(results)
+      const fallbackTypes = entryTypes.map((entryType) => entryType.id)
+      const filteredTypes = entryTypes
+        .filter((entryType) => alternateSearchTypes.includes(entryType.id))
+        .map((entryType) => entryType.id)
+      const typesToSearch = alternateSearchEnabled ? filteredTypes : fallbackTypes
+      setHeaderMediaSearchLoading(true)
+
+      let pendingSearches = typesToSearch.length
+      setHeaderMediaResults([])
+
+      typesToSearch.forEach((type) => {
+        searchMetadata(type, normalizedQuery, abortController.signal)
+          .then((results) => {
+            if (!abortController.signal.aborted) {
+              setHeaderMediaResults((current) => [...current, ...results])
+            }
+          })
+          .catch((err) => {
+            if ((err as Error)?.name === 'AbortError') return
+          })
+          .finally(() => {
+            pendingSearches -= 1
+            if (pendingSearches === 0 && !abortController.signal.aborted) {
+              setHeaderMediaSearchLoading(false)
+            }
         })
-        .catch((err) => {
-          if ((err as Error)?.name !== 'AbortError') setHeaderAlbumResults([])
-        })
-        .finally(() => {
-          if (!abortController.signal.aborted) setHeaderAlbumSearchLoading(false)
-        })
+      })
     }, 250)
 
     return () => {
       abortController.abort()
       window.clearTimeout(timer)
     }
-  }, [query, searchOpen, searchTab])
+  }, [alternateSearchEnabled, alternateSearchTypes, query, searchOpen, searchTab])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -645,6 +1004,63 @@ function AppContent() {
     }
     setActiveView('profile')
   }
+
+  const userSearchResults = useMemo(() => {
+    const normalizedQuery = normalizeSearchText(query)
+    if (!normalizedQuery) return []
+
+    return USER_DIRECTORY.filter((user) => {
+      return (
+        normalizeSearchText(user.name).includes(normalizedQuery) ||
+        normalizeSearchText(user.handle).includes(normalizedQuery)
+      )
+    })
+  }, [query])
+
+  const mediaSearchResults = useMemo(() => {
+    const normalizedQuery = normalizeSearchText(query)
+    if (!normalizedQuery) return []
+
+    const localProfileResults = Object.values(UNIVERSAL_MEDIA_ENTITIES)
+      .filter((entity) => {
+        const metadataFilter = entityTypeToMetadataFilter(entity.type)
+        const isPeopleEntity = peopleEntityTypes.has(entity.type)
+        const allowedByAlternateFilters = !alternateSearchEnabled || (
+          (isPeopleEntity && alternateSearchIncludesPeople) ||
+          (metadataFilter !== null && alternateSearchTypes.includes(metadataFilter))
+        )
+
+        if (!allowedByAlternateFilters) return false
+
+        const searchableText = normalizeSearchText([
+          entity.name,
+          entity.categoryLabel,
+          entity.description,
+          ...entity.metadataChips.flatMap((chip) => [chip.label, chip.value]),
+        ].join(' '))
+
+        return searchableText.includes(normalizedQuery)
+      })
+      .sort((a, b) => {
+        const aTitle = normalizeSearchText(a.name)
+        const bTitle = normalizeSearchText(b.name)
+        const aExact = aTitle === normalizedQuery ? 0 : 1
+        const bExact = bTitle === normalizedQuery ? 0 : 1
+        if (aExact !== bExact) return aExact - bExact
+
+        const aPerson = peopleEntityTypes.has(a.type) ? 0 : 1
+        const bPerson = peopleEntityTypes.has(b.type) ? 0 : 1
+        if (aPerson !== bPerson) return aPerson - bPerson
+
+        return getEntityPopularityScore(b) - getEntityPopularityScore(a)
+      })
+      .map((entity, index) => universalEntityToSearchEntity(entity, index))
+
+    const metadataResults = headerMediaResults.map((result, index) =>
+      metadataResultToSearchEntity(result, localProfileResults.length + index),
+    )
+    return dedupeSearchEntities([...localProfileResults, ...metadataResults])
+  }, [alternateSearchEnabled, alternateSearchIncludesPeople, alternateSearchTypes, headerMediaResults, query])
 
   const [followedUserHandles, setFollowedUserHandles] = useState<string[]>(() => {
     try {
@@ -778,6 +1194,310 @@ function AppContent() {
     }
   }
 
+  const renderNotificationsGroup = () => (
+    <NotificationBell
+      notifications={notifications}
+      onMarkAllRead={markAllNotificationsRead}
+      onClearAll={clearAllNotifications}
+      onDismiss={dismissNotification}
+    />
+  )
+
+  const renderQuickDevTools = () => (
+    <div className="quick-devtools">
+      {quickDevToolsOpen && (
+        <div className="quick-devtools-panel">
+          <div className="quick-devtools-panel-header">
+            <div className="quick-devtools-title">
+              <Wrench aria-hidden="true" />
+              <span>Developer Tools</span>
+            </div>
+            <button
+              type="button"
+              className="quick-devtools-close"
+              onClick={() => setQuickDevToolsOpen(false)}
+              aria-label="Close developer tools"
+              title="Close"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
+          <ApiUsageTracker
+            onAddNotification={addNotification}
+            alternateSearchEnabled={alternateSearchEnabled}
+            onAlternateSearchEnabledChange={setAlternateSearchEnabled}
+          />
+        </div>
+      )}
+
+      <div className="quick-devtools-dock" aria-label="Developer quick access">
+        <button
+          type="button"
+          className={`quick-devtools-btn ${quickDevToolsOpen ? 'active' : ''}`}
+          onClick={() => setQuickDevToolsOpen((open) => !open)}
+          title="Open developer tools"
+        >
+          <Wrench aria-hidden="true" />
+          <span>Developer Tools</span>
+        </button>
+      </div>
+    </div>
+  )
+
+  const renderHeaderSearchFilters = () => (
+    <div className="search-filter-row" role="group" aria-label="Search filters">
+      <button
+        type="button"
+        className={`search-filter-chip ${alternateSearchIncludesPeople ? 'active selected' : ''}`}
+        onClick={() => {
+          toggleAlternateSearchPeople()
+          setSearchTab('media')
+        }}
+      >
+        <User aria-hidden="true" />
+        <span>People</span>
+      </button>
+      {entryTypes.map(({ id, label, Icon }) => {
+        const active = alternateSearchTypes.includes(id)
+        return (
+          <button
+            key={id}
+            type="button"
+            className={`search-filter-chip ${active ? 'active' : ''} ${searchTab === 'media' && active ? 'selected' : ''}`}
+            onClick={() => {
+              const removingLastMediaType = active && alternateSearchTypes.length === 1
+              toggleAlternateSearchType(id)
+              setSearchTab(removingLastMediaType && alternateSearchIncludesPeople ? 'users' : 'media')
+            }}
+          >
+            <Icon aria-hidden="true" />
+            <span>{label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+
+  const renderHeaderSearchTabs = () => (
+    <div className="search-tabs-row">
+      <button
+        type="button"
+        className={`search-tab-btn ${searchTab === 'media' ? 'active' : ''}`}
+        onClick={() => setSearchTab('media')}
+      >
+        Media Profiles
+      </button>
+      <button
+        type="button"
+        className={`search-tab-btn ${searchTab === 'users' ? 'active' : ''}`}
+        onClick={() => setSearchTab('users')}
+      >
+        Users
+      </button>
+    </div>
+  )
+
+  const renderFloatingHeaderActions = () => (
+    <div className="floating-header-actions">
+      <div className={`hdr-search-box ${searchOpen ? 'open' : ''}`}>
+        <button
+          className="hdr-icon-btn"
+          type="button"
+          aria-label="Search"
+          onClick={() => setSearchOpen((v) => !v)}
+          title="Search entries and users"
+        >
+          <Search aria-hidden="true" />
+        </button>
+        {searchOpen && (
+          <>
+            <input
+              type="text"
+              className="hdr-search-input"
+              value={query}
+              onChange={(e) => handleQueryChange(e.target.value)}
+              placeholder="Search title, user, author..."
+              aria-label="Search entries and users"
+              autoFocus
+            />
+            <button
+              type="button"
+              className="hdr-search-close"
+              title="Close search"
+              aria-label="Close search"
+              onClick={() => {
+                setQuery('')
+                setSearchOpen(false)
+              }}
+            >
+              <X aria-hidden="true" />
+            </button>
+          </>
+        )}
+
+        {searchOpen && (query.trim().length > 0 || alternateSearchEnabled) && (
+          <div className="search-results-dropdown">
+            {alternateSearchEnabled ? renderHeaderSearchFilters() : renderHeaderSearchTabs()}
+
+            <div className="search-dropdown-section">
+              {!alternateSearchEnabled && searchTab === 'users' ? (
+                query.trim().length === 0 ? (
+                  <div className="search-no-results">Start typing to search people.</div>
+                ) : userSearchResults.length === 0 ? (
+                  <div className="search-no-results">No people matching "{query}"</div>
+                ) : (
+                  userSearchResults.map((u) => {
+                    const isOwn = u.handle === userProfile.handle
+                    return (
+                      <button
+                        key={u.handle}
+                        type="button"
+                        className="search-user-item"
+                        onClick={() => {
+                          setSelectedProfileHandle(isOwn ? null : u.handle)
+                          setActiveView('profile')
+                          setSearchOpen(false)
+                        }}
+                      >
+                        <div className="search-user-left">
+                          <div className="search-user-avatar">
+                            {u.avatar ? (
+                              <img src={u.avatar} alt={u.name} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
+                            ) : (
+                              <User aria-hidden="true" />
+                            )}
+                          </div>
+                          <div className="search-user-info">
+                            <span className="search-user-name">
+                              {u.name}
+                              {u.isPrivate && <Lock size={12} style={{ marginLeft: 5, verticalAlign: 'middle', color: 'var(--secondary)' }} />}
+                            </span>
+                            <span className="search-user-handle">@{u.handle} &bull; {u.reviews} reviews</span>
+                          </div>
+                        </div>
+                        <span className="search-user-action">{isOwn ? 'My Profile' : 'View Profile'}</span>
+                      </button>
+                    )
+                  })
+                )
+              ) : (
+                <>
+                  {query.trim().length === 0 ? (
+                    <div className="search-no-results">Start typing to search media.</div>
+                  ) : mediaSearchResults.length === 0 ? (
+                    <div className="search-no-results">
+                      {headerMediaSearchLoading ? 'Searching' : `No media profiles matching "${query}"`}
+                    </div>
+                  ) : (
+                    <>
+                      {mediaSearchResults.slice(0, searchLimit).map((entity) => (
+                        <EntitySearchItem
+                          key={entity.id}
+                          entity={entity}
+                          onSelect={() => handleOpenSearchEntity(entity)}
+                        />
+                      ))}
+                      {mediaSearchResults.length > searchLimit && (
+                        <div className="search-load-more-container">
+                          <button
+                            type="button"
+                            className="search-load-more-btn"
+                            onClick={() => setSearchLimit((prev) => prev + 8)}
+                          >
+                            <span>Load more</span>
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {renderNotificationsGroup()}
+
+      <div className="profile-menu-wrapper" ref={profileMenuRef}>
+        <button
+          className="profile-avatar-btn"
+          type="button"
+          aria-label="User Profile & Settings"
+          title="User Profile & Settings"
+          onClick={() => setProfileMenuOpen((v) => !v)}
+        >
+          {userProfile.avatarUrl ? (
+            <img src={userProfile.avatarUrl} alt="Avatar" className="profile-avatar-img-sm" />
+          ) : (
+            <User aria-hidden="true" />
+          )}
+        </button>
+
+        {profileMenuOpen && (
+          <div className="profile-dropdown-menu">
+            <div className="menu-identity-block">
+              <div className="menu-identity-avatar">
+                {userProfile.avatarUrl ? (
+                  <img src={userProfile.avatarUrl} alt="Avatar" className="menu-identity-avatar-img" />
+                ) : (
+                  <User aria-hidden="true" />
+                )}
+              </div>
+              <div className="menu-identity-info">
+                <span className="menu-user-name">
+                  {userProfile.showFullName ? `${userProfile.firstName} ${userProfile.lastName}` : userProfile.firstName}
+                </span>
+                <button
+                  type="button"
+                  className="menu-view-profile-link"
+                  onClick={() => {
+                    setSelectedProfileHandle(null)
+                    setActiveView('profile')
+                    setProfileMenuOpen(false)
+                  }}
+                >
+                  View Profile
+                </button>
+              </div>
+            </div>
+            <div className="menu-divider" />
+            <button
+              type="button"
+              className="menu-item"
+              onClick={() => {
+                setActiveView('settings')
+                setProfileMenuOpen(false)
+              }}
+            >
+              <Settings aria-hidden="true" />
+              <span>Settings</span>
+            </button>
+            <div className="menu-divider" />
+            <button type="button" className="menu-item" onClick={handleLogout}>
+              <LogOut aria-hidden="true" />
+              <span>Logout</span>
+            </button>
+            <button
+              type="button"
+              className="menu-item danger"
+              onClick={() => {
+                if (window.confirm('Clear all entries from local storage?')) {
+                  setEntries([])
+                  localStorage.removeItem('the-commonplace.entries')
+                  setProfileMenuOpen(false)
+                }
+              }}
+            >
+              <Trash2 aria-hidden="true" />
+              <span>Clear All Data</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
   const [showScrollTop, setShowScrollTop] = useState(false)
 
   useEffect(() => {
@@ -877,6 +1597,7 @@ function AppContent() {
 
     return (
       <>
+        {renderFloatingHeaderActions()}
         <UserProfilePage
           onBack={() => {
             setSelectedProfileHandle(null)
@@ -962,12 +1683,14 @@ function AppContent() {
             />
           ) : null}
         </AnimatePresence>
+        {renderQuickDevTools()}
       </>
     )
   }
 
   if (activeView === 'entity' && selectedEntityId) {
     let universalEntity: UniversalMediaEntity | null =
+      searchEntityCacheRef.current.get(selectedEntityId) ||
       UNIVERSAL_MEDIA_ENTITIES[selectedEntityId] ||
       (MOCK_ENTITY_PROFILES[selectedEntityId]
         ? {
@@ -1021,10 +1744,13 @@ function AppContent() {
         name: cleanName,
         type: isSong ? 'song' : isAlbum ? 'album' : 'artist',
         categoryLabel: isSong ? 'Song' : isAlbum ? 'Album' : 'Artist',
-        artworkUrl:
+        artworkUrl: resolveArtworkUrl(
           mapItem?.artworkUrl ||
           entityImageCacheMap.get(cleanName) ||
-          'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/bf/f9/57/bff9574d-71b3-4654-8e1d-847291a13e20/23UMGIM47494.rgb.jpg/1000x1000bb.jpg',
+          '',
+          cleanName,
+          isSong ? 'Song' : isAlbum ? 'Album' : 'Artist',
+        ),
         description: `Official catalog entry for ${cleanName} in The Commonplace community reflections archive.`,
         metadataChips: [
           { label: 'Artist', value: mapItem?.artist || 'Artist' },
@@ -1042,16 +1768,15 @@ function AppContent() {
     if (universalEntity) {
       return (
         <>
+          {renderFloatingHeaderActions()}
           <UniversalMediaProfilePage
             entity={universalEntity}
-            onBack={() => {
-              setSelectedEntityId(null)
-              setActiveView('feed')
-            }}
+            onBack={handleEntityBack}
+            onHome={handleHome}
             communityEntries={allHomepageEntries}
             onSelectEntry={setOverlayEntry}
             onOpenUserProfile={handleOpenUserProfile}
-            onNavigateToEntity={(newId) => setSelectedEntityId(newId)}
+            onNavigateToEntity={handleNavigateEntityBreadcrumb}
             likedEntryIds={likedEntryIds}
             savedEntryIds={savedEntryIds}
             disabledCommentEntryIds={disabledCommentEntryIds}
@@ -1066,6 +1791,7 @@ function AppContent() {
             onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
             onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
           />
+          {renderQuickDevTools()}
         </>
       )
     }
@@ -1073,17 +1799,21 @@ function AppContent() {
 
   if (activeView === 'settings') {
     return (
-      <SettingsPage
-        onBack={() => setActiveView('feed')}
-        onClearAllData={() => {
-          setEntries([])
-          localStorage.removeItem(storageKey)
-          localStorage.removeItem('the-commonplace.likes')
-          localStorage.removeItem('the-commonplace.saves')
-        }}
-        userProfile={userProfile}
-        onSaveProfile={(updated) => setUserProfile(updated)}
-      />
+      <>
+        <SettingsPage
+          onBack={() => setActiveView('feed')}
+          onClearAllData={() => {
+            setEntries([])
+            localStorage.removeItem(storageKey)
+            localStorage.removeItem('the-commonplace.likes')
+            localStorage.removeItem('the-commonplace.saves')
+          }}
+          userProfile={userProfile}
+          onSaveProfile={(updated) => setUserProfile(updated)}
+          onAddNotification={addNotification}
+        />
+        {renderQuickDevTools()}
+      </>
     )
   }
 
@@ -1135,40 +1865,22 @@ function AppContent() {
                 )}
 
                 {/* Search Dropdown with Tabs for Users vs Media/Entities */}
-                {searchOpen && query.trim().length > 0 && (
+                {searchOpen && (query.trim().length > 0 || alternateSearchEnabled) && (
                   <div className="search-results-dropdown">
-                    <div className="search-tabs-row">
-                      <button
-                        type="button"
-                        className={`search-tab-btn ${searchTab === 'media' ? 'active' : ''}`}
-                        onClick={() => setSearchTab('media')}
-                      >
-                        Media Profiles
-                      </button>
-                      <button
-                        type="button"
-                        className={`search-tab-btn ${searchTab === 'users' ? 'active' : ''}`}
-                        onClick={() => setSearchTab('users')}
-                      >
-                        Users
-                      </button>
-                    </div>
+                    {alternateSearchEnabled ? renderHeaderSearchFilters() : renderHeaderSearchTabs()}
 
                     <div className="search-dropdown-section">
-                      {searchTab === 'users' ? (
-                        (() => {
-                          const q = query.trim().toLowerCase()
-                          const matched = USER_DIRECTORY.filter(
-                            (u) => !q || u.name.toLowerCase().includes(q) || u.handle.toLowerCase().includes(q)
-                          )
-                          if (matched.length === 0) {
-                            return (
-                              <div className="search-no-results">
-                                No users matching "{query}"
-                              </div>
-                            )
-                          }
-                          return matched.map((u) => {
+                      {!alternateSearchEnabled && searchTab === 'users' ? (
+                        query.trim().length === 0 ? (
+                          <div className="search-no-results">
+                            Start typing to search people.
+                          </div>
+                        ) : userSearchResults.length === 0 ? (
+                          <div className="search-no-results">
+                            No people matching "{query}"
+                          </div>
+                        ) : (
+                          userSearchResults.map((u) => {
                             const isOwn = u.handle === userProfile.handle
                             return (
                               <button
@@ -1201,108 +1913,27 @@ function AppContent() {
                               </button>
                             )
                           })
-                        })()
+                        )
                       ) : (
-                        (() => {
-                          const q = query.trim().toLowerCase()
-                          const universalList = Object.values(UNIVERSAL_MEDIA_ENTITIES).map((u, idx) => ({
-                            id: u.id,
-                            title: u.name,
-                            artworkUrl: u.artworkUrl,
-                            type: u.type,
-                            creatorValue: u.metadataChips[0] ? `${u.metadataChips[0].label}: ${u.metadataChips[0].value}` : u.categoryLabel,
-                            bio: u.description,
-                            isUniversal: true,
-                            apiIndex: idx,
-                          }))
-                          const mockList = Object.values(MOCK_ENTITY_PROFILES)
-                            .filter((m) => !UNIVERSAL_MEDIA_ENTITIES[m.id])
-                            .map((m, idx) => ({
-                              id: m.id,
-                              title: m.title,
-                              artworkUrl: m.coverUrl,
-                              type: m.type,
-                              creatorValue: `${m.creatorLabel}: ${m.creatorValue}`,
-                              bio: m.bio,
-                              isUniversal: true,
-                              apiIndex: universalList.length + idx,
-                            }))
-                          const liveAlbumList = headerAlbumResults.map((result, idx) => {
-                            const entityId = result.id || (result.providerId
-                              ? `album-${result.providerId}`
-                              : `album-${result.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`)
-                            return {
-                              id: entityId,
-                              title: result.title,
-                              artworkUrl: result.coverUrl || '',
-                              type: 'album',
-                              creatorValue: `Artist: ${result.creator}`,
-                              bio: [result.genre || result.provider, result.year].filter(Boolean).join(' '),
-                              isUniversal: false,
-                              apiIndex: universalList.length + mockList.length + idx,
-                            }
-                          })
-
-                          const combinedAll = [...universalList, ...mockList, ...liveAlbumList]
-
-                          const seenKeys = new Set<string>()
-                          const deduplicated = combinedAll.filter((item) => {
-                            const normTitle = item.title.toLowerCase().replace(/[^a-z0-9]+/g, '').trim()
-                            const normCreator = item.creatorValue.toLowerCase().replace(/^artist:\s*/, '').replace(/[^a-z0-9]+/g, '').trim()
-                            const key = `${item.type}:${normTitle}:${normCreator}`
-                            const idKey = item.id.toLowerCase()
-
-                            if (seenKeys.has(idKey) || seenKeys.has(key)) return false
-                            seenKeys.add(idKey)
-                            seenKeys.add(key)
-                            return true
-                          })
-
-                          const matched = deduplicated.filter(
-                            (e) =>
-                              !q ||
-                              e.title.toLowerCase().includes(q) ||
-                              e.creatorValue.toLowerCase().includes(q) ||
-                              e.bio.toLowerCase().includes(q)
-                          )
-
-                          const isPersonType = (type: string) => ['artist', 'author', 'director', 'actor'].includes(type)
-
-                          matched.sort((a, b) => {
-                            const aIsPerson = isPersonType(a.type)
-                            const bIsPerson = isPersonType(b.type)
-                            if (aIsPerson && !bIsPerson) return -1
-                            if (!aIsPerson && bIsPerson) return 1
-
-                            const aExact = a.title.toLowerCase() === q
-                            const bExact = b.title.toLowerCase() === q
-                            if (aExact && !bExact) return -1
-                            if (!aExact && bExact) return 1
-
-                            return a.apiIndex - b.apiIndex
-                          })
-
-                          if (matched.length === 0) {
-                            return (
-                              <div className="search-no-results">
-                                {headerAlbumSearchLoading ? 'Searching albums...' : `No media profiles matching "${query}"`}
-                              </div>
-                            )
-                          }
-
-                          const visibleItems = matched.slice(0, searchLimit)
-                          const remainingCount = matched.length - visibleItems.length
-
-                          return (
+                        <>
+                          {query.trim().length === 0 ? (
+                            <div className="search-no-results">
+                              Start typing to search media.
+                            </div>
+                          ) : mediaSearchResults.length === 0 ? (
+                            <div className="search-no-results">
+                              {headerMediaSearchLoading ? 'Searching' : `No media profiles matching "${query}"`}
+                            </div>
+                          ) : (
                             <>
-                              {visibleItems.map((e) => (
+                              {mediaSearchResults.slice(0, searchLimit).map((entity) => (
                                 <EntitySearchItem
-                                  key={e.id}
-                                  entity={e}
-                                  onSelect={() => handleOpenEntity(e.id)}
+                                  key={entity.id}
+                                  entity={entity}
+                                  onSelect={() => handleOpenSearchEntity(entity)}
                                 />
                               ))}
-                              {remainingCount > 0 && (
+                              {mediaSearchResults.length > searchLimit && (
                                 <div className="search-load-more-container">
                                   <button
                                     type="button"
@@ -1314,21 +1945,15 @@ function AppContent() {
                                 </div>
                               )}
                             </>
-                          )
-                        })()
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
                 )}
               </div>
 
-              <NotificationBell
-                notifications={notifications}
-                onMarkAllRead={markAllNotificationsRead}
-                onClearAll={clearAllNotifications}
-                onDismiss={dismissNotification}
-              />
-              <NotifSimulator onAddNotification={addNotification} />
+              {renderNotificationsGroup()}
 
               <div className="profile-menu-wrapper" ref={profileMenuRef}>
                 <button
@@ -1694,6 +2319,7 @@ function AppContent() {
           />
         ) : null}
       </AnimatePresence>
+      {renderQuickDevTools()}
     </div>
   )
 }
@@ -1859,11 +2485,12 @@ function EntryComposer({
     if (cached) {
       setMetadataResults(cached)
       setSearchStatus('ready')
+      setStatusMessage('')
       return
     }
 
     setSearchStatus('searching')
-    setStatusMessage('Searching metadata…')
+    setStatusMessage('Searching')
 
     let cancelled = false
     const abortController = new AbortController()
@@ -2063,10 +2690,10 @@ function EntryComposer({
                   />
                   {metadataQuery.trim().length >= 2 && (
                     <div className="metadata-dropdown">
-                      {searchStatus === 'searching' && (
+                      {searchStatus === 'searching' && metadataResults.length === 0 && (
                         <p className="metadata-status searching">
                           <Loader2 className="spin-icon" aria-hidden="true" />
-                          <span>Searching metadata…</span>
+                          <span>Searching</span>
                         </p>
                       )}
                       {searchStatus !== 'searching' && statusMessage && (
@@ -2091,7 +2718,7 @@ function EntryComposer({
                             }
                           >
                             {result.coverUrl ? (
-                              <img src={result.coverUrl} alt="" />
+                              <img src={resolveArtworkUrl(result.coverUrl, result.title, result.type)} alt="" />
                             ) : (
                               <Search aria-hidden="true" />
                             )}
@@ -2120,7 +2747,7 @@ function EntryComposer({
                   }
                 >
                   {draft.coverUrl ? (
-                    <img src={draft.coverUrl} alt="" />
+                    <img src={resolveArtworkUrl(draft.coverUrl, draft.title, draft.type)} alt="" />
                   ) : (
                     <BookOpen aria-hidden="true" />
                   )}

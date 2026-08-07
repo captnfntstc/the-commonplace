@@ -36,7 +36,7 @@ export const AvatarUploader: React.FC<AvatarUploaderProps> = ({
       <div className="avatar-uploader-left">
         <div className="avatar-circle-preview">
           {avatarUrl ? (
-            <img src={avatarUrl} alt="Profile Avatar" className="avatar-circle-img" />
+            <img src={avatarUrl} alt="Profile Avatar" className="avatar-circle-img" referrerPolicy="no-referrer" />
           ) : (
             <User aria-hidden="true" className="avatar-placeholder-icon" />
           )}
@@ -74,7 +74,7 @@ export const AvatarUploader: React.FC<AvatarUploaderProps> = ({
                 onClick={() => onChangeAvatar(preset.url)}
               >
                 {preset.url ? (
-                  <img src={preset.url} alt={preset.label} />
+                  <img src={preset.url} alt={preset.label} referrerPolicy="no-referrer" />
                 ) : (
                   <User aria-hidden="true" />
                 )}

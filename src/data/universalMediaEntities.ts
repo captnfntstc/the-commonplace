@@ -7,7 +7,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Noah Kahan',
     type: 'artist',
     categoryLabel: 'Artist',
-    artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/67/Noah_Kahan_2023.jpg/800px-Noah_Kahan_2023.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=500&auto=format&fit=crop',
     description:
       'American singer-songwriter whose introspective folk-pop arrangements explore themes of small-town nostalgia, mental health, and New England winters. Rising through acoustic storytelling, his work resonates deeply with listeners seeking quiet catharsis.',
     metadataChips: [
@@ -35,19 +35,19 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     secondaryCollection: {
       title: 'Albums & EPs',
       items: [
-        { id: 'stick-season-album', title: 'Stick Season (We’ll All Be Here Forever)', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/bf/f9/57/bff9574d-71b3-4654-8e1d-847291a13e20/23UMGIM47494.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: 'stick-season-std-album', title: 'Stick Season', subtitle: 'Album · 2022', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/7c/b3/59/7cb359aa-448c-7f55-1152-44df0e1f7d4e/22UMGIM81958.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: 'i-was-i-am-album', title: 'I Was / I Am', subtitle: 'Album · 2021', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/0a/63/08/0a630800-4d57-e6f8-45a8-4e3146445a49/21UMGIM69458.rgb.jpg/1000x1000bb.jpg', rating: 4.6 },
-        { id: 'cape-elizabeth-ep', title: 'Cape Elizabeth EP', subtitle: 'EP · 2020', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/71/84/01/71840134-2e65-4f40-3b9a-41f23577d611/20UMGIM30571.rgb.jpg/1000x1000bb.jpg', rating: 4.7 },
-        { id: 'busyhead-album', title: 'Busyhead', subtitle: 'Album · 2019', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/91/26/51/9126511a-07db-5e04-d9d3-631d1667bdfd/19UMGIM26767.rgb.jpg/1000x1000bb.jpg', rating: 4.5 },
+        { id: 'stick-season-album', title: 'Stick Season (We’ll All Be Here Forever)', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/e4/75/f3/e475f31a-ade1-50bf-e983-1467aaf62c46/23UMGIM59938.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'stick-season-std-album', title: 'Stick Season', subtitle: 'Album · 2022', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/8d/25/8e/8d258e09-7395-998f-23ed-82b0433b0518/22UMGIM71396.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'i-was-i-am-album', title: 'I Was / I Am', subtitle: 'Album · 2021', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/e2/06/01/e2060119-017e-3781-d39d-65535a03b6bb/21UMGIM50684.rgb.jpg/1000x1000bb.jpg', rating: 4.6 },
+        { id: 'cape-elizabeth-ep', title: 'Cape Elizabeth EP', subtitle: 'EP · 2020', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/a0/ee/28/a0ee28c9-6d01-a52f-1fcf-0d82887e145a/20UMGIM31849.rgb.jpg/1000x1000bb.jpg', rating: 4.7 },
+        { id: 'busyhead-album', title: 'Busyhead', subtitle: 'Album · 2019', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/c3/80/d0/c380d05c-5f46-5d25-f479-3c57481ace68/00602577648090.rgb.jpg/1000x1000bb.jpg', rating: 4.5 },
       ],
     },
     relatedEntities: {
       title: 'Similar Artists',
       items: [
-        { id: 'hollow-coves', title: 'Hollow Coves', subtitle: 'Indie Folk', artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/Hollow_Coves_2019.jpg/800px-Hollow_Coves_2019.jpg', type: 'artist' },
-        { id: 'taylor-swift', title: 'Taylor Swift', subtitle: 'Folk / Pop', artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b1/Taylor_Swift_at_the_2023_MTV_Video_Music_Awards_4.sat.jpg/800px-Taylor_Swift_at_the_2023_MTV_Video_Music_Awards_4.sat.jpg', type: 'artist' },
-        { id: 'olivia-rodrigo', title: 'Olivia Rodrigo', subtitle: 'Alt Pop', artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Olivia_Rodrigo_2021.jpg/800px-Olivia_Rodrigo_2021.jpg', type: 'artist' },
+        { id: 'hollow-coves', title: 'Hollow Coves', subtitle: 'Indie Folk', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/1d/8d/ed/1d8ded31-05c8-64d0-57ff-93bd93f7d491/067003150354.png/1000x1000bb.jpg', type: 'artist' },
+        { id: 'taylor-swift', title: 'Taylor Swift', subtitle: 'Folk / Pop', artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/6/68/Glasto2025-546_%28cropped%29_2.jpg', type: 'artist' },
+        { id: 'olivia-rodrigo', title: 'Olivia Rodrigo', subtitle: 'Alt Pop', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/08/9e/07/089e0799-b405-9e69-b648-e6a19df9879c/24UMGIM30485.rgb.jpg/1000x1000bb.jpg', type: 'artist' },
       ],
     },
   },
@@ -57,7 +57,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Taylor Swift',
     type: 'artist',
     categoryLabel: 'Artist',
-    artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b1/Taylor_Swift_at_the_2023_MTV_Video_Music_Awards_4.sat.jpg/800px-Taylor_Swift_at_the_2023_MTV_Video_Music_Awards_4.sat.jpg',
+    artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/6/68/Glasto2025-546_%28cropped%29_2.jpg',
     description:
       'Globally celebrated singer-songwriter renowned for her autobiographical lyricism, genre transitions from country to synth-pop and indie folklore, and artistic reinventions that define modern popular music history.',
     metadataChips: [
@@ -85,16 +85,16 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     secondaryCollection: {
       title: 'Albums Discography',
       items: [
-        { id: 'ttpd-album', title: 'THE TORTURED POETS DEPARTMENT', subtitle: 'Album · 2024', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/44/d0/5c/44d05c6a-be39-2a99-b1d6-84d0b13bf424/24UMGIM16400.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: '1989-tv-album', title: '1989 (Taylor’s Version)', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/2b/ef/55/2bef5596-f947-f0b3-f0e7-81498b8c2e64/23UMGIM99238.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: 'speak-now-tv-album', title: 'Speak Now (Taylor’s Version)', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/28/7f/41/287f415c-3729-1d44-7771-b0e7379d6756/23UMGIM56637.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: 'midnights-album', title: 'Midnights', subtitle: 'Album · 2022', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/e5/5d/74/e55d7426-3824-c108-72aa-0c5a2c2621ad/22UMGIM97415.rgb.jpg/1000x1000bb.jpg', rating: 4.8 },
-        { id: 'red-tv-album', title: 'Red (Taylor’s Version)', subtitle: 'Album · 2021', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/34/09/a3/3409a3fb-0ff3-f8a7-7e61-a83d3e648c66/21UMGIM86064.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: 'fearless-tv-album', title: 'Fearless (Taylor’s Version)', subtitle: 'Album · 2021', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/bf/fb/17/bffb170c-df2e-2e45-d85c-15494d45d625/21UMGIM13596.rgb.jpg/1000x1000bb.jpg', rating: 4.8 },
-        { id: 'evermore-album', title: 'evermore', subtitle: 'Album · 2020', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/c3/38/c2/c338c281-229a-2426-5b58-e3250a1843fa/20UMGIM98326.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: 'folklore-album', title: 'folklore', subtitle: 'Album · 2020', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/91/97/6f/91976f3f-42e1-455b-bf92-8059e66ff7c9/20UMGIM61280.rgb.jpg/1000x1000bb.jpg', rating: 5.0 },
-        { id: 'lover-album', title: 'Lover', subtitle: 'Album · 2019', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/3b/b1/7b/3bb17b62-11c5-236b-67a6-426a8c4c7031/19UMGIM53909.rgb.jpg/1000x1000bb.jpg', rating: 4.8 },
-        { id: 'reputation-album', title: 'reputation', subtitle: 'Album · 2017', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/39/e0/7a/39e07a3d-3172-88f6-df30-b3b3a32f3f98/00602567220005.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'ttpd-album', title: 'THE TORTURED POETS DEPARTMENT', subtitle: 'Album · 2024', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/a3/8a/8d/a38a8de5-ae11-154c-dca5-221e6549caee/24UMGIM44778.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: '1989-tv-album', title: '1989 (Taylor’s Version)', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/89/4a/4a/894a4ab9-b0b0-9ea5-ca41-8da0b9b79453/14UMDIM03405.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'speak-now-tv-album', title: 'Speak Now (Taylor’s Version)', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/9f/3c/0a/9f3c0a60-f9e0-a34e-60e5-0be1f182896b/23UMGIM63932.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'midnights-album', title: 'Midnights', subtitle: 'Album · 2022', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/fb/b7/5d/fbb75d98-3b52-2fa5-ca82-658194f3c498/23UMGIM58157.rgb.jpg/1000x1000bb.jpg', rating: 4.8 },
+        { id: 'red-tv-album', title: 'Red (Taylor’s Version)', subtitle: 'Album · 2021', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/c6/27/9c/c6279c07-9329-827d-31c4-f5d4c7d99ff4/21UM1IM25046.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'fearless-tv-album', title: 'Fearless (Taylor’s Version)', subtitle: 'Album · 2021', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/c3/d0/1c/c3d01c88-73e7-187e-fd62-e1744de979a6/21UMGIM09915.rgb.jpg/1000x1000bb.jpg', rating: 4.8 },
+        { id: 'evermore-album', title: 'evermore', subtitle: 'Album · 2020', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/18/93/99/189399a7-95e1-324b-e40a-bd9e3ea22a95/20UM1IM14847.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'folklore-album', title: 'folklore', subtitle: 'Album · 2020', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/8c/ef/c2/8cefc23a-61b7-05ff-b52a-bb1e4922087c/20UMGIM64216.rgb.jpg/1000x1000bb.jpg', rating: 5.0 },
+        { id: 'lover-album', title: 'Lover', subtitle: 'Album · 2019', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/49/3d/ab/493dab54-f920-9043-6181-80993b8116c9/19UMGIM53909.rgb.jpg/1000x1000bb.jpg', rating: 4.8 },
+        { id: 'reputation-album', title: 'reputation', subtitle: 'Album · 2017', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/eb/e6/06/ebe606da-e00f-82d3-47f3-b79904eed541/17UM1IM24651.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
       ],
     },
   },
@@ -104,7 +104,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Olivia Rodrigo',
     type: 'artist',
     categoryLabel: 'Artist',
-    artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Olivia_Rodrigo_2021.jpg/800px-Olivia_Rodrigo_2021.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/08/9e/07/089e0799-b405-9e69-b648-e6a19df9879c/24UMGIM30485.rgb.jpg/1000x1000bb.jpg',
     description:
       'Grammy Award-winning songwriter crafting vulnerable piano ballads and high-energy pop-punk anthems capturing teenage longing, heartbreak, and emotional intensity.',
     metadataChips: [
@@ -132,9 +132,9 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     secondaryCollection: {
       title: 'Albums Discography',
       items: [
-        { id: 'guts-spilled-album', title: 'GUTS (spilled)', subtitle: 'Deluxe Album · 2024', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/df/80/e7/df80e722-e4e7-a931-e405-b0a33118cf94/24UMGIM27787.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: 'guts-album', title: 'GUTS', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/bf/6d/e5/bf6de5e7-a9a3-5c2f-b487-73d88195a62f/23UMGIM60677.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: 'sour-album', title: 'SOUR', subtitle: 'Album · 2021', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/71/24/e9/7124e9ec-56a8-202d-05db-514d2e825a07/21UMGIM34771.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'guts-spilled-album', title: 'GUTS (spilled)', subtitle: 'Deluxe Album · 2024', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/08/9e/07/089e0799-b405-9e69-b648-e6a19df9879c/24UMGIM30485.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'guts-album', title: 'GUTS', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/9e/0d/17/9e0d17e0-c068-fbd9-fd85-610cc87c86aa/23UMGIM71511.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'sour-album', title: 'SOUR', subtitle: 'Album · 2021', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/02/ed/8c/02ed8cab-c089-2fdd-7ce6-ab334a9a4e19/21UMGIM26093.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
       ],
     },
   },
@@ -144,7 +144,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Hollow Coves',
     type: 'artist',
     categoryLabel: 'Artist',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/4a/14/c1/4a14c1d7-2f3b-829b-8e2b-2f08a46b5a1b/198003661131.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/1d/8d/ed/1d8ded31-05c8-64d0-57ff-93bd93f7d491/067003150354.png/1000x1000bb.jpg',
     description:
       'Australian indie folk duo crafting soothing acoustic melodies inspired by travel, coastal landscapes, and quiet moments of reflection.',
     metadataChips: [
@@ -162,9 +162,9 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     secondaryCollection: {
       title: 'Albums & EPs',
       items: [
-        { id: 'nothing-to-lose-album', title: 'Nothing to Lose', subtitle: 'Album · 2024', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/4a/14/c1/4a14c1d7-2f3b-829b-8e2b-2f08a46b5a1b/198003661131.jpg/1000x1000bb.jpg', rating: 4.9 },
-        { id: 'moments-album', title: 'Moments', subtitle: 'Album · 2019', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/4b/85/3e/4b853e83-7c30-d3a3-d95a-b0357662c161/193483984852.jpg/1000x1000bb.jpg', rating: 4.8 },
-        { id: 'wanderlust-ep', title: 'Wanderlust EP', subtitle: 'EP · 2017', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music118/v4/fa/69/78/fa6978d3-7d2d-0348-18e8-6347f3b89569/191061327170.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'nothing-to-lose-album', title: 'Nothing to Lose', subtitle: 'Album · 2024', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/1d/8d/ed/1d8ded31-05c8-64d0-57ff-93bd93f7d491/067003150354.png/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'moments-album', title: 'Moments', subtitle: 'Album · 2019', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/7e/d3/02/7ed30270-b442-1061-aaf6-f45e2aa92d00/067003120753.png/1000x1000bb.jpg', rating: 4.8 },
+        { id: 'wanderlust-ep', title: 'Wanderlust EP', subtitle: 'EP · 2017', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/74/c7/15/74c71511-66be-4139-72a5-f5491ba8ec19/067003435659.png/1000x1000bb.jpg', rating: 4.9 },
       ],
     },
   },
@@ -175,7 +175,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Stick Season (We’ll All Be Here Forever)',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/bf/f9/57/bff9574d-71b3-4654-8e1d-847291a13e20/23UMGIM47494.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/e4/75/f3/e475f31a-ade1-50bf-e983-1467aaf62c46/23UMGIM59938.rgb.jpg/1000x1000bb.jpg',
     description:
       'The breakout third studio album by Noah Kahan. Blending vivid Vermont imagery, melancholic acoustic storytelling, and energetic indie-folk choruses, the album captures isolation, growth, and love for home.',
     metadataChips: [
@@ -203,7 +203,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     relatedEntities: {
       title: 'More by Noah Kahan',
       items: [
-        { id: 'noah-kahan', title: 'Noah Kahan', subtitle: 'Artist Profile', artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/67/Noah_Kahan_2023.jpg/800px-Noah_Kahan_2023.jpg', type: 'artist' },
+        { id: 'noah-kahan', title: 'Noah Kahan', subtitle: 'Artist Profile', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/c7/05/13/c705138a-2342-ceb1-2c68-b8c765521cf7/artwork.jpg/1000x1000bb.jpg', type: 'artist' },
       ],
     },
   },
@@ -213,7 +213,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Stick Season',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/7c/b3/59/7cb359aa-448c-7f55-1152-44df0e1f7d4e/22UMGIM81958.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/8d/25/8e/8d258e09-7395-998f-23ed-82b0433b0518/22UMGIM71396.rgb.jpg/1000x1000bb.jpg',
     description: 'The standard 14-track release of Stick Season by Noah Kahan.',
     metadataChips: [
       { label: 'Artist', value: 'Noah Kahan' },
@@ -234,7 +234,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'I Was / I Am',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/0a/63/08/0a630800-4d57-e6f8-45a8-4e3146445a49/21UMGIM69458.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/e2/06/01/e2060119-017e-3781-d39d-65535a03b6bb/21UMGIM50684.rgb.jpg/1000x1000bb.jpg',
     description: 'The sophomore studio album by Noah Kahan featuring introspective songwriting, lush acoustic guitars, and honest reflections on personal growth.',
     metadataChips: [
       { label: 'Artist', value: 'Noah Kahan' },
@@ -255,7 +255,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Cape Elizabeth EP',
     type: 'album',
     categoryLabel: 'EP',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/71/84/01/71840134-2e65-4f40-3b9a-41f23577d611/20UMGIM30571.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/a0/ee/28/a0ee28c9-6d01-a52f-1fcf-0d82887e145a/20UMGIM31849.rgb.jpg/1000x1000bb.jpg',
     description: 'A 5-track acoustic EP recorded by Noah Kahan in 2020.',
     metadataChips: [
       { label: 'Artist', value: 'Noah Kahan' },
@@ -276,7 +276,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Busyhead',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/91/26/51/9126511a-07db-5e04-d9d3-631d1667bdfd/19UMGIM26767.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/c3/80/d0/c380d05c-5f46-5d25-f479-3c57481ace68/00602577648090.rgb.jpg/1000x1000bb.jpg',
     description: 'The debut studio album by Noah Kahan, introducing his signature emotional transparency and folk-pop sensibilities.',
     metadataChips: [
       { label: 'Artist', value: 'Noah Kahan' },
@@ -297,7 +297,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'THE TORTURED POETS DEPARTMENT',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/44/d0/5c/44d05c6a-be39-2a99-b1d6-84d0b13bf424/24UMGIM16400.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/a3/8a/8d/a38a8de5-ae11-154c-dca5-221e6549caee/24UMGIM44778.rgb.jpg/1000x1000bb.jpg',
     description: 'The eleventh studio album by Taylor Swift, an introspective synth-pop and synth-folk double album.',
     metadataChips: [
       { label: 'Artist', value: 'Taylor Swift' },
@@ -318,7 +318,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Speak Now (Taylor’s Version)',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/28/7f/41/287f415c-3729-1d44-7771-b0e7379d6756/23UMGIM56637.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/d4/23/57/d423579f-24f7-5c82-ed10-fbfd21ceef25/10UMDIM00487.rgb.jpg/1000x1000bb.jpg',
     description: 'The third re-recorded album by Taylor Swift, featuring self-written anthems and 6 From The Vault tracks.',
     metadataChips: [
       { label: 'Artist', value: 'Taylor Swift' },
@@ -339,7 +339,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Midnights',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/e5/5d/74/e55d7426-3824-c108-72aa-0c5a2c2621ad/22UMGIM97415.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/fb/b7/5d/fbb75d98-3b52-2fa5-ca82-658194f3c498/23UMGIM58157.rgb.jpg/1000x1000bb.jpg',
     description: 'The tenth studio album by Taylor Swift, a concept album analyzing 13 sleepless nights scattered throughout her life.',
     metadataChips: [
       { label: 'Artist', value: 'Taylor Swift' },
@@ -360,7 +360,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Fearless (Taylor’s Version)',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/bf/fb/17/bffb170c-df2e-2e45-d85c-15494d45d625/21UMGIM13596.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/c3/d0/1c/c3d01c88-73e7-187e-fd62-e1744de979a6/21UMGIM09915.rgb.jpg/1000x1000bb.jpg',
     description: 'The first re-recorded album by Taylor Swift, revisiting her Grammy Album of the Year winning country breakout.',
     metadataChips: [
       { label: 'Artist', value: 'Taylor Swift' },
@@ -381,7 +381,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'evermore',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/c3/38/c2/c338c281-229a-2426-5b58-e3250a1843fa/20UMGIM98326.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/18/93/99/189399a7-95e1-324b-e40a-bd9e3ea22a95/20UM1IM14847.rgb.jpg/1000x1000bb.jpg',
     description: 'The ninth studio album by Taylor Swift, described as the sister record to folklore.',
     metadataChips: [
       { label: 'Artist', value: 'Taylor Swift' },
@@ -402,7 +402,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'folklore',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/91/97/6f/91976f3f-42e1-455b-bf92-8059e66ff7c9/20UMGIM61280.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music124/v4/8c/ef/c2/8cefc23a-61b7-05ff-b52a-bb1e4922087c/20UMGIM64216.rgb.jpg/1000x1000bb.jpg',
     description:
       'The surprise eighth studio album by Taylor Swift, recorded in quarantine during 2020. Shifting to acoustic indie folk and chamber pop, the record creates atmospheric storytelling of escapism, nostalgia, and romance.',
     metadataChips: [
@@ -430,7 +430,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     relatedEntities: {
       title: 'More by Taylor Swift',
       items: [
-        { id: 'taylor-swift', title: 'Taylor Swift', subtitle: 'Artist Profile', artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b1/Taylor_Swift_at_the_2023_MTV_Video_Music_Awards_4.sat.jpg/800px-Taylor_Swift_at_the_2023_MTV_Video_Music_Awards_4.sat.jpg', type: 'artist' },
+        { id: 'taylor-swift', title: 'Taylor Swift', subtitle: 'Artist Profile', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/c7/05/13/c705138a-2342-ceb1-2c68-b8c765521cf7/artwork.jpg/1000x1000bb.jpg', type: 'artist' },
       ],
     },
   },
@@ -440,7 +440,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Red (Taylor’s Version)',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/34/09/a3/3409a3fb-0ff3-f8a7-7e61-a83d3e648c66/21UMGIM86064.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/25/0d/7e/250d7e42-3a2f-19ac-f865-f1e04a4a1f97/12UMDIM01007.rgb.jpg/1000x1000bb.jpg',
     description: 'The second re-recorded album by Taylor Swift, featuring 30 tracks including the epic All Too Well (10 Minute Version).',
     metadataChips: [
       { label: 'Artist', value: 'Taylor Swift' },
@@ -461,7 +461,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: '1989 (Taylor’s Version)',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/2b/ef/55/2bef5596-f947-f0b3-f0e7-81498b8c2e64/23UMGIM99238.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/89/4a/4a/894a4ab9-b0b0-9ea5-ca41-8da0b9b79453/14UMDIM03405.rgb.jpg/1000x1000bb.jpg',
     description: 'The fourth re-recorded album by Taylor Swift, reimagining her iconic synth-pop classic with 5 new Vault tracks.',
     metadataChips: [
       { label: 'Artist', value: 'Taylor Swift' },
@@ -482,7 +482,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'GUTS (spilled)',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/df/80/e7/df80e722-e4e7-a931-e405-b0a33118cf94/24UMGIM27787.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/08/9e/07/089e0799-b405-9e69-b648-e6a19df9879c/24UMGIM30485.rgb.jpg/1000x1000bb.jpg',
     description: 'The deluxe expanded edition of GUTS by Olivia Rodrigo featuring 5 bonus tracks including obsessed and stranger.',
     metadataChips: [
       { label: 'Artist', value: 'Olivia Rodrigo' },
@@ -503,7 +503,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'SOUR',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/71/24/e9/7124e9ec-56a8-202d-05db-514d2e825a07/21UMGIM34771.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/02/ed/8c/02ed8cab-c089-2fdd-7ce6-ab334a9a4e19/21UMGIM26093.rgb.jpg/1000x1000bb.jpg',
     description:
       'The debut studio album by Olivia Rodrigo. Exploring heartbreak, jealousy, and teenage angst through a blend of pop-punk and bedroom piano ballads, SOUR became a global phenomenon.',
     metadataChips: [
@@ -531,7 +531,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     relatedEntities: {
       title: 'More by Olivia Rodrigo',
       items: [
-        { id: 'olivia-rodrigo', title: 'Olivia Rodrigo', subtitle: 'Artist Profile', artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/07/Olivia_Rodrigo_2021.jpg/800px-Olivia_Rodrigo_2021.jpg', type: 'artist' },
+        { id: 'olivia-rodrigo', title: 'Olivia Rodrigo', subtitle: 'Artist Profile', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/c7/05/13/c705138a-2342-ceb1-2c68-b8c765521cf7/artwork.jpg/1000x1000bb.jpg', type: 'artist' },
       ],
     },
   },
@@ -541,7 +541,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'GUTS',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/bf/6d/e5/bf6de5e7-a9a3-5c2f-b487-73d88195a62f/23UMGIM60677.rgb.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/9e/0d/17/9e0d17e0-c068-fbd9-fd85-610cc87c86aa/23UMGIM71511.rgb.jpg/1000x1000bb.jpg',
     description:
       'The second studio album by Olivia Rodrigo. Expanding on her rock sensibilities with sharp wit, chaotic energy, and introspective honesty.',
     metadataChips: [
@@ -563,7 +563,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Nothing to Lose',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/4a/14/c1/4a14c1d7-2f3b-829b-8e2b-2f08a46b5a1b/198003661131.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/1d/8d/ed/1d8ded31-05c8-64d0-57ff-93bd93f7d491/067003150354.png/1000x1000bb.jpg',
     description: 'The sophomore studio album by Hollow Coves celebrating gratitude and new beginnings.',
     metadataChips: [
       { label: 'Artist', value: 'Hollow Coves' },
@@ -584,7 +584,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Wanderlust EP',
     type: 'album',
     categoryLabel: 'EP',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music118/v4/fa/69/78/fa6978d3-7d2d-0348-18e8-6347f3b89569/191061327170.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/74/c7/15/74c71511-66be-4139-72a5-f5491ba8ec19/067003435659.png/1000x1000bb.jpg',
     description:
       'The beloved debut EP by Australian indie folk duo Hollow Coves, featuring peaceful acoustic harmonies inspired by travel and ocean coasts.',
     metadataChips: [
@@ -606,7 +606,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Moments',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music123/v4/4b/85/3e/4b853e83-7c30-d3a3-d95a-b0357662c161/193483984852.jpg/1000x1000bb.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/7e/d3/02/7ed30270-b442-1061-aaf6-f45e2aa92d00/067003120753.png/1000x1000bb.jpg',
     description: 'The debut studio album by Hollow Coves, capturing organic acoustic textures and reflective lyrics.',
     metadataChips: [
       { label: 'Artist', value: 'Hollow Coves' },
@@ -660,7 +660,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Dead Poets Society',
     type: 'movie',
     categoryLabel: 'Movie',
-    artworkUrl: 'https://image.tmdb.org/t/p/w500/ai40GTw3huFi8YFjE25lGlai6y1.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/1d/c9/54/1dc9544b-a7ed-3f26-5629-1f4a25d8d421/00050087245696.rgb.jpg/1000x1000bb.jpg',
     description:
       'An unconventional English teacher at an all-boys preparatory academy inspires his pupils to break free from rigid tradition through literature, poetry, and the eternal pursuit to seize the day.',
     metadataChips: [
@@ -692,7 +692,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'The Perks of Being a Wallflower',
     type: 'movie',
     categoryLabel: 'Movie',
-    artworkUrl: 'https://image.tmdb.org/t/p/w500/aE2rmHvybL8zJp0Q7eBvL1zGj4b.jpg',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/56/99/47/56994761-ed8e-1e0b-15f9-7b649923ac42/06PNDIM00296.rgb.jpg/1000x1000bb.jpg',
     description:
       'An introverted freshman navigating mental illness and high school isolation finds friendship, love, and belonging when two expressive seniors welcome him into their world.',
     metadataChips: [
@@ -714,7 +714,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Almost Famous',
     type: 'movie',
     categoryLabel: 'Movie',
-    artworkUrl: 'https://image.tmdb.org/t/p/w500/g4b54eU2V4k7y8l1k2j3h4g5.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&auto=format&fit=crop',
     description:
       'A teenage rock journalist in 1973 embarks on a life-changing tour with an up-and-coming band for Rolling Stone magazine, witnessing the passion and turmoil of 1970s rock and roll culture.',
     metadataChips: [
@@ -759,7 +759,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'The Big Bang Theory',
     type: 'tv',
     categoryLabel: 'TV Show',
-    artworkUrl: 'https://image.tmdb.org/t/p/w500/ooBGR1w8x2ab3vISGJujYy2jWw.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&auto=format&fit=crop',
     description:
       'Long-running sitcom exploring the humorous lives of two brilliant Caltech physicists, their eccentric friends, and the aspiring actress across the hall.',
     metadataChips: [
@@ -780,7 +780,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Friends',
     type: 'tv',
     categoryLabel: 'TV Show',
-    artworkUrl: 'https://image.tmdb.org/t/p/w500/f496j9Ip433rDfdq0C98vizvWl0.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=800&auto=format&fit=crop',
     description:
       'Iconic 90s comedy series recording the romantic, career, and personal lives of six young adults living in Manhattan.',
     metadataChips: [
@@ -801,7 +801,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'How I Met Your Mother',
     type: 'tv',
     categoryLabel: 'TV Show',
-    artworkUrl: 'https://image.tmdb.org/t/p/w500/b34jPzmB0wZyvP0C98vizvWl0.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1543807535-eceef0bc6599?w=800&auto=format&fit=crop',
     description:
       'Framed as a father retelling his youth to his children, this romantic sitcom chronicles Ted Mosby and his close-knit group of friends through dating and life in NYC.',
     metadataChips: [
@@ -822,7 +822,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Mr. Robot',
     type: 'tv',
     categoryLabel: 'TV Show',
-    artworkUrl: 'https://image.tmdb.org/t/p/w500/oKIBWZF2vScEki2v5vB0y3vJ4G1.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=800&auto=format&fit=crop',
     description:
       'Cyber-thriller following Elliot Alderson, a brilliant cybersecurity engineer and vigilante hacker suffering from anxiety and mental illness, recruited by a secret hacktivist group.',
     metadataChips: [
@@ -843,7 +843,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Malcolm in the Middle',
     type: 'tv',
     categoryLabel: 'TV Show',
-    artworkUrl: 'https://image.tmdb.org/t/p/w500/gH7p2rL0C98vizvWl0.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=800&auto=format&fit=crop',
     description:
       'Critically acclaimed sitcom focusing on a gifted middle child coping with his wildly chaotic, lower-middle-class family.',
     metadataChips: [
@@ -865,7 +865,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Red Dead Redemption Franchise',
     type: 'game',
     categoryLabel: 'Game',
-    artworkUrl: 'https://media.rawg.io/media/games/511/511829f965203be4ed780868d8dc9f42.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?w=800&auto=format&fit=crop',
     description:
       'Western action-adventure epic chronicling the tragic sunset of the American outlaw era through Arthur Morgan and John Marston.',
     metadataChips: [
@@ -887,7 +887,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'The Last of Us Franchise',
     type: 'game',
     categoryLabel: 'Game',
-    artworkUrl: 'https://media.rawg.io/media/games/709/7091f61d7fea5d95b123643772a6a81d.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=800&auto=format&fit=crop',
     description:
       'Post-apocalyptic narrative masterpiece chronicling the emotional bond between Joel and Ellie across a fungal pandemic America.',
     metadataChips: [
@@ -909,7 +909,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Resident Evil Franchise',
     type: 'game',
     categoryLabel: 'Game',
-    artworkUrl: 'https://media.rawg.io/media/games/226/2260714b8a21f7c220f17109ad5c6020.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=800&auto=format&fit=crop',
     description:
       'Seminal survival horror franchise spanning viral outbreaks, bio-weapons, and iconic operatives fighting Umbrella Corporation.',
     metadataChips: [
@@ -931,7 +931,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Stardew Valley',
     type: 'game',
     categoryLabel: 'Game',
-    artworkUrl: 'https://media.rawg.io/media/games/713/713587df1284d7be94042893f0b2f567.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop',
     description:
       'Heartwarming farming simulation RPG created independently by ConcernedApe, inviting players to inherit an old farm plot and build a thriving rural community.',
     metadataChips: [
@@ -953,7 +953,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Silent Hill Franchise',
     type: 'game',
     categoryLabel: 'Game',
-    artworkUrl: 'https://media.rawg.io/media/games/3be/3be2b65552b060d4b9715104d4f82635.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1579373903781-fd5c0c30c4cd?w=800&auto=format&fit=crop',
     description:
       'Psychological horror game series exploring otherworldly nightmare dimensions, internal grief, and surreal terror.',
     metadataChips: [
@@ -976,7 +976,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Christopher Nolan',
     type: 'director',
     categoryLabel: 'Director',
-    artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Christopher_Nolan_Cannes_2018.jpg/800px-Christopher_Nolan_Cannes_2018.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=500&auto=format&fit=crop',
     description:
       'Acclaimed British-American filmmaker celebrated for non-linear storytelling, practical special effects, philosophical themes of time and memory, and cinematic scale.',
     metadataChips: [
@@ -997,7 +997,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'George Orwell',
     type: 'author',
     categoryLabel: 'Author',
-    artworkUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/7/7e/George_Orwell_press_photo.jpg/800px-George_Orwell_press_photo.jpg',
+    artworkUrl: 'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?w=500&auto=format&fit=crop',
     description:
       'English novelist, essayist, and critic famous for his lucid prose and social criticism opposing totalitarianism, exemplified by 1984 and Animal Farm.',
     metadataChips: [

@@ -32,6 +32,8 @@ export interface CollectionItem {
   artworkUrl: string
   year?: string
   rating?: number
+  genre?: string
+  category?: 'album' | 'ep' | 'single'
 }
 
 export interface RelatedEntityItem {
@@ -83,13 +85,13 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Tracks' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Related Albums' },
       ]
     case 'song':
       return [
         { id: 'overview', label: 'Overview' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Appears In' },
       ]
     case 'author':
@@ -105,14 +107,14 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Popular Quotes' },
         { id: 'collection', label: 'Editions' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Related Books' },
       ]
     case 'movie':
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Cast' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Related Movies' },
       ]
     case 'tv':
@@ -120,13 +122,13 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Cast' },
         { id: 'collection', label: 'Seasons' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
       ]
     case 'actor':
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'collection', label: 'Filmography' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Related Actors' },
       ]
     case 'director':
@@ -134,14 +136,14 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Best Movies' },
         { id: 'collection', label: 'Directed Works' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Related Directors' },
       ]
     case 'game':
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Popular Highlights' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Related Games' },
       ]
     case 'game_studio':
@@ -149,13 +151,13 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Top Titles' },
         { id: 'collection', label: 'Published Games' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Similar Studios' },
       ]
     default:
       return [
         { id: 'overview', label: 'Overview' },
-        { id: 'reviews', label: 'Reviews' },
+        { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Related' },
       ]
   }

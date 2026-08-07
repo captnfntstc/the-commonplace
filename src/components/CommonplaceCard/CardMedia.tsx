@@ -66,13 +66,13 @@ export const CardMedia: React.FC<CardMediaProps> = ({
         tabIndex={-1}
       >
         {coverUrl ? (
-          <img src={coverUrl} alt="" />
+          <img src={coverUrl} alt="" referrerPolicy="no-referrer" />
         ) : (
           <Icon aria-hidden="true" className="artwork-icon" />
         )}
       </button>
       <div className="card-meta">
-        {rating > 0 && <StarRating rating={rating} />}
+        <StarRating rating={rating} />
         <h2 className="card-title">{title}</h2>
 
         {type === 'book' && (

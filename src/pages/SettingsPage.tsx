@@ -23,6 +23,8 @@ import { SettingsField } from '../components/Settings/SettingsField'
 import { SettingsToggle } from '../components/Settings/SettingsToggle'
 import { AvatarUploader } from '../components/Settings/AvatarUploader'
 import { CoverUploader } from '../components/Settings/CoverUploader'
+import { ApiUsageTracker } from '../components/DeveloperTools/ApiUsageTracker'
+import type { Notification as AppNotification } from '../components/Notifications/NotificationPanel'
 
 
 const PROVIDERS: ProviderInfo[] = [
@@ -118,6 +120,7 @@ interface SettingsPageProps {
   onClearAllData: () => void
   userProfile: UserProfileState
   onSaveProfile: (updated: UserProfileState) => void
+  onAddNotification: (notification: AppNotification) => void
 }
 
 const TAKEN_USERNAMES = new Set(['admin', 'commonplace', 'system', 'root', 'collector', 'superuser', 'official'])
@@ -128,6 +131,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onClearAllData,
   userProfile,
   onSaveProfile,
+  onAddNotification,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsNavTab>('profile')
 
@@ -726,6 +730,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     Clear All Data
                   </button>
                 </div>
+              </SettingsSection>
+            </div>
+          )}
+
+          {/* PAGE 7: DEVELOPER TOOLS */}
+          {activeTab === 'developer' && (
+            <div className="settings-page-content">
+              <div className="settings-header-minimal">
+                <h1 className="settings-page-title">Developer Tools</h1>
+                <p className="settings-page-desc">Inspect metadata calls, test search providers, and simulate notifications.</p>
+              </div>
+
+              <SettingsSection title="Diagnostics">
+                <ApiUsageTracker onAddNotification={onAddNotification} />
               </SettingsSection>
             </div>
           )}

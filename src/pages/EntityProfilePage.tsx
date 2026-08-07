@@ -190,6 +190,7 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
             }
             alt=""
             className="profile-hero-cover"
+            referrerPolicy="no-referrer"
           />
           <div className="profile-hero-overlay" />
         </div>
@@ -197,7 +198,7 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
         {/* Profile Avatar / Poster Row */}
         <div className="profile-avatar-row">
           <div className={`profile-avatar-wrapper ${entity.type === 'artist' ? '' : 'entity-poster-shape'}`}>
-            <img src={displayCover} alt={entity.title} className="profile-avatar-img" />
+            <img src={displayCover} alt={entity.title} className="profile-avatar-img" referrerPolicy="no-referrer" />
             {isLoadingApi && (
               <div className="entity-api-loading-overlay">
                 <Loader2 size={18} className="spin-icon" />

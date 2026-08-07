@@ -57,7 +57,7 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
         >
           <div className="avatar" aria-hidden="true">
             {authorAvatarUrl ? (
-              <img src={authorAvatarUrl} alt={displayHandle} className="avatar-img" />
+              <img src={authorAvatarUrl} alt={displayHandle} className="avatar-img" referrerPolicy="no-referrer" />
             ) : (
               <User />
             )}

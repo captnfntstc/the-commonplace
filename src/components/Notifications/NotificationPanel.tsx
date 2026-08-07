@@ -139,7 +139,7 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
                 </div>
                 {n.actorAvatarUrl && (
                   <div className="notif-avatar">
-                    <img src={n.actorAvatarUrl} alt={n.actorName} />
+                    <img src={n.actorAvatarUrl} alt={n.actorName} referrerPolicy="no-referrer" />
                   </div>
                 )}
                 <div className="notif-body">

@@ -3,6 +3,7 @@ import {
   User,
   Sliders,
   Bell,
+  Wrench,
   Shield,
   Lock,
   Database,
@@ -15,6 +16,7 @@ export type SettingsNavTab =
   | 'privacy'
   | 'security'
   | 'storage'
+  | 'developer'
   | 'export'
 
 interface SettingsSidebarProps {
@@ -47,6 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
       { id: 'privacy', label: 'Privacy & Visibility', Icon: Shield },
       { id: 'security', label: 'Account & Security', Icon: Lock },
       { id: 'storage', label: 'Data & Storage', Icon: Database },
+      { id: 'developer', label: 'Developer Tools', Icon: Wrench },
     ],
   },
 ]

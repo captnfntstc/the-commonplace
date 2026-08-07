@@ -149,6 +149,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                           src={entry.coverUrl}
                           alt={entry.title}
                           className="review-cover-img"
+                          referrerPolicy="no-referrer"
                         />
                       ) : (
                         <div className={`review-cover-placeholder tone-${entry.coverTone}`}>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   Activity,
+  Bell,
   Trash2,
   RefreshCw,
   Search,
@@ -27,10 +28,64 @@ import {
   type MetadataType,
   searchMetadata,
 } from '../../metadata'
+import type { Notification, NotificationType } from '../Notifications/NotificationPanel'
 
-export const ApiUsageTracker: React.FC = () => {
+type DevToolSection = 'api' | 'search' | 'notifications'
+
+const MOCK_PEOPLE = [
+  { name: 'Elena Rostova', handle: 'elena_r', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop' },
+  { name: 'Marcus Vance', handle: 'marcus_v', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop' },
+  { name: 'Aria Sterling', handle: 'aria_s', avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop' },
+  { name: 'Sofia Chen', handle: 'sofiac', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop' },
+]
+const MOCK_ENTRIES = ['War and Peace', 'In Rainbows', 'The Book of Disquiet', 'Rachmaninoff: Piano Concerto No. 2']
+const MILESTONES = [10, 25, 50, 100, 250, 500]
+
+function uid() {
+  return Math.random().toString(36).slice(2)
+}
+
+function pickRandom<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)]
+}
+
+function createMockNotification(type: NotificationType): Notification {
+  const person = pickRandom(MOCK_PEOPLE)
+  const entry = pickRandom(MOCK_ENTRIES)
+  const milestone = pickRandom(MILESTONES)
+
+  const base: Notification = {
+    id: uid(),
+    type,
+    read: false,
+    createdAt: new Date().toISOString(),
+    actorName: person.name,
+    actorHandle: person.handle,
+    actorAvatarUrl: person.avatar,
+  }
+
+  if (type === 'like') return { ...base, entryTitle: entry }
+  if (type === 'like_milestone') return { ...base, entryTitle: entry, milestoneCount: milestone, actorAvatarUrl: undefined }
+  if (type === 'comment') return { ...base, entryTitle: entry, commentSnippet: 'This entry resonates deeply with me...' }
+  return base
+}
+
+interface ApiUsageTrackerProps {
+  onAddNotification?: (notification: Notification) => void
+  initialSection?: DevToolSection
+  alternateSearchEnabled?: boolean
+  onAlternateSearchEnabledChange?: (enabled: boolean) => void
+}
+
+export const ApiUsageTracker: React.FC<ApiUsageTrackerProps> = ({
+  onAddNotification,
+  initialSection = 'api',
+  alternateSearchEnabled = false,
+  onAlternateSearchEnabledChange,
+}) => {
   const [logs, setLogs] = useState<ApiLogItem[]>(getApiLogs)
   const [stats, setStats] = useState(getApiStats)
+  const [activeSection, setActiveSection] = useState<DevToolSection>(initialSection)
 
   const [providerFilter, setProviderFilter] = useState<ApiProvider | 'ALL'>('ALL')
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'HIT' | 'MISS' | 'ERROR'>('ALL')
@@ -40,6 +95,10 @@ export const ApiUsageTracker: React.FC = () => {
   const [testType, setTestType] = useState<MetadataType | 'lyrics'>('book')
   const [testQuery, setTestQuery] = useState('')
   const [isTesting, setIsTesting] = useState(false)
+  const [localAlternateSearchEnabled, setLocalAlternateSearchEnabled] = useState(false)
+  const effectiveAlternateSearchEnabled = onAlternateSearchEnabledChange
+    ? alternateSearchEnabled
+    : localAlternateSearchEnabled
 
   useEffect(() => {
     const unsubscribe = subscribeApiTracker(() => {
@@ -80,6 +139,11 @@ export const ApiUsageTracker: React.FC = () => {
     }
   }
 
+  const spawnNotification = (type: NotificationType) => {
+    if (!onAddNotification) return
+    onAddNotification(createMockNotification(type))
+  }
+
   const filteredLogs = logs.filter((log) => {
     if (providerFilter !== 'ALL' && log.provider !== providerFilter) return false
     if (statusFilter === 'HIT' && log.cacheStatus !== 'HIT') return false
@@ -90,6 +154,26 @@ export const ApiUsageTracker: React.FC = () => {
 
   return (
     <div className="api-tracker-container">
+      <div className="dev-tab-bar">
+        {([
+          ['api', Activity, 'API'],
+          ['search', Search, 'Search'],
+          ['notifications', Bell, 'Notifications'],
+        ] as Array<[DevToolSection, typeof Activity, string]>).map(([section, Icon, label]) => (
+          <button
+            key={section}
+            type="button"
+            className={`dev-tab-btn ${activeSection === section ? 'active' : ''}`}
+            onClick={() => setActiveSection(section)}
+          >
+            <Icon className="tab-icon" aria-hidden="true" />
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
+
+      {activeSection === 'api' && (
+        <>
       {/* Metrics Summary Row */}
       <div className="api-metrics-grid">
         <div className="api-metric-card">
@@ -197,7 +281,7 @@ export const ApiUsageTracker: React.FC = () => {
         <select
           className="tester-select"
           value={testType}
-          onChange={(e) => setTestType(e.target.value as any)}
+          onChange={(e) => setTestType(e.target.value as MetadataType | 'lyrics')}
         >
           <option value="book">Books (Google Books)</option>
           <option value="film">Films (TMDB)</option>
@@ -306,6 +390,72 @@ export const ApiUsageTracker: React.FC = () => {
           </div>
         )}
       </div>
+        </>
+      )}
+
+      {activeSection === 'search' && (
+        <div className="dev-search-panel">
+          <div className="dev-section-header">
+            <div>
+              <h3>Search Controls</h3>
+              <p>Toggle the alternate header search. Filter buttons appear in the top search box.</p>
+            </div>
+          </div>
+
+          <div className="dev-toggle-row">
+            <div className="dev-toggle-copy">
+              <strong>Alternate search</strong>
+              <span>{effectiveAlternateSearchEnabled ? 'Top search is using the filter buttons.' : 'Top search uses its default tabs.'}</span>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={effectiveAlternateSearchEnabled}
+              className={`dev-toggle-switch ${effectiveAlternateSearchEnabled ? 'on' : 'off'}`}
+              onClick={() => {
+                if (onAlternateSearchEnabledChange) {
+                  onAlternateSearchEnabledChange(!effectiveAlternateSearchEnabled)
+                } else {
+                  setLocalAlternateSearchEnabled((current) => !current)
+                }
+              }}
+            >
+              <span className="dev-toggle-handle" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'notifications' && (
+        <div className="dev-notifications-panel">
+          <div className="dev-section-header">
+            <div>
+              <h3>Notification Simulation</h3>
+              <p>Create sample notifications for the active session.</p>
+            </div>
+          </div>
+          <div className="dev-notification-actions">
+            {([
+              ['like', 'Like'],
+              ['like_milestone', 'Milestone'],
+              ['comment', 'Comment'],
+              ['follow_request', 'Follow Request'],
+              ['friend_recommendation', 'Recommendation'],
+              ['people_you_may_know', 'People You May Know'],
+            ] as Array<[NotificationType, string]>).map(([type, label]) => (
+              <button
+                key={type}
+                type="button"
+                className="notif-sim-btn"
+                onClick={() => spawnNotification(type)}
+                disabled={!onAddNotification}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

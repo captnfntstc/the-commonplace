@@ -323,7 +323,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         >
           <div className="profile-page-avatar">
             {userProfile.avatarUrl ? (
-              <img src={userProfile.avatarUrl} alt={displayName} className="profile-avatar-img" />
+              <img src={userProfile.avatarUrl} alt={displayName} className="profile-avatar-img" referrerPolicy="no-referrer" />
             ) : (
               <User aria-hidden="true" />
             )}
@@ -760,6 +760,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                             src={person.avatar}
                             alt={person.name}
                             className="follow-person-avatar-img"
+                            referrerPolicy="no-referrer"
                           />
                         </div>
                         <div className="follow-person-info">

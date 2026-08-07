@@ -1,11 +1,14 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft,
+  Home,
   Star,
-  Search,
   X,
   ChevronRight,
+  Heart,
+  MessageSquare,
+  Bookmark,
   Layers,
   BookOpen,
   Disc3,
@@ -19,10 +22,14 @@ import {
   Music4,
   Quote,
 } from 'lucide-react'
-import { Card, type CardEntry } from '../components/CommonplaceCard/Card'
+import type { CardEntry } from '../components/CommonplaceCard/Card'
+import { StarRating } from '../components/CommonplaceCard/CardHeader'
+import { FormattedText } from '../components/CommonplaceCard/FormattedText'
+import { UNIVERSAL_MEDIA_ENTITIES } from '../data/universalMediaEntities'
 import {
   type UniversalMediaEntity,
   type MediaEntityType,
+  type RelatedEntityItem,
   getEntityTabs,
 } from '../types/mediaEntity'
 import {
@@ -32,14 +39,23 @@ import {
   fetchItunesAlbumDetails,
   fetchRelatedAlbums,
   fetchItunesSongDetails,
+  fetchItunesSongArtwork,
   entityImageCacheMap,
   type MetadataType,
 } from '../metadata'
 import type { MetadataChip, CollectionItem, TopContentItem } from '../types/mediaEntity'
+import { useMasonryLayout } from '../hooks/useMasonryLayout'
+import { formatFullDateTime, formatRelativeTime } from '../utils/dateUtils'
+import { createArtworkPlaceholder, resolveArtworkUrl } from '../utils/artwork'
+
+type ScoredRelatedEntityItem = RelatedEntityItem & {
+  sortScore?: number
+}
 
 interface UniversalMediaProfilePageProps {
   entity: UniversalMediaEntity
   onBack: () => void
+  onHome?: () => void
   communityEntries: CardEntry[]
   onSelectEntry?: (entry: CardEntry) => void
   onOpenUserProfile?: (handle: string) => void
@@ -95,10 +111,68 @@ function mapToMetaType(type: MediaEntityType): MetadataType {
   }
 }
 
+function isPortraitEntity(type: MediaEntityType) {
+  return ['artist', 'author', 'director', 'actor'].includes(type)
+}
+
+function getReviewSubjectTypeLabel(type: CardEntry['type']) {
+  switch (type) {
+    case 'album':
+      return 'Album'
+    case 'song':
+      return 'Song'
+    case 'film':
+      return 'Film'
+    case 'tv':
+      return 'TV'
+    case 'game':
+      return 'Game'
+    case 'book':
+    default:
+      return 'Book'
+  }
+}
+
+function getEntityImageCacheKey(entity: UniversalMediaEntity) {
+  return `${entity.type}:${entity.id || entity.name}`.toLowerCase()
+}
+
+function getExpectedTrackCount(entity: UniversalMediaEntity) {
+  const trackCountChip = entity.metadataChips.find((chip) => chip.label.toLowerCase() === 'track count')
+  const count = Number.parseInt(trackCountChip?.value || '', 10)
+  return Number.isFinite(count) && count > 0 ? count : undefined
+}
+
 const TrackRow: React.FC<{
-  item: TopContentItem
+  item: CollectionItem
+  artistName?: string
+  parentArtworkUrl?: string
   onNavigateToEntity?: (id: string) => void
-}> = ({ item, onNavigateToEntity }) => {
+}> = ({ item, artistName, parentArtworkUrl, onNavigateToEntity }) => {
+  const fallbackUrl = parentArtworkUrl || createArtworkPlaceholder(item.title, item.subtitle)
+  const initialArtworkUrl = item.artworkUrl ? resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle) : (parentArtworkUrl || '')
+  const [artworkUrl, setArtworkUrl] = useState(
+    initialArtworkUrl || fallbackUrl,
+  )
+
+  useEffect(() => {
+    const nextArtworkUrl = item.artworkUrl ? resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle) : (parentArtworkUrl || '')
+    setArtworkUrl(nextArtworkUrl || fallbackUrl)
+  }, [fallbackUrl, item.artworkUrl, item.subtitle, item.title, parentArtworkUrl])
+
+  useEffect(() => {
+    if (!artistName) return
+
+    const abortController = new AbortController()
+    fetchItunesSongArtwork(item.title, artistName, abortController.signal)
+      .then((url) => {
+        if (url) setArtworkUrl(resolveArtworkUrl(url, item.title, item.subtitle))
+      })
+      .catch(() => {})
+
+    return () => abortController.abort()
+  }, [artistName, item.artworkUrl, item.subtitle, item.title])
+
   return (
     <div
       className="top-content-row"
@@ -108,7 +182,15 @@ const TrackRow: React.FC<{
       tabIndex={0}
     >
       <span className="row-rank">#{item.rank}</span>
-      {item.artworkUrl && <img src={item.artworkUrl} alt={item.title} className="row-thumb" />}
+      <img
+        src={artworkUrl}
+        alt={item.title}
+        className="row-thumb"
+        referrerPolicy="no-referrer"
+        loading="eager"
+        decoding="async"
+        onError={() => setArtworkUrl(fallbackUrl)}
+      />
       <div className="row-info">
         <span className="row-title">{item.title}</span>
         <span className="row-subtitle">{item.subtitle}</span>
@@ -124,43 +206,368 @@ const TrackRow: React.FC<{
 }
 
 const CollectionItemThumb: React.FC<{ title: string; defaultUrl: string }> = ({ title, defaultUrl }) => {
-  const [src, setSrc] = useState(defaultUrl)
-  const [failed, setFailed] = useState(false)
+  const [src, setSrc] = useState(resolveArtworkUrl(defaultUrl, title, 'Album'))
+  const fallbackSrc = createArtworkPlaceholder(title, 'Album')
 
   useEffect(() => {
-    setSrc(defaultUrl)
-    setFailed(false)
-  }, [defaultUrl])
-
-  if (failed || !src) {
-    return (
-      <div className="collection-thumb-fallback">
-        <User size={22} className="fallback-icon" />
-      </div>
-    )
-  }
+    setSrc(resolveArtworkUrl(defaultUrl, title, 'Album') || fallbackSrc)
+  }, [defaultUrl, title])
 
   return (
     <img
-      src={src}
+      src={src || fallbackSrc}
       alt={title}
       className="collection-thumb"
       referrerPolicy="no-referrer"
+      loading="eager"
+      decoding="async"
       onError={() => {
+        if (src === fallbackSrc) return
         searchMetadata('album', title)
           .then((res) => {
-            if (res && res[0]?.coverUrl) setSrc(res[0].coverUrl)
-            else setFailed(true)
+            if (res && res[0]?.coverUrl) setSrc(resolveArtworkUrl(res[0].coverUrl, title, 'Album'))
+            else setSrc(fallbackSrc)
           })
-          .catch(() => setFailed(true))
+          .catch(() => setSrc(fallbackSrc))
       }}
     />
   )
 }
 
+const CommunityReviewCard: React.FC<{
+  entry: CardEntry
+  isLiked: boolean
+  isSaved: boolean
+  commentsDisabled: boolean
+  showReviewedSubject?: boolean
+  onOpen: () => void
+  onOpenProfile: () => void
+  onToggleLike?: () => void
+  onToggleSave?: () => void
+}> = ({
+  entry,
+  isLiked,
+  isSaved,
+  commentsDisabled,
+  showReviewedSubject = false,
+  onOpen,
+  onOpenProfile,
+  onToggleLike,
+  onToggleSave,
+}) => {
+  const displayHandle = (entry.authorHandle || 'jimboii').replace(/^@/, '')
+  const reviewedSubject = `${entry.title} - ${getReviewSubjectTypeLabel(entry.type)}`
+
+  return (
+    <article className={`community-review-card tone-${entry.coverTone}`}>
+      <header className="community-review-card-header">
+        <button
+          type="button"
+          className="community-review-author"
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpenProfile()
+          }}
+          aria-label={`View @${displayHandle}'s profile`}
+        >
+          <span className="community-review-avatar" aria-hidden="true">
+            {entry.authorAvatarUrl ? (
+              <img src={entry.authorAvatarUrl} alt="" />
+            ) : (
+              <User size={16} />
+            )}
+          </span>
+          <span className="community-review-handle">@{displayHandle}</span>
+          <span className="community-review-time" title={formatFullDateTime(entry.createdAt)}>
+            {formatRelativeTime(entry.createdAt)}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className={`community-review-bookmark ${isSaved ? 'saved' : ''}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggleSave?.()
+          }}
+          aria-label={isSaved ? 'Unsave review' : 'Save review'}
+          title={isSaved ? 'Unsave review' : 'Save review'}
+        >
+          <Bookmark size={18} fill={isSaved ? 'currentColor' : 'none'} />
+        </button>
+      </header>
+
+      {showReviewedSubject && (
+        <button type="button" className="community-review-subject" onClick={onOpen}>
+          {reviewedSubject}
+        </button>
+      )}
+
+      <div className="community-review-stars">
+        <StarRating rating={entry.rating} />
+      </div>
+
+      <button type="button" className="community-review-content" onClick={onOpen}>
+        {entry.favoritePassage && (
+          <div className="community-review-pullquote">
+            <FormattedText text={entry.favoritePassage} align={entry.passageAlign} />
+          </div>
+        )}
+        {entry.reflection && (
+          <div className="community-review-body">
+            <FormattedText text={entry.reflection} align={entry.reflectionAlign} />
+          </div>
+        )}
+      </button>
+
+      <footer className="community-review-footer">
+        <div className="community-review-actions">
+          <button
+            type="button"
+            className={`community-review-action ${isLiked ? 'liked' : ''}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              onToggleLike?.()
+            }}
+            aria-label={isLiked ? 'Unlike review' : 'Like review'}
+          >
+            <Heart size={17} fill={isLiked ? 'currentColor' : 'none'} />
+            <span>{12 + (isLiked ? 1 : 0)}</span>
+          </button>
+
+          {!commentsDisabled && (
+            <button
+              type="button"
+              className="community-review-action"
+              onClick={(event) => {
+                event.stopPropagation()
+                onOpen()
+              }}
+              aria-label="Open comments"
+            >
+              <MessageSquare size={17} />
+              <span>3</span>
+            </button>
+          )}
+        </div>
+
+        <button type="button" className="community-review-read-more" onClick={onOpen}>
+          <span>Read more</span>
+          <ChevronRight size={14} />
+        </button>
+      </footer>
+    </article>
+  )
+}
+
+const SimilarArtistPortraitItem: React.FC<{
+  artist: ScoredRelatedEntityItem
+  isActive: boolean
+  onNavigate?: (entityId: string) => void
+}> = ({ artist, isActive, onNavigate }) => {
+  const cleanTitle = artist.title.toLowerCase()
+  const fallbackSvg = useMemo(
+    () => createArtworkPlaceholder(artist.title, artist.subtitle || 'Artist'),
+    [artist.title, artist.subtitle],
+  )
+
+  const initialUrl = useMemo(() => {
+    const cachedWiki = entityImageCacheMap.get(`wiki-portrait:${cleanTitle}`)
+    if (cachedWiki) return cachedWiki
+
+    const cachedArtist = entityImageCacheMap.get(`artist:${artist.id}`) || entityImageCacheMap.get(cleanTitle)
+    if (cachedArtist) return cachedArtist
+
+    if (artist.artworkUrl && artist.artworkUrl.length > 5) {
+      return resolveArtworkUrl(artist.artworkUrl, artist.title, artist.subtitle)
+    }
+
+    return fallbackSvg
+  }, [artist.artworkUrl, artist.id, artist.subtitle, artist.title, cleanTitle, fallbackSvg])
+
+  const [portraitUrl, setPortraitUrl] = useState<string>(initialUrl)
+  const [imageLoaded, setImageLoaded] = useState(false)
+  const [imageFailed, setImageFailed] = useState(false)
+
+  useEffect(() => {
+    let isMounted = true
+
+    const cachedWiki = entityImageCacheMap.get(`wiki-portrait:${cleanTitle}`)
+    if (cachedWiki) {
+      setPortraitUrl(cachedWiki)
+      return () => {
+        isMounted = false
+      }
+    }
+
+    fetchWikipediaPortrait(artist.title)
+      .then((url) => {
+        if (!isMounted) return
+        if (url) {
+          entityImageCacheMap.set(`wiki-portrait:${cleanTitle}`, url)
+          entityImageCacheMap.set(`artist:${artist.id}`, url)
+          setPortraitUrl(url)
+          setImageFailed(false)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      isMounted = false
+    }
+  }, [artist.id, artist.title, cleanTitle])
+
+  const displaySrc = imageFailed ? fallbackSvg : portraitUrl
+
+  return (
+    <button
+      type="button"
+      className={`similar-artist-portrait-item ${isActive ? 'is-active' : ''}`}
+      onClick={() => onNavigate?.(artist.id)}
+      aria-label={`Open ${artist.title} artist profile`}
+    >
+      <span className="similar-artist-portrait-frame">
+        <img
+          src={displaySrc}
+          alt={artist.title}
+          className={`similar-artist-portrait ${imageLoaded ? 'is-loaded' : ''}`}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onLoad={() => setImageLoaded(true)}
+          onError={() => {
+            if (!imageFailed) setImageFailed(true)
+          }}
+        />
+      </span>
+      <span className="similar-artist-name">{artist.title}</span>
+    </button>
+  )
+}
+
+const RelatedAlbumTile: React.FC<{
+  item: CollectionItem
+  onNavigate?: (entityId: string) => void
+}> = ({ item, onNavigate }) => (
+  <button
+    type="button"
+    className="related-album-tile"
+    onClick={() => onNavigate?.(item.id)}
+    aria-label={`Open ${item.title}`}
+  >
+    <span className="related-album-art-frame">
+      <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
+    </span>
+    <span className="related-album-title">{item.title}</span>
+    <span className="related-album-subtitle">{item.subtitle}</span>
+  </button>
+)
+
+const CountUpNumber: React.FC<{
+  value: number
+  decimals?: number
+  durationMs?: number
+  format?: (value: number) => string
+}> = ({ value, decimals = 0, durationMs = 760, format }) => {
+  const [displayValue, setDisplayValue] = useState(0)
+
+  useEffect(() => {
+    let frameId = 0
+    const start = performance.now()
+
+    const tick = (now: number) => {
+      const progress = Math.min((now - start) / durationMs, 1)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setDisplayValue(value * eased)
+      if (progress < 1) frameId = requestAnimationFrame(tick)
+    }
+
+    frameId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameId)
+  }, [durationMs, value])
+
+  if (format) return <>{format(displayValue)}</>
+  return <>{displayValue.toFixed(decimals)}</>
+}
+
+function primaryArtistGenre(entity: UniversalMediaEntity | undefined, fallback?: string) {
+  if (!entity) return fallback || ''
+
+  const overrides: Record<string, string> = {
+    'taylor-swift': 'Pop',
+    'olivia-rodrigo': 'Pop',
+    'noah-kahan': 'Indie Folk',
+    'hollow-coves': 'Indie Folk',
+  }
+
+  if (overrides[entity.id]) return overrides[entity.id]
+
+  const genreChip = entity?.metadataChips?.find((chip) => chip.label.toLowerCase() === 'genre')?.value
+  const genreText = genreChip || fallback || ''
+  if (/pop/i.test(genreText)) return 'Pop'
+  if (/indie|folk|acoustic/i.test(genreText)) return 'Indie Folk'
+  if (/country/i.test(genreText)) return 'Country'
+  if (/rock/i.test(genreText)) return 'Rock'
+  return genreText.split('/')[0]?.trim() || fallback || ''
+}
+
+function getGenreTokens(genreText: string) {
+  const normalized = genreText.toLowerCase()
+  const tokens = new Set<string>()
+
+  if (/indie|alternative|alt\b/.test(normalized)) tokens.add('alternative')
+  if (/folk|acoustic/.test(normalized)) tokens.add('folk')
+  if (/pop/.test(normalized)) tokens.add('pop')
+  if (/country|americana/.test(normalized)) tokens.add('country')
+  if (/rock|punk|emo/.test(normalized)) tokens.add('rock')
+  if (/r&b|soul/.test(normalized)) tokens.add('r&b')
+  if (/hip[-\s]?hop|rap/.test(normalized)) tokens.add('hip-hop')
+  if (/singer|songwriter/.test(normalized)) tokens.add('singer-songwriter')
+  if (/electronic|dance|edm/.test(normalized)) tokens.add('electronic')
+
+  if (tokens.size === 0 && normalized.trim()) {
+    tokens.add(normalized.split(/[\/,·&|]+/)[0]?.trim() || normalized.trim())
+  }
+
+  return tokens
+}
+
+function genreLabelFromCollectionItem(item: CollectionItem) {
+  if (item.genre) return item.genre
+
+  const subtitleGenre = item.subtitle.split(/[·-]/)[0]?.trim() || ''
+  const cleanedSubtitleGenre = subtitleGenre.replace(/[^\w\s]/g, '').trim()
+  if (/^(album|ep|single|deluxe album)$/i.test(cleanedSubtitleGenre)) return ''
+
+  return subtitleGenre
+}
+
+function getLatestAlbumGenreProfile(
+  artist: UniversalMediaEntity | undefined,
+  discography?: CollectionItem[] | null,
+) {
+  const albumItems = (discography || artist?.secondaryCollection?.items || [])
+    .filter((item) => item.category ? item.category === 'album' : !/ep|single/i.test(item.subtitle || ''))
+    .sort((a, b) => Number(b.year || 0) - Number(a.year || 0))
+    .slice(0, 2)
+
+  const genreLabels = albumItems
+    .map(genreLabelFromCollectionItem)
+    .filter(Boolean)
+
+  const fallbackGenre = primaryArtistGenre(artist, artist?.relatedEntities?.items?.[0]?.subtitle)
+  const textForTokens = genreLabels.length > 0 ? genreLabels.join(' / ') : fallbackGenre
+
+  return {
+    label: Array.from(new Set(genreLabels)).slice(0, 2).join(' / ') || fallbackGenre || 'Genre match',
+    tokens: getGenreTokens(textForTokens || fallbackGenre),
+  }
+}
+
 export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps> = ({
   entity,
   onBack,
+  onHome,
   communityEntries,
   onSelectEntry,
   onOpenUserProfile,
@@ -181,26 +588,47 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const [showAllAlbums, setShowAllAlbums] = useState(false)
   const [showAllEps, setShowAllEps] = useState(false)
   const [showAllSingles, setShowAllSingles] = useState(false)
-  const [reviewSearch, setReviewSearch] = useState('')
-  const [reviewSort, setReviewSort] = useState<'newest' | 'highest' | 'oldest'>('newest')
+
+  useEffect(() => {
+    setActiveTab('overview')
+    setShowAllTopContent(false)
+    setShowAllCollection(false)
+    setShowAllAlbums(false)
+    setShowAllEps(false)
+    setShowAllSingles(false)
+  }, [entity.id])
 
   // Live API Fetch for artwork, discography & tracklist details
-  const cachedInitial = entityImageCacheMap.get(entity.name) || null
+  const isPortraitProfile = isPortraitEntity(entity.type)
+  const imageCacheKey = getEntityImageCacheKey(entity)
+  const cachedInitial =
+    entityImageCacheMap.get(imageCacheKey) ||
+    (!isPortraitProfile ? entityImageCacheMap.get(entity.name) : null) ||
+    null
   const [apiCoverUrl, setApiCoverUrl] = useState<string | null>(cachedInitial)
   const [apiSummary, setApiSummary] = useState<string | null>(null)
   const [isLoadingApi, setIsLoadingApi] = useState(false)
-  const [heroImgError, setHeroImgError] = useState(false)
+  const [failedHeroArtworkUrl, setFailedHeroArtworkUrl] = useState<string | null>(null)
 
   const [liveCollectionItems, setLiveCollectionItems] = useState<CollectionItem[] | null>(null)
   const [liveTrackItems, setLiveTrackItems] = useState<TopContentItem[] | null>(null)
   const [liveAlbumChips, setLiveAlbumChips] = useState<MetadataChip[] | null>(null)
   const [liveRelatedAlbums, setLiveRelatedAlbums] = useState<CollectionItem[] | null>(null)
+  const [liveArtistDiscographies, setLiveArtistDiscographies] = useState<Record<string, CollectionItem[]>>({})
   const [liveSongLyrics, setLiveSongLyrics] = useState<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
-    setHeroImgError(false)
+    setFailedHeroArtworkUrl(null)
     setLiveRelatedAlbums(null)
+    setLiveArtistDiscographies({})
+    setApiSummary(null)
+
+    const cachedForEntity =
+      entityImageCacheMap.get(imageCacheKey) ||
+      (!isPortraitProfile ? entityImageCacheMap.get(entity.name) : null) ||
+      null
+    setApiCoverUrl(cachedForEntity)
 
     if (entity.type === 'artist') {
       fetchItunesDiscography(entity.name)
@@ -209,17 +637,38 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           if (items && items.length > 0) setLiveCollectionItems(items)
         })
         .catch(() => {})
+
+      const similarArtistCandidates = Object.values(UNIVERSAL_MEDIA_ENTITIES).filter(
+        (candidate) => candidate.type === 'artist' && candidate.id !== entity.id,
+      )
+
+      similarArtistCandidates.forEach((candidate) => {
+        fetchWikipediaPortrait(candidate.name).catch(() => {})
+      })
+
+      Promise.all(
+        similarArtistCandidates.map((candidate) =>
+          fetchItunesDiscography(candidate.name)
+            .then((items) => [candidate.id, items] as const)
+            .catch(() => [candidate.id, []] as const),
+        ),
+      ).then((entries) => {
+        if (!isMounted) return
+        setLiveArtistDiscographies(Object.fromEntries(entries))
+      })
     }
 
     if (entity.type === 'album') {
-      const artistChip = entity.metadataChips.find((c) => c.label === 'Artist')?.value
-      fetchItunesAlbumDetails(entity.name, artistChip)
+      const artistChip = entity?.metadataChips?.find((c) => c.label === 'Artist')?.value
+      fetchItunesAlbumDetails(entity.name, artistChip, undefined, getExpectedTrackCount(entity))
         .then((details) => {
           if (!isMounted) return
           if (details) {
             if (details.coverUrl) {
-              entityImageCacheMap.set(entity.name, details.coverUrl)
-              setApiCoverUrl(details.coverUrl)
+              const safeCoverUrl = resolveArtworkUrl(details.coverUrl, entity.name, entity.categoryLabel)
+              entityImageCacheMap.set(imageCacheKey, safeCoverUrl)
+              entityImageCacheMap.set(entity.name, safeCoverUrl)
+              setApiCoverUrl(safeCoverUrl)
             }
             if (details.tracks && details.tracks.length > 0) {
               setLiveTrackItems(details.tracks)
@@ -242,14 +691,16 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     }
 
     if (entity.type === 'song') {
-      const artistChip = entity.metadataChips.find((c) => c.label === 'Artist')?.value
+      const artistChip = entity?.metadataChips?.find((c) => c.label === 'Artist')?.value
       fetchItunesSongDetails(entity.name, artistChip)
         .then((details) => {
           if (!isMounted) return
           if (details) {
             if (details.artworkUrl) {
-              entityImageCacheMap.set(entity.name, details.artworkUrl)
-              setApiCoverUrl(details.artworkUrl)
+              const safeArtworkUrl = resolveArtworkUrl(details.artworkUrl, entity.name, entity.categoryLabel)
+              entityImageCacheMap.set(imageCacheKey, safeArtworkUrl)
+              entityImageCacheMap.set(entity.name, safeArtworkUrl)
+              setApiCoverUrl(safeArtworkUrl)
             }
             if (details.lyrics) setLiveSongLyrics(details.lyrics)
             setLiveAlbumChips([
@@ -264,51 +715,59 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         .catch(() => {})
     }
 
-    const existingCache = entityImageCacheMap.get(entity.name)
+    const existingCache =
+      entityImageCacheMap.get(imageCacheKey) ||
+      (!isPortraitProfile ? entityImageCacheMap.get(entity.name) : null)
+
     if (existingCache) {
-      setApiCoverUrl(existingCache)
-    } else {
+      setApiCoverUrl(resolveArtworkUrl(existingCache, entity.name, entity.categoryLabel))
+    }
+
+    if (isPortraitProfile) {
+      if (!existingCache) setIsLoadingApi(true)
+      fetchWikipediaPortrait(entity.name)
+        .then((url) => {
+          if (!isMounted) return
+          if (url) {
+            entityImageCacheMap.set(imageCacheKey, url)
+            setApiCoverUrl(url)
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (isMounted) setIsLoadingApi(false)
+        })
+    } else if (!existingCache) {
       setIsLoadingApi(true)
-      if (['artist', 'author', 'director', 'actor'].includes(entity.type)) {
-        fetchWikipediaPortrait(entity.name)
-          .then((url) => {
-            if (!isMounted) return
-            if (url) {
-              entityImageCacheMap.set(entity.name, url)
-              setApiCoverUrl(url)
+      const metaType = mapToMetaType(entity.type)
+      searchMetadata(metaType, entity.name)
+        .then((results) => {
+          if (!isMounted) return
+          if (results && results.length > 0) {
+            const match = results[0]
+            if (match.coverUrl) {
+              const safeCoverUrl = resolveArtworkUrl(match.coverUrl, entity.name, entity.categoryLabel)
+              entityImageCacheMap.set(imageCacheKey, safeCoverUrl)
+              entityImageCacheMap.set(entity.name, safeCoverUrl)
+              setApiCoverUrl(safeCoverUrl)
             }
-          })
-          .catch(() => {})
-          .finally(() => {
-            if (isMounted) setIsLoadingApi(false)
-          })
-      } else {
-        const metaType = mapToMetaType(entity.type)
-        searchMetadata(metaType, entity.name)
-          .then((results) => {
-            if (!isMounted) return
-            if (results && results.length > 0) {
-              const match = results[0]
-              if (match.coverUrl) {
-                entityImageCacheMap.set(entity.name, match.coverUrl)
-                setApiCoverUrl(match.coverUrl)
-              }
-              if (match.summary) setApiSummary(match.summary)
-            }
-          })
-          .catch(() => {})
-          .finally(() => {
-            if (isMounted) setIsLoadingApi(false)
-          })
-      }
+            if (match.summary) setApiSummary(match.summary)
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (isMounted) setIsLoadingApi(false)
+        })
     }
 
     return () => {
       isMounted = false
     }
-  }, [entity.id, entity.name, entity.type])
+  }, [entity.id, entity.name, entity.type, imageCacheKey, isPortraitProfile])
 
-  const displayArtwork = apiCoverUrl || entity.artworkUrl
+  const fallbackArtwork = createArtworkPlaceholder(entity.name, entity.categoryLabel)
+  const displayArtwork = resolveArtworkUrl(apiCoverUrl || entity.artworkUrl, entity.name, entity.categoryLabel) || fallbackArtwork
+  const heroArtworkSrc = failedHeroArtworkUrl === displayArtwork ? fallbackArtwork : displayArtwork
   const displayDescription = apiSummary || entity.description
 
   // Community Reviews Matching
@@ -321,30 +780,28 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     )
   }, [communityEntries, entity.name])
 
-  const filteredSortedReviews = useMemo(() => {
-    let list = matchingReviews
-    if (reviewSearch.trim()) {
-      const q = reviewSearch.toLowerCase()
-      list = list.filter(
-        (r) =>
-          r.title.toLowerCase().includes(q) ||
-          r.reflection.toLowerCase().includes(q) ||
-          r.favoritePassage.toLowerCase().includes(q)
-      )
+  const topCommunityReviews = useMemo(() => {
+    const scoreReview = (entry: CardEntry) => {
+      const createdAt = new Date(entry.createdAt).getTime()
+      const recencyScore = Number.isFinite(createdAt) ? createdAt / 100000000000 : 0
+      const engagementScore =
+        (likedEntryIds.includes(entry.id) ? 8 : 0) +
+        (savedEntryIds.includes(entry.id) ? 5 : 0) +
+        (disabledCommentEntryIds.includes(entry.id) ? 0 : 3)
+
+      return entry.rating * 20 + engagementScore + recencyScore
     }
-    return [...list].sort((a, b) => {
-      if (reviewSort === 'highest') return b.rating - a.rating
-      if (reviewSort === 'oldest')
-        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    })
-  }, [matchingReviews, reviewSearch, reviewSort])
+
+    return [...matchingReviews]
+      .sort((a, b) => scoreReview(b) - scoreReview(a))
+      .slice(0, 4)
+  }, [disabledCommentEntryIds, likedEntryIds, matchingReviews, savedEntryIds])
 
   const collectionItems = liveCollectionItems || entity.secondaryCollection?.items || []
 
   const albumsGroup = useMemo(() => {
     return collectionItems.filter((i) => {
-      const cat = (i as any).category
+      const cat = i.category
       if (cat) return cat === 'album'
       const sub = (i.subtitle || '').toLowerCase()
       return !sub.includes('ep') && !sub.includes('single')
@@ -353,7 +810,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
   const epsGroup = useMemo(() => {
     return collectionItems.filter((i) => {
-      const cat = (i as any).category
+      const cat = i.category
       if (cat) return cat === 'ep'
       const sub = (i.subtitle || '').toLowerCase()
       return sub.includes('ep')
@@ -362,7 +819,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
   const singlesGroup = useMemo(() => {
     return collectionItems.filter((i) => {
-      const cat = (i as any).category
+      const cat = i.category
       if (cat) return cat === 'single'
       const sub = (i.subtitle || '').toLowerCase()
       return sub.includes('single')
@@ -399,6 +856,66 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   }, [entity.type, matchingReviews])
 
   const topItems = liveTrackItems || entity.primaryCollection?.items || []
+  const reviewItemsToDisplay = activeTab === 'overview' ? topCommunityReviews : matchingReviews
+  const reviewGridRef = useRef<HTMLDivElement | null>(null)
+  const reviewLayoutSignal = useMemo(
+    () => `${activeTab}:${reviewItemsToDisplay.map((entry) => entry.id).join('|')}`,
+    [activeTab, reviewItemsToDisplay],
+  )
+  const reviewMasonryLayout = useMasonryLayout(
+    reviewGridRef,
+    reviewItemsToDisplay.length,
+    undefined,
+    reviewLayoutSignal,
+  )
+
+  const relatedItemsToDisplay = useMemo<ScoredRelatedEntityItem[]>(() => {
+    if (entity.type !== 'artist') {
+      return entity.relatedEntities?.items || []
+    }
+
+    const currentGenreProfile = getLatestAlbumGenreProfile(entity, collectionItems)
+    const manualRelatedIds = new Set(entity.relatedEntities?.items?.map((item) => item.id) || [])
+    const relatedCandidates = Object.values(UNIVERSAL_MEDIA_ENTITIES).filter(
+      (candidate) => candidate.type === 'artist' && candidate.id !== entity.id,
+    )
+
+    return relatedCandidates
+      .map((candidate, index) => {
+        const candidateGenreProfile = getLatestAlbumGenreProfile(candidate, liveArtistDiscographies[candidate.id])
+        const sharedGenreCount = Array.from(candidateGenreProfile.tokens).filter((token) =>
+          currentGenreProfile.tokens.has(token),
+        ).length
+        const fallbackSameGenre =
+          sharedGenreCount === 0 &&
+          primaryArtistGenre(candidate, candidateGenreProfile.label) === primaryArtistGenre(entity, currentGenreProfile.label)
+
+        const cachedCandidateUrl =
+          entityImageCacheMap.get(`wiki-portrait:${candidate.name.toLowerCase()}`) ||
+          entityImageCacheMap.get(`artist:${candidate.id}`) ||
+          entityImageCacheMap.get(candidate.id) ||
+          entityImageCacheMap.get(candidate.name)
+
+        return {
+          id: candidate.id,
+          title: candidate.name,
+          subtitle:
+            sharedGenreCount > 0 || fallbackSameGenre
+              ? `Similar: ${candidateGenreProfile.label}`
+              : candidateGenreProfile.label,
+          artworkUrl: cachedCandidateUrl || candidate.artworkUrl,
+          type: candidate.type,
+          sortScore:
+            sharedGenreCount * 120 +
+            (fallbackSameGenre ? 60 : 0) +
+            (manualRelatedIds.has(candidate.id) ? 20 : 0) -
+            index,
+        }
+      })
+      .filter((item) => (item.sortScore || 0) > 0)
+      .sort((a, b) => (b.sortScore || 0) - (a.sortScore || 0))
+      .slice(0, 8)
+  }, [activeTab, collectionItems, entity, liveArtistDiscographies])
 
   const visibleTopItems = useMemo(() => {
     if (entity.type === 'album') {
@@ -408,7 +925,53 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     return showAllTopContent ? topItems : topItems.slice(0, 5)
   }, [entity.type, activeTab, topItems, showAllTopContent])
 
-  const chipsToDisplay = liveAlbumChips || entity.metadataChips
+  const chipsToDisplay = (liveAlbumChips || entity?.metadataChips || []).filter((chip) => {
+    const label = chip.label.toLowerCase()
+    return label !== 'monthly listeners' && label !== 'albums released'
+  })
+
+  const ratingAverage = entity.communityRating?.average ?? 4.8
+  const ratingCount = entity.communityRating?.count ?? 1200
+  const ratingDistribution = entity.communityRating?.distribution ?? { 5: 85, 4: 11, 3: 3, 2: 1, 1: 0 }
+
+  const glanceItems = useMemo(() => {
+    const yearChip = chipsToDisplay.find((chip) => /year|since|release/i.test(chip.label))
+    const creatorChip = chipsToDisplay.find((chip) => /artist|author|director|creator|developer/i.test(chip.label))
+    return [
+      {
+        label: 'Rating',
+        value: ratingAverage.toFixed(1),
+        detail: `${ratingCount.toLocaleString()} ratings`,
+      },
+      {
+        label: 'Reviews',
+        value: matchingReviews.length.toLocaleString(),
+        detail: 'community notes',
+      },
+      {
+        label: creatorChip?.label || yearChip?.label || 'Type',
+        value: creatorChip?.value || yearChip?.value || entity.categoryLabel,
+        detail: entity.categoryLabel,
+      },
+    ]
+  }, [chipsToDisplay, entity.categoryLabel, ratingAverage, ratingCount, matchingReviews.length])
+
+  const renderCommunityReviewCard = (entry: CardEntry) => (
+    <CommunityReviewCard
+      entry={entry}
+      isLiked={likedEntryIds.includes(entry.id)}
+      isSaved={savedEntryIds.includes(entry.id)}
+      commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
+      showReviewedSubject={entity.type === 'artist'}
+      onOpen={() => onSelectEntry?.(entry)}
+      onOpenProfile={() => onOpenUserProfile?.(entry.authorHandle || 'jimboii')}
+      onToggleLike={() => onToggleLike?.(entry.id)}
+      onToggleSave={() => onToggleSave?.(entry.id)}
+    />
+  )
+  const shouldShowRelatedSection =
+    activeTab === 'related' &&
+    (entity.type === 'artist' || (entity.type !== 'album' && relatedItemsToDisplay.length > 0))
 
   return (
     <motion.div
@@ -430,10 +993,24 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           <span>Back</span>
         </button>
 
-        <span className="media-profile-type-badge">
-          <IconComponent size={14} />
-          <span>{entity.categoryLabel}</span>
-        </span>
+        <div className="media-profile-topbar-actions">
+          {onHome && (
+            <button
+              type="button"
+              className="profile-home-btn"
+              onClick={onHome}
+              aria-label="Go home"
+              title="Home"
+            >
+              <Home size={15} />
+              <span>Home</span>
+            </button>
+          )}
+          <span className="media-profile-type-badge">
+            <IconComponent size={14} />
+            <span>{entity.categoryLabel}</span>
+          </span>
+        </div>
       </div>
 
       <div className="editorial-divider" />
@@ -443,20 +1020,15 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         {/* Left Column: Artwork / Photo */}
         <div className="media-hero-left">
           <div className={`media-artwork-container ${entity.type === 'album' || entity.type === 'song' ? 'is-square-artwork' : ''}`}>
-            {!heroImgError && displayArtwork ? (
-              <img
-                src={displayArtwork}
-                alt={entity.name}
-                className="media-artwork-img"
-                referrerPolicy="no-referrer"
-                onError={() => setHeroImgError(true)}
-              />
-            ) : (
-              <div className="media-artwork-fallback">
-                <User size={52} className="fallback-human-icon" />
-                <span className="fallback-label">{entity.name}</span>
-              </div>
-            )}
+            <img
+              src={heroArtworkSrc}
+              alt={entity.name}
+              className="media-artwork-img"
+              referrerPolicy="no-referrer"
+              loading="eager"
+              decoding="async"
+              onError={() => setFailedHeroArtworkUrl(displayArtwork)}
+            />
             {isLoadingApi && (
               <div className="media-artwork-loader">
                 <Loader2 size={20} className="spin-icon" />
@@ -498,16 +1070,16 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <Star
                     key={i}
                     size={16}
-                    className={i < Math.floor(entity.communityRating.average) ? 'star-gold' : 'star-muted'}
+                    className={i < Math.floor(ratingAverage) ? 'star-gold' : 'star-muted'}
                     fill="currentColor"
                   />
                 ))}
               </div>
-              <span className="rating-number">{entity.communityRating.average.toFixed(1)}</span>
+              <span className="rating-number">{ratingAverage.toFixed(1)}</span>
             </div>
             <div className="rating-right-info">
               <span className="rating-count-text">
-                {entity.communityRating.count.toLocaleString()} Community Ratings
+                {ratingCount.toLocaleString()} Community Ratings
               </span>
               <span className="rating-subtext">Click for rating distribution & analytics →</span>
             </div>
@@ -533,6 +1105,20 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           ))}
         </div>
       </div>
+
+      {activeTab === 'overview' && (
+        <section className="media-section overview-glance-section">
+          <div className="overview-glance-grid">
+            {glanceItems.map((item) => (
+              <div key={item.label} className="overview-glance-card">
+                <span className="overview-glance-label">{item.label}</span>
+                <strong>{item.value}</strong>
+                <span>{item.detail}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ── Tab Content Sections ── */}
 
@@ -588,7 +1174,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               <h2>
                 {entity.type === 'album'
                   ? activeTab === 'overview'
-                    ? 'Top 5 Popular Tracks'
+                    ? 'Top Tracks'
                     : `Full Tracklist (${topItems.length} Tracks)`
                   : entity.primaryCollection?.title || 'Top Items'}
               </h2>
@@ -613,19 +1199,27 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           </div>
 
           <div className="top-content-list">
-            {visibleTopItems.map((item) => (
-              <TrackRow
-                key={item.id}
-                item={item}
-                onNavigateToEntity={onNavigateToEntity}
-              />
-            ))}
+            {visibleTopItems.map((item) => {
+              const effectiveArtistName =
+                entity.type === 'artist'
+                  ? entity.name
+                  : entity.metadataChips?.find((c) => /artist/i.test(c.label))?.value || ''
+              return (
+                <TrackRow
+                  key={item.id}
+                  item={item}
+                  artistName={effectiveArtistName}
+                  parentArtworkUrl={entity.artworkUrl}
+                  onNavigateToEntity={onNavigateToEntity}
+                />
+              )
+            })}
           </div>
         </section>
       )}
 
       {/* 2. Grouped Discography Sections for Artists (Albums, EPs, Singles) */}
-      {(activeTab === 'overview' || activeTab === 'collection') && entity.type === 'artist' && (
+      {activeTab === 'collection' && entity.type === 'artist' && (
         <>
           {albumsGroup.length > 0 && (
             <section className="media-section collection-section">
@@ -673,7 +1267,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             </section>
           )}
 
-          {epsGroup.length > 0 && (
+          {activeTab === 'collection' && epsGroup.length > 0 && (
             <section className="media-section collection-section">
               <div className="media-section-header">
                 <div className="media-section-title-group">
@@ -719,7 +1313,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             </section>
           )}
 
-          {singlesGroup.length > 0 && (
+          {activeTab === 'collection' && singlesGroup.length > 0 && (
             <section className="media-section collection-section">
               <div className="media-section-header">
                 <div className="media-section-title-group">
@@ -768,7 +1362,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       )}
 
       {/* 3. Generic Secondary Collection Section for non-artists */}
-      {(activeTab === 'overview' || activeTab === 'collection') && entity.type !== 'artist' && entity.secondaryCollection && (
+      {activeTab === 'collection' && entity.type !== 'artist' && entity.secondaryCollection && (
         <section className="media-section collection-section">
           <div className="media-section-header">
             <div className="media-section-title-group">
@@ -818,73 +1412,82 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
       {/* 3. Community Reviews Section (Reuses feed Card components) */}
       {(activeTab === 'overview' || activeTab === 'reviews') && (
-        <section className="media-section community-reviews-section">
+        <section className={`media-section community-reviews-section ${activeTab === 'overview' ? 'is-overview' : ''}`}>
           <div className="media-section-header reviews-header-row">
             <div className="media-section-title-group">
               <BookOpen size={16} className="title-icon" />
               <h2>Community Reviews ({matchingReviews.length})</h2>
             </div>
 
-            <div className="reviews-controls-row">
-              <div className="reviews-search-box">
-                <Search size={14} />
-                <input
-                  type="text"
-                  placeholder={`Search ${entity.categoryLabel.toLowerCase()} reviews…`}
-                  value={reviewSearch}
-                  onChange={(e) => setReviewSearch(e.target.value)}
-                />
-                {reviewSearch && (
-                  <button type="button" onClick={() => setReviewSearch('')}>
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-
-              <select
-                className="reviews-sort-select"
-                value={reviewSort}
-                onChange={(e) => setReviewSort(e.target.value as any)}
+            {activeTab === 'overview' && (
+              <button
+                type="button"
+                className="media-view-all-btn"
+                onClick={() => setActiveTab('reviews')}
               >
-                <option value="newest">Newest First</option>
-                <option value="highest">Highest Rated</option>
-                <option value="oldest">Oldest First</option>
-              </select>
-            </div>
+                <span>View All Reviews</span>
+              </button>
+            )}
           </div>
 
-          {filteredSortedReviews.length === 0 ? (
+          {reviewItemsToDisplay.length === 0 ? (
             <div className="media-empty-reviews">
               <BookOpen size={32} opacity={0.3} />
               <p>No community reflections recorded for {entity.name} yet.</p>
             </div>
-          ) : (
-            <div className="card-grid media-reviews-masonry">
-              {filteredSortedReviews.map((entry) => (
-                <div key={entry.id} className="masonry-item" style={{ marginBottom: 16 }}>
-                  <Card
-                    entry={entry}
-                    expanded={false}
-                    onToggle={() => onSelectEntry?.(entry)}
-                    onExpandOverlay={() => onSelectEntry?.(entry)}
-                    onOpenProfile={() => onOpenUserProfile?.(entry.authorHandle || 'jimboii')}
-                    typeIcon={IconComponent}
-                    typeLabel={entity.categoryLabel}
-                    isLiked={likedEntryIds.includes(entry.id)}
-                    isSaved={savedEntryIds.includes(entry.id)}
-                    onToggleLike={() => onToggleLike?.(entry.id)}
-                    onToggleSave={() => onToggleSave?.(entry.id)}
-                    commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
-                  />
+          ) : activeTab === 'overview' ? (
+            <div className="community-review-preview-grid">
+              {reviewItemsToDisplay.slice(0, 4).map((entry) => (
+                <div key={entry.id} className="community-review-preview-item">
+                  {renderCommunityReviewCard(entry)}
                 </div>
               ))}
+            </div>
+          ) : (
+            <div
+              className="card-grid media-reviews-masonry"
+              ref={reviewGridRef}
+              style={{
+                position: 'relative',
+                height: reviewMasonryLayout ? reviewMasonryLayout.height : 'auto',
+                minHeight: 320,
+                opacity: reviewMasonryLayout ? 1 : 0,
+                transition: 'opacity 220ms ease-out',
+              }}
+            >
+              {reviewItemsToDisplay.map((entry) => {
+                const pos = reviewMasonryLayout?.positions.get(entry.id)
+
+                return (
+                  <div
+                    key={entry.id}
+                    data-id={entry.id}
+                    className="masonry-item"
+                    style={
+                      pos
+                        ? {
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: pos.width,
+                            transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
+                            transition: 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
+                            willChange: 'transform',
+                          }
+                        : { width: '100%', marginBottom: 16 }
+                    }
+                  >
+                    {renderCommunityReviewCard(entry)}
+                  </div>
+                )
+              })}
             </div>
           )}
         </section>
       )}
 
       {/* 4. Related Albums Grid */}
-      {(activeTab === 'overview' || activeTab === 'related') && entity.type === 'album' && liveRelatedAlbums && liveRelatedAlbums.length > 0 && (
+      {activeTab === 'related' && entity.type === 'album' && liveRelatedAlbums && liveRelatedAlbums.length > 0 && (
         <section className="media-section related-albums-section">
           <div className="media-section-header">
             <div className="media-section-title-group">
@@ -893,65 +1496,74 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             </div>
           </div>
 
-          <div className="collection-grid related-albums-grid">
-            {liveRelatedAlbums.slice(0, 5).map((item) => (
-              <div
-                key={item.id}
-                className="collection-card"
-                onClick={() => onNavigateToEntity?.(item.id)}
-                style={{ cursor: 'pointer' }}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="collection-thumb-wrapper">
-                  <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
-                </div>
-                <div className="collection-info">
-                  <span className="collection-title">{item.title}</span>
-                  <span className="collection-subtitle">{item.subtitle}</span>
-                </div>
-                {item.rating && (
-                  <span className="collection-rating-badge">
-                    <Star size={11} fill="currentColor" />
-                    <span>{item.rating.toFixed(1)}</span>
-                  </span>
-                )}
-              </div>
+          <div className="related-album-tile-grid">
+            {liveRelatedAlbums.slice(0, 4).map((item) => (
+              <RelatedAlbumTile key={item.id} item={item} onNavigate={onNavigateToEntity} />
             ))}
           </div>
         </section>
       )}
 
-      {/* 5. Related Media Section (Horizontal Cards at Bottom) */}
-      {(activeTab === 'overview' || activeTab === 'related') && entity.relatedEntities && (
-        <section className="media-section related-entities-section">
+      {/* 5. Related Media Section */}
+      {shouldShowRelatedSection && (
+        <section className={`media-section related-entities-section ${entity.type === 'artist' ? 'similar-artists-section' : ''}`}>
           <div className="media-section-header">
             <div className="media-section-title-group">
               <Sparkles size={16} className="title-icon" />
-              <h2>{entity.relatedEntities.title}</h2>
+              <h2>{entity.type === 'artist' ? 'Similar Artists' : entity.relatedEntities?.title || 'Related'}</h2>
             </div>
           </div>
 
-          <div className="related-cards-scroll">
-            {entity.relatedEntities.items.map((rel) => (
-              <div
-                key={rel.id}
-                className="related-media-card"
-                onClick={() => onNavigateToEntity?.(rel.id)}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="related-thumb-wrapper">
-                  <img src={rel.artworkUrl} alt={rel.title} className="related-thumb" />
-                </div>
-                <div className="related-info">
-                  <span className="related-title">{rel.title}</span>
-                  <span className="related-subtitle">{rel.subtitle}</span>
-                </div>
-                <ChevronRight size={14} className="related-arrow" />
+          {entity.type === 'artist' ? (
+            relatedItemsToDisplay.length === 0 ? (
+              <div className="similar-artists-empty">
+                <Sparkles size={18} />
+                <span>No similar artists available.</span>
               </div>
-            ))}
-          </div>
+            ) : (
+              <div className="similar-artists-grid">
+                {relatedItemsToDisplay.map((rel) => (
+                  <SimilarArtistPortraitItem
+                    key={rel.id}
+                    artist={rel}
+                    isActive={rel.id === entity.id}
+                    onNavigate={onNavigateToEntity}
+                  />
+                ))}
+              </div>
+            )
+          ) : (
+            <div className="related-cards-scroll">
+              {relatedItemsToDisplay.map((rel) => (
+                <div
+                  key={rel.id}
+                  className="related-media-card"
+                  onClick={() => onNavigateToEntity?.(rel.id)}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="related-thumb-wrapper">
+                    <img
+                      src={resolveArtworkUrl(rel.artworkUrl, rel.title, rel.subtitle) || createArtworkPlaceholder(rel.title, rel.subtitle)}
+                      alt={rel.title}
+                      className="related-thumb"
+                      loading="eager"
+                      decoding="async"
+                      referrerPolicy="no-referrer"
+                      onError={(event) => {
+                        event.currentTarget.src = createArtworkPlaceholder(rel.title, rel.subtitle)
+                      }}
+                    />
+                  </div>
+                  <div className="related-info">
+                    <span className="related-title">{rel.title}</span>
+                    <span className="related-subtitle">{rel.subtitle}</span>
+                  </div>
+                  <ChevronRight size={14} className="related-arrow" />
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -983,32 +1595,46 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
               <div className="rating-modal-body">
                 <div className="rating-modal-score-block">
-                  <span className="large-score">{entity.communityRating.average.toFixed(1)}</span>
+                  <span className="large-score">
+                    <CountUpNumber value={ratingAverage} decimals={1} />
+                  </span>
                   <div className="stars-wrapper">
                     {Array.from({ length: 5 }, (_, i) => (
                       <Star
                         key={i}
                         size={18}
-                        className={i < Math.floor(entity.communityRating.average) ? 'star-gold' : 'star-muted'}
+                        className={i < Math.floor(ratingAverage) ? 'star-gold' : 'star-muted'}
                         fill="currentColor"
                       />
                     ))}
                   </div>
                   <span className="total-ratings">
-                    Based on {entity.communityRating.count.toLocaleString()} Commonplace ratings
+                    Based on{' '}
+                    <CountUpNumber
+                      value={ratingCount}
+                      format={(value) => Math.round(value).toLocaleString()}
+                    />{' '}
+                    Commonplace ratings
                   </span>
                 </div>
 
                 <div className="rating-distribution-bars">
                   {[5, 4, 3, 2, 1].map((stars) => {
-                    const pct = entity.communityRating.distribution[stars] || 0
+                    const pct = ratingDistribution[stars] || 0
                     return (
                       <div key={stars} className="dist-row">
                         <span className="dist-star-label">{stars} ★</span>
                         <div className="dist-bar-track">
-                          <div className="dist-bar-fill" style={{ width: `${pct}%` }} />
+                          <motion.div
+                            className="dist-bar-fill"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${pct}%` }}
+                            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: (5 - stars) * 0.05 }}
+                          />
                         </div>
-                        <span className="dist-pct-text">{pct}%</span>
+                        <span className="dist-pct-text">
+                          <CountUpNumber value={pct} format={(value) => `${Math.round(value)}%`} />
+                        </span>
                       </div>
                     )
                   })}

@@ -357,7 +357,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
           <div className="overlay-card-media">
             <div className={`overlay-cover-wrapper ${isSquare ? 'is-square' : ''}`}>
               {entry.coverUrl ? (
-                <img src={entry.coverUrl} alt={entry.title} className="overlay-cover-img" />
+                <img src={entry.coverUrl} alt={entry.title} className="overlay-cover-img" referrerPolicy="no-referrer" />
               ) : (
                 <div className="overlay-cover-fallback">
                   <IconComponent />
