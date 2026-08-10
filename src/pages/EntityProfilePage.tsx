@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { Card, type CardEntry } from '../components/CommonplaceCard/Card'
 import { searchMetadata, type MetadataType } from '../metadata'
+import { createArtworkPlaceholder, resolveArtworkUrl } from '../utils/artwork'
 
 export interface EntityProfile {
   id: string
@@ -117,7 +118,9 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
       .then((results) => {
         if (!isMounted) return
         if (results && results.length > 0) {
-          const match = results[0]
+          const match = entity.type === 'game'
+            ? results.find((result) => result.title.localeCompare(entity.title, undefined, { sensitivity: 'base' }) === 0) || results[0]
+            : results[0]
           if (match.coverUrl) setApiCoverUrl(match.coverUrl)
           if (match.summary) setApiSummary(match.summary)
         }
@@ -132,7 +135,10 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
     }
   }, [entity.title, entity.type])
 
-  const displayCover = apiCoverUrl || entity.coverUrl
+  const preferredCoverUrl = entity.type === 'game'
+    ? entity.coverUrl || apiCoverUrl
+    : apiCoverUrl || entity.coverUrl
+  const displayCover = resolveArtworkUrl(preferredCoverUrl, entity.title, entity.type) || createArtworkPlaceholder(entity.title, entity.type)
   const displayBio = apiSummary || entity.bio
 
   // Filter entries matching this entity
@@ -184,7 +190,7 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
         <div className="profile-hero-cover-wrapper">
           <img
             src={
-              entity.bannerUrl ||
+              (entity.type === 'game' ? displayCover : entity.bannerUrl) ||
               displayCover ||
               'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?q=80&w=1200&auto=format&fit=crop'
             }
