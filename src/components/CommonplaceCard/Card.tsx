@@ -23,6 +23,7 @@ export type CardEntry = {
   year?: string
   coverUrl?: string
   summary?: string
+  explicit?: boolean
   createdAt: string
   updatedAt: string
   coverTone: 'gold' | 'rose' | 'sage' | 'blue' | 'violet' | 'ember'
@@ -92,6 +93,7 @@ export const Card: React.FC<CardProps> = ({
         year={entry.year}
         coverUrl={entry.coverUrl}
         rating={entry.rating}
+        explicit={entry.explicit}
         typeIcon={typeIcon}
         onToggle={onToggle}
       />

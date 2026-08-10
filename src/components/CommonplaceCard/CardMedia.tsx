@@ -11,6 +11,7 @@ interface CardMediaProps {
   year?: string
   coverUrl?: string
   rating: number
+  explicit?: boolean
   typeIcon: LucideIcon
   onToggle: () => void
 }
@@ -46,11 +47,13 @@ export const CardMedia: React.FC<CardMediaProps> = ({
   year,
   coverUrl,
   rating,
+  explicit,
   typeIcon: Icon,
   onToggle,
 }) => {
   const tvYearDisplay = formatTvYear(year)
   const bookExtraDisplay = formatBookExtra(provider, year)
+  const showExplicitBadge = (type === 'song' || type === 'album') && explicit
 
   return (
     <div className="card-body">
@@ -73,7 +76,10 @@ export const CardMedia: React.FC<CardMediaProps> = ({
       </button>
       <div className="card-meta">
         <StarRating rating={rating} />
-        <h2 className="card-title">{title}</h2>
+        <h2 className="card-title">
+          <span>{title}</span>
+          {showExplicitBadge && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
+        </h2>
 
         {type === 'book' && (
           <>

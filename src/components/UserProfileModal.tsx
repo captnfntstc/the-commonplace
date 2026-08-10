@@ -160,7 +160,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
                     <div className="review-card-main">
                       <div className="review-title-row">
-                        <h4 className="review-title">{entry.title}</h4>
+                        <h4 className="review-title">
+                          <span>{entry.title}</span>
+                          {(entry.type === 'song' || entry.type === 'album') && entry.explicit && (
+                            <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>
+                          )}
+                        </h4>
                         <StarRating rating={entry.rating} />
                       </div>
                       <span className="review-creator">{entry.creator} &bull; <span className="review-type-tag">{entry.type}</span></span>

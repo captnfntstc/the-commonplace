@@ -859,21 +859,66 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     },
   },
 
-  // ── Games ───────────────────────────────────────────────────────────────────
-  'red-dead-redemption': {
-    id: 'red-dead-redemption',
-    name: 'Red Dead Redemption Franchise',
+  // ── Directors & Authors ─────────────────────────────────────────────────────
+  // Games
+  'rdr-redemption': {
+    id: 'rdr-redemption',
+    name: 'Red Dead Redemption',
     type: 'game',
     categoryLabel: 'Game',
-    artworkUrl: 'https://images.unsplash.com/photo-1538481199705-c710c4e965fc?w=800&auto=format&fit=crop',
+    artworkUrl: '',
     description:
-      'Western action-adventure epic chronicling the tragic sunset of the American outlaw era through Arthur Morgan and John Marston.',
+      'Open-world western action-adventure following former outlaw John Marston as federal agents force him to hunt down the gang members he once called friends.',
     metadataChips: [
-      { label: 'Developer', value: 'Rockstar Games' },
+      { label: 'Developer', value: 'Rockstar San Diego' },
       { label: 'Publisher', value: 'Rockstar Games' },
-      { label: 'Platforms', value: 'PS4, Xbox, PC, Switch' },
-      { label: 'Release', value: '2010 - Present' },
-      { label: 'Genre', value: 'Open World Western' },
+      { label: 'Release', value: 'May 18, 2010' },
+      { label: 'Platforms', value: 'PS3, Xbox 360, PS4, Switch, PC' },
+      { label: 'Genre', value: 'Open-World Western' },
+    ],
+    communityRating: {
+      average: 4.9,
+      count: 4210,
+      distribution: { 5: 91, 4: 7, 3: 1, 2: 1, 1: 0 },
+    },
+  },
+
+  'rdr-undead-nightmare': {
+    id: 'rdr-undead-nightmare',
+    name: 'Red Dead Redemption: Undead Nightmare',
+    type: 'game',
+    categoryLabel: 'Game',
+    artworkUrl: '',
+    description:
+      'Zombie-horror companion campaign for Red Dead Redemption where John Marston crosses an overrun frontier to find a cure for his family.',
+    metadataChips: [
+      { label: 'Developer', value: 'Rockstar San Diego' },
+      { label: 'Publisher', value: 'Rockstar Games' },
+      { label: 'Release', value: 'Oct 26, 2010' },
+      { label: 'Platforms', value: 'PS3, Xbox 360' },
+      { label: 'Genre', value: 'Horror Western' },
+    ],
+    communityRating: {
+      average: 4.8,
+      count: 2560,
+      distribution: { 5: 85, 4: 12, 3: 2, 2: 1, 1: 0 },
+    },
+  },
+
+  'rdr-redemption-2': {
+    id: 'rdr-redemption-2',
+    name: 'Red Dead Redemption 2',
+    type: 'game',
+    categoryLabel: 'Game',
+    artworkUrl: '',
+    description:
+      'Open-world western epic set in 1899, following Arthur Morgan and the Van der Linde gang as lawmen close in on the last outlaw crews.',
+    metadataChips: [
+      { label: 'Developer', value: 'Rockstar Studios' },
+      { label: 'Publisher', value: 'Rockstar Games' },
+      { label: 'Release', value: 'Oct 26, 2018' },
+      { label: 'Platforms', value: 'PS4, Xbox One, PC' },
+      { label: 'Genre', value: 'Open-World Western' },
     ],
     communityRating: {
       average: 5.0,
@@ -882,47 +927,157 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     },
   },
 
-  'the-last-of-us': {
-    id: 'the-last-of-us',
-    name: 'The Last of Us Franchise',
+  'rdr-online': {
+    id: 'rdr-online',
+    name: 'Red Dead Online',
     type: 'game',
     categoryLabel: 'Game',
-    artworkUrl: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=800&auto=format&fit=crop',
+    artworkUrl: '',
     description:
-      'Post-apocalyptic narrative masterpiece chronicling the emotional bond between Joel and Ellie across a fungal pandemic America.',
+      'Standalone online multiplayer western built from Red Dead Redemption 2, focused on posses, frontier roles, missions, and free-roam play.',
     metadataChips: [
-      { label: 'Developer', value: 'Naughty Dog' },
-      { label: 'Publisher', value: 'Sony Interactive Ent.' },
-      { label: 'Platforms', value: 'PlayStation, PC' },
-      { label: 'Release', value: '2013 - Present' },
-      { label: 'Genre', value: 'Action / Survival Horror' },
+      { label: 'Developer', value: 'Rockstar Studios' },
+      { label: 'Publisher', value: 'Rockstar Games' },
+      { label: 'Standalone', value: 'Dec 1, 2020' },
+      { label: 'Platforms', value: 'PS4, Xbox One, PC' },
+      { label: 'Genre', value: 'Online Action-Adventure' },
     ],
     communityRating: {
-      average: 5.0,
-      count: 8420,
-      distribution: { 5: 95, 4: 4, 3: 1, 2: 0, 1: 0 },
+      average: 4.5,
+      count: 1980,
+      distribution: { 5: 66, 4: 22, 3: 8, 2: 3, 1: 1 },
     },
   },
 
-  'resident-evil': {
-    id: 'resident-evil',
-    name: 'Resident Evil Franchise',
+  'tlou-original': {
+    id: 'tlou-original',
+    name: 'The Last of Us',
     type: 'game',
     categoryLabel: 'Game',
-    artworkUrl: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=800&auto=format&fit=crop',
+    artworkUrl: '',
     description:
-      'Seminal survival horror franchise spanning viral outbreaks, bio-weapons, and iconic operatives fighting Umbrella Corporation.',
+      'Third-person action-adventure about Joel, a hardened survivor hired to smuggle Ellie across a post-pandemic United States.',
     metadataChips: [
-      { label: 'Developer', value: 'Capcom' },
-      { label: 'Publisher', value: 'Capcom' },
-      { label: 'Platforms', value: 'Multi-Platform' },
-      { label: 'Release', value: '1996 - Present' },
-      { label: 'Genre', value: 'Survival Horror' },
+      { label: 'Developer', value: 'Naughty Dog' },
+      { label: 'Publisher', value: 'Sony Computer Entertainment' },
+      { label: 'Release', value: 'Jun 14, 2013' },
+      { label: 'Platform', value: 'PlayStation 3' },
+      { label: 'Genre', value: 'Action / Adventure' },
+    ],
+    communityRating: {
+      average: 5.0,
+      count: 6120,
+      distribution: { 5: 94, 4: 5, 3: 1, 2: 0, 1: 0 },
+    },
+  },
+
+  'tlou-left-behind': {
+    id: 'tlou-left-behind',
+    name: 'The Last of Us: Left Behind',
+    type: 'game',
+    categoryLabel: 'Game',
+    artworkUrl: '',
+    description:
+      'Single-player story chapter centered on Ellie and Riley, exploring survival, loyalty, and love before and during the main game.',
+    metadataChips: [
+      { label: 'Developer', value: 'Naughty Dog' },
+      { label: 'Publisher', value: 'Sony Computer Entertainment' },
+      { label: 'Release', value: 'Feb 14, 2014' },
+      { label: 'Platform', value: 'PlayStation 3' },
+      { label: 'Genre', value: 'Action / Adventure' },
+    ],
+    communityRating: {
+      average: 4.8,
+      count: 2840,
+      distribution: { 5: 86, 4: 11, 3: 2, 2: 1, 1: 0 },
+    },
+  },
+
+  'tlou-remastered': {
+    id: 'tlou-remastered',
+    name: 'The Last of Us Remastered',
+    type: 'game',
+    categoryLabel: 'Game',
+    artworkUrl: '',
+    description:
+      'PlayStation 4 remaster rebuilt with 1080p presentation, higher-resolution character models, improved lighting, and bundled add-on content.',
+    metadataChips: [
+      { label: 'Developer', value: 'Naughty Dog' },
+      { label: 'Publisher', value: 'Sony Computer Entertainment' },
+      { label: 'Release', value: 'Jul 29, 2014' },
+      { label: 'Platform', value: 'PlayStation 4' },
+      { label: 'Genre', value: 'Action / Adventure' },
     ],
     communityRating: {
       average: 4.9,
-      count: 5120,
-      distribution: { 5: 89, 4: 9, 3: 1, 2: 1, 1: 0 },
+      count: 3980,
+      distribution: { 5: 90, 4: 8, 3: 1, 2: 1, 1: 0 },
+    },
+  },
+
+  'tlou-part-ii': {
+    id: 'tlou-part-ii',
+    name: 'The Last of Us Part II',
+    type: 'game',
+    categoryLabel: 'Game',
+    artworkUrl: '',
+    description:
+      'Sequel set five years after Joel and Ellie settle in Jackson, following Ellie through a violent journey for justice and closure.',
+    metadataChips: [
+      { label: 'Developer', value: 'Naughty Dog' },
+      { label: 'Publisher', value: 'Sony Interactive Entertainment' },
+      { label: 'Release', value: 'Jun 19, 2020' },
+      { label: 'Platform', value: 'PlayStation 4' },
+      { label: 'Genre', value: 'Action / Adventure' },
+    ],
+    communityRating: {
+      average: 4.9,
+      count: 5290,
+      distribution: { 5: 89, 4: 8, 3: 2, 2: 1, 1: 0 },
+    },
+  },
+
+  'tlou-part-i': {
+    id: 'tlou-part-i',
+    name: 'The Last of Us Part I',
+    type: 'game',
+    categoryLabel: 'Game',
+    artworkUrl: '',
+    description:
+      'Ground-up remake of the original The Last of Us for PlayStation 5, including the complete single-player story and Left Behind.',
+    metadataChips: [
+      { label: 'Developer', value: 'Naughty Dog' },
+      { label: 'Publisher', value: 'Sony Interactive Entertainment' },
+      { label: 'Release', value: 'Sep 2, 2022' },
+      { label: 'Platforms', value: 'PS5, PC' },
+      { label: 'Genre', value: 'Action / Adventure' },
+    ],
+    communityRating: {
+      average: 5.0,
+      count: 3410,
+      distribution: { 5: 92, 4: 6, 3: 1, 2: 1, 1: 0 },
+    },
+  },
+
+  'tlou-part-ii-remastered': {
+    id: 'tlou-part-ii-remastered',
+    name: 'The Last of Us Part II Remastered',
+    type: 'game',
+    categoryLabel: 'Game',
+    artworkUrl: '',
+    description:
+      'PlayStation 5 remaster of Part II with graphical enhancements, Lost Levels, Guitar Free Play, commentary, and the No Return roguelike survival mode.',
+    metadataChips: [
+      { label: 'Developer', value: 'Naughty Dog' },
+      { label: 'Publisher', value: 'Sony Interactive Entertainment' },
+      { label: 'Release', value: 'Jan 19, 2024' },
+      { label: 'Platforms', value: 'PS5, PC' },
+      { label: 'Genre', value: 'Action / Adventure' },
+    ],
+    communityRating: {
+      average: 4.8,
+      count: 2180,
+      distribution: { 5: 85, 4: 11, 3: 3, 2: 1, 1: 0 },
     },
   },
 
@@ -931,46 +1086,91 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'Stardew Valley',
     type: 'game',
     categoryLabel: 'Game',
-    artworkUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=800&auto=format&fit=crop',
+    artworkUrl: '',
     description:
-      'Heartwarming farming simulation RPG created independently by ConcernedApe, inviting players to inherit an old farm plot and build a thriving rural community.',
+      'Country-life RPG where players inherit an overgrown farm, grow crops, raise animals, mine, fish, befriend townspeople, and rebuild a rural home.',
     metadataChips: [
       { label: 'Developer', value: 'ConcernedApe' },
       { label: 'Publisher', value: 'ConcernedApe' },
-      { label: 'Platforms', value: 'PC, Switch, Mobile, Consoles' },
-      { label: 'Release', value: '2016' },
-      { label: 'Genre', value: 'Farming Simulation / RPG' },
+      { label: 'Release', value: 'Feb 26, 2016' },
+      { label: 'Platforms', value: 'PC, Console, Mobile' },
+      { label: 'Genre', value: 'Country-Life RPG' },
     ],
     communityRating: {
       average: 5.0,
       count: 9100,
       distribution: { 5: 97, 4: 2, 3: 1, 2: 0, 1: 0 },
     },
-  },
-
-  'silent-hill': {
-    id: 'silent-hill',
-    name: 'Silent Hill Franchise',
-    type: 'game',
-    categoryLabel: 'Game',
-    artworkUrl: 'https://images.unsplash.com/photo-1579373903781-fd5c0c30c4cd?w=800&auto=format&fit=crop',
-    description:
-      'Psychological horror game series exploring otherworldly nightmare dimensions, internal grief, and surreal terror.',
-    metadataChips: [
-      { label: 'Developer', value: 'Konami / Team Silent' },
-      { label: 'Publisher', value: 'Konami' },
-      { label: 'Platforms', value: 'PlayStation, PC, Xbox' },
-      { label: 'Release', value: '1999 - Present' },
-      { label: 'Genre', value: 'Psychological Horror' },
-    ],
-    communityRating: {
-      average: 4.8,
-      count: 3780,
-      distribution: { 5: 86, 4: 11, 3: 2, 2: 1, 1: 0 },
+    primaryCollection: {
+      title: 'Highlights',
+      items: [
+        { id: 'sv-community-center', rank: 1, title: 'Community Center Restoration', subtitle: 'Core Quest', rating: 4.9 },
+        { id: 'sv-ginger-island', rank: 2, title: 'Ginger Island', subtitle: 'Late Game Area', rating: 4.9 },
+        { id: 'sv-skull-cavern', rank: 3, title: 'Skull Cavern', subtitle: 'Challenge Area', rating: 4.7 },
+      ],
     },
   },
 
-  // ── Directors & Authors ─────────────────────────────────────────────────────
+  'valorant': {
+    id: 'valorant',
+    name: 'Valorant',
+    type: 'game',
+    categoryLabel: 'Game',
+    artworkUrl: '',
+    description:
+      'Free-to-play 5v5 tactical shooter where teams attack and defend sites across 13-round halves using precise gunplay and agent abilities.',
+    metadataChips: [
+      { label: 'Developer', value: 'Riot Games' },
+      { label: 'Publisher', value: 'Riot Games' },
+      { label: 'PC Release', value: 'Jun 2, 2020' },
+      { label: 'Platforms', value: 'PC, PS5, Xbox Series' },
+      { label: 'Genre', value: '5v5 Tactical Shooter' },
+    ],
+    communityRating: {
+      average: 4.7,
+      count: 4380,
+      distribution: { 5: 78, 4: 16, 3: 4, 2: 1, 1: 1 },
+    },
+    primaryCollection: {
+      title: 'Top Agents',
+      items: [
+        { id: 'val-jett', rank: 1, title: 'Jett', subtitle: 'Duelist', rating: 4.8 },
+        { id: 'val-omen', rank: 2, title: 'Omen', subtitle: 'Controller', rating: 4.7 },
+        { id: 'val-killjoy', rank: 3, title: 'Killjoy', subtitle: 'Sentinel', rating: 4.7 },
+      ],
+    },
+  },
+
+  'league-of-legends': {
+    id: 'league-of-legends',
+    name: 'League of Legends',
+    type: 'game',
+    categoryLabel: 'Game',
+    artworkUrl: '',
+    description:
+      'Free-to-play 5v5 MOBA where teams choose champions, battle across lanes, secure objectives, and push to destroy the enemy Nexus.',
+    metadataChips: [
+      { label: 'Developer', value: 'Riot Games' },
+      { label: 'Publisher', value: 'Riot Games' },
+      { label: 'Release', value: 'Oct 27, 2009' },
+      { label: 'Platforms', value: 'PC, Mac' },
+      { label: 'Genre', value: '5v5 MOBA' },
+    ],
+    communityRating: {
+      average: 4.6,
+      count: 6820,
+      distribution: { 5: 74, 4: 18, 3: 5, 2: 2, 1: 1 },
+    },
+    primaryCollection: {
+      title: 'Top Champions',
+      items: [
+        { id: 'lol-ahri', rank: 1, title: 'Ahri', subtitle: 'Mage / Assassin', rating: 4.8 },
+        { id: 'lol-jinx', rank: 2, title: 'Jinx', subtitle: 'Marksman', rating: 4.8 },
+        { id: 'lol-yasuo', rank: 3, title: 'Yasuo', subtitle: 'Fighter / Assassin', rating: 4.7 },
+      ],
+    },
+  },
+
   'christopher-nolan': {
     id: 'christopher-nolan',
     name: 'Christopher Nolan',
