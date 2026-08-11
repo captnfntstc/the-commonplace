@@ -1,6 +1,6 @@
 import React from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Edit3, Trash2, Clock, Maximize2 } from 'lucide-react'
+import { Edit3, Trash2, Maximize2 } from 'lucide-react'
 import { FormattedText, stripHtmlAlignment, type Alignment } from '../FormattedText'
 
 interface VariantProps {
@@ -110,10 +110,6 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
   onDelete,
   onExpandOverlay,
 }) => {
-  const { cleanText } = stripHtmlAlignment(reflection)
-  const wordCount = cleanText.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length
-  const readTimeMin = Math.max(1, Math.ceil(wordCount / 180))
-
   const showDropCap = Boolean(enableDropCap)
   const { firstChar, restText, isEmoji, isLowercase } = getDropCapParts(reflection)
 
@@ -130,13 +126,6 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
           style={{ overflow: 'hidden' }}
         >
           <div className="reflection-inner">
-            <div className="article-badge-row">
-              <span className="article-tag">
-                <Clock aria-hidden="true" />
-                {readTimeMin} min read &bull; {wordCount} words
-              </span>
-            </div>
-
             <div className="scroll-container">
               <div className="reading-width-wrapper">
                 {showDropCap ? (
@@ -197,4 +186,3 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
     </AnimatePresence>
   )
 }
-

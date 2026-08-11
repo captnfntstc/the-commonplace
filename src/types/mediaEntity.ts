@@ -46,6 +46,57 @@ export interface RelatedEntityItem {
   type: MediaEntityType
 }
 
+export type GamePlatformStatus = 'available' | 'upcoming' | 'announced' | 'discontinued'
+
+export interface GamePlatformRelease {
+  platform: string
+  releaseDate?: string
+  status?: GamePlatformStatus
+  distribution?: Array<'Digital' | 'Physical'>
+  notes?: string
+}
+
+export interface GameSystemRequirementSet {
+  os?: string
+  processor?: string
+  memory?: string
+  graphics?: string
+  storage?: string
+  directX?: string
+  network?: string
+  sound?: string
+  additionalNotes?: string
+}
+
+export interface GameEdition {
+  name: string
+  description?: string
+  includedContent?: string[]
+  releaseDate?: string
+  platforms?: string[]
+}
+
+export interface GameMetadata {
+  developers?: string[]
+  publishers?: string[]
+  genres?: string[]
+  franchise?: string
+  gameModes?: string[]
+  engine?: string
+  ageRating?: string
+  releaseDate?: string
+  officialWebsite?: string
+  platforms?: GamePlatformRelease[]
+  pcRequirements?: {
+    minimum?: GameSystemRequirementSet
+    recommended?: GameSystemRequirementSet
+  }
+  features?: string[]
+  editions?: GameEdition[]
+  metadataSource?: string
+  metadataUpdatedAt?: string
+}
+
 export interface UniversalMediaEntity {
   id: string
   name: string
@@ -55,6 +106,7 @@ export interface UniversalMediaEntity {
   description: string // 2-5 sentence warm editorial description
   providerId?: string // provider track/album id so exact metadata can be refetched
   explicit?: boolean
+  gameMetadata?: GameMetadata
   metadataChips: MetadataChip[]
   communityRating: {
     average: number
@@ -147,9 +199,10 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
     case 'game':
       return [
         { id: 'overview', label: 'Overview' },
-        { id: 'top_content', label: 'Popular Highlights' },
+        { id: 'game_info', label: 'Game Info' },
+        { id: 'platforms_releases', label: 'Platforms & Releases' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Related Games' },
+        { id: 'related', label: 'Similar Games' },
       ]
     case 'game_studio':
       return [

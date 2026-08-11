@@ -451,13 +451,8 @@ export const MOCK_ENTITY_PROFILES: Record<string, EntityProfile> = {
     coverUrl: 'https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/fullportrait.png',
     bannerUrl: 'https://media.valorant-api.com/agents/add6443a-41bd-e414-f6ad-e58d267f4e95/background.png',
     bio: 'Free-to-play 5v5 tactical shooter where teams attack and defend sites across 13-round halves using precise gunplay and agent abilities.',
-    topItemsTitle: 'Top Agents',
-    topItems: [
-      { id: 'val-release', name: 'PC Release', detail: 'Jun 2, 2020', rating: 4.7 },
-      { id: 'val-console', name: 'Console Release', detail: 'Aug 2, 2024', rating: 4.6 },
-      { id: 'val-platforms', name: 'Platforms', detail: 'PC, PS5, Xbox Series', rating: 4.7 },
-      { id: 'val-genre', name: 'Genre', detail: '5v5 Tactical Shooter', rating: 4.8 },
-    ],
+    topItemsTitle: '',
+    topItems: [],
   },
   'league-of-legends': {
     id: 'league-of-legends',
@@ -468,13 +463,8 @@ export const MOCK_ENTITY_PROFILES: Record<string, EntityProfile> = {
     coverUrl: 'https://ddragon.leagueoflegends.com/cdn/img/champion/splash/Jinx_0.jpg',
     bannerUrl: 'https://ddragon.leagueoflegends.com/cdn/img/champion/splash/Ahri_0.jpg',
     bio: 'Free-to-play 5v5 MOBA where teams choose champions, battle across lanes, secure objectives, and push to destroy the enemy Nexus.',
-    topItemsTitle: 'Top Champions',
-    topItems: [
-      { id: 'lol-release', name: 'Original Release', detail: 'Oct 27, 2009', rating: 4.6 },
-      { id: 'lol-developer', name: 'Developer', detail: 'Riot Games', rating: 4.7 },
-      { id: 'lol-platforms', name: 'Platforms', detail: 'PC, Mac', rating: 4.6 },
-      { id: 'lol-genre', name: 'Genre', detail: '5v5 MOBA', rating: 4.8 },
-    ],
+    topItemsTitle: '',
+    topItems: [],
   },
 
 }

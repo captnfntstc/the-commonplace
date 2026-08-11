@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   X,
-  Clock,
+  User,
   Calendar,
   BookOpen,
   Disc3,
@@ -19,7 +19,7 @@ import {
   Flag,
   AlertCircle,
 } from 'lucide-react'
-import { FormattedText, stripHtmlAlignment } from './FormattedText'
+import { FormattedText } from './FormattedText'
 import { StarRating } from './CardHeader'
 import { formatFullDateTime } from '../../utils/dateUtils'
 import { getDropCapParts } from './variants/HybridScrollVariant'
@@ -76,6 +76,7 @@ interface CardOverlayModalProps {
   isSaved?: boolean
   onToggleLike?: () => void
   onToggleSave?: () => void
+  onOpenProfile?: (handle: string) => void
 }
 
 const typeIconMap = {
@@ -96,6 +97,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   isSaved = false,
   onToggleLike,
   onToggleSave,
+  onOpenProfile,
 }) => {
   const [comments, setComments] = useState<CommentItem[]>([
     {
@@ -171,11 +173,9 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   if (!entry) return null
 
   const isPostOwner = !entry.authorHandle || entry.authorHandle.replace(/^@/, '') === CURRENT_USER
+  const displayAuthorHandle = (entry.authorHandle || CURRENT_USER).replace(/^@/, '')
 
   const IconComponent = typeIconMap[entry.type] || BookOpen
-  const { cleanText } = stripHtmlAlignment(entry.reflection)
-  const wordCount = cleanText.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(Boolean).length
-  const readTimeMin = Math.max(1, Math.ceil(wordCount / 180))
 
   const showDropCap = Boolean(entry.enableDropCap)
   const { firstChar, restText, isEmoji, isLowercase } = getDropCapParts(entry.reflection)
@@ -326,10 +326,15 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                 <IconComponent aria-hidden="true" />
               </span>
               <span className="overlay-topbar-divider" aria-hidden="true" />
-              <span className="overlay-readtime-pill">
-                <Clock aria-hidden="true" />
-                {readTimeMin} min read &bull; {wordCount} words
-              </span>
+              <button
+                type="button"
+                className="overlay-author-pill"
+                onClick={() => onOpenProfile?.(displayAuthorHandle)}
+                title={`View @${displayAuthorHandle}'s profile`}
+              >
+                <User aria-hidden="true" />
+                <span>@{displayAuthorHandle}</span>
+              </button>
               {entry.createdAt && (
                 <>
                   <span className="overlay-topbar-divider" aria-hidden="true" />

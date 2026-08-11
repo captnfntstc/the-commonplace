@@ -1,4 +1,5 @@
 import type { UniversalMediaEntity } from '../types/mediaEntity'
+import { GAME_PROFILE_METADATA } from './gameProfileMetadata'
 
 export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
   // ── Artists ─────────────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     secondaryCollection: {
       title: 'Albums Discography',
       items: [
-        { id: 'ttpd-album', title: 'THE TORTURED POETS DEPARTMENT', subtitle: 'Album · 2024', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/a3/8a/8d/a38a8de5-ae11-154c-dca5-221e6549caee/24UMGIM44778.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
+        { id: 'ttpd-album', title: 'THE TORTURED POETS DEPARTMENT', subtitle: 'Album · 2024', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/6b/7d/61/6b7d61e4-e6f1-83bc-d645-463aa06b33c4/24UMGIM29563.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
         { id: '1989-tv-album', title: '1989 (Taylor’s Version)', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/89/4a/4a/894a4ab9-b0b0-9ea5-ca41-8da0b9b79453/14UMDIM03405.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
         { id: 'speak-now-tv-album', title: 'Speak Now (Taylor’s Version)', subtitle: 'Album · 2023', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/9f/3c/0a/9f3c0a60-f9e0-a34e-60e5-0be1f182896b/23UMGIM63932.rgb.jpg/1000x1000bb.jpg', rating: 4.9 },
         { id: 'midnights-album', title: 'Midnights', subtitle: 'Album · 2022', artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/fb/b7/5d/fbb75d98-3b52-2fa5-ca82-658194f3c498/23UMGIM58157.rgb.jpg/1000x1000bb.jpg', rating: 4.8 },
@@ -297,13 +298,14 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
     name: 'THE TORTURED POETS DEPARTMENT',
     type: 'album',
     categoryLabel: 'Album',
-    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/a3/8a/8d/a38a8de5-ae11-154c-dca5-221e6549caee/24UMGIM44778.rgb.jpg/1000x1000bb.jpg',
-    description: 'The eleventh studio album by Taylor Swift, an introspective synth-pop and synth-folk double album.',
+    artworkUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/6b/7d/61/6b7d61e4-e6f1-83bc-d645-463aa06b33c4/24UMGIM29563.rgb.jpg/1000x1000bb.jpg',
+    providerId: '1736268215',
+    description: 'The standard edition of Taylor Swift’s eleventh studio album, an introspective synth-pop and synth-folk record.',
     metadataChips: [
       { label: 'Artist', value: 'Taylor Swift' },
       { label: 'Release Year', value: '2024' },
       { label: 'Genre', value: 'Synth-Pop / Folk' },
-      { label: 'Track Count', value: '31 Tracks' },
+      { label: 'Track Count', value: '16 Tracks' },
       { label: 'Label', value: 'Republic Records' },
     ],
     communityRating: {
@@ -876,6 +878,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platforms', value: 'PS3, Xbox 360, PS4, Switch, PC' },
       { label: 'Genre', value: 'Open-World Western' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['rdr-redemption'],
     communityRating: {
       average: 4.9,
       count: 4210,
@@ -898,6 +901,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platforms', value: 'PS3, Xbox 360' },
       { label: 'Genre', value: 'Horror Western' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['rdr-undead-nightmare'],
     communityRating: {
       average: 4.8,
       count: 2560,
@@ -920,10 +924,37 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platforms', value: 'PS4, Xbox One, PC' },
       { label: 'Genre', value: 'Open-World Western' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['rdr-redemption-2'],
     communityRating: {
       average: 5.0,
       count: 7890,
       distribution: { 5: 96, 4: 3, 3: 1, 2: 0, 1: 0 },
+    },
+    relatedEntities: {
+      title: 'Similar Games',
+      items: [
+        {
+          id: 'rdr-redemption',
+          title: 'Red Dead Redemption',
+          subtitle: 'Rockstar San Diego',
+          artworkUrl: 'https://www.ireddead.com/content/images/red-dead-redemption-box-art-1280x1580.jpg',
+          type: 'game',
+        },
+        {
+          id: 'rdr-online',
+          title: 'Red Dead Online',
+          subtitle: 'Rockstar Studios',
+          artworkUrl: 'https://cdn.cloudflare.steamstatic.com/steam/apps/1404210/library_600x900.jpg',
+          type: 'game',
+        },
+        {
+          id: 'rdr-undead-nightmare',
+          title: 'Red Dead Redemption: Undead Nightmare',
+          subtitle: 'Rockstar San Diego',
+          artworkUrl: 'https://www.ireddead.com/content/images/red-dead-redemption-undead-nightmare-box-art-1280x1580.jpg',
+          type: 'game',
+        },
+      ],
     },
   },
 
@@ -942,6 +973,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platforms', value: 'PS4, Xbox One, PC' },
       { label: 'Genre', value: 'Online Action-Adventure' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['rdr-online'],
     communityRating: {
       average: 4.5,
       count: 1980,
@@ -964,6 +996,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platform', value: 'PlayStation 3' },
       { label: 'Genre', value: 'Action / Adventure' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['tlou-original'],
     communityRating: {
       average: 5.0,
       count: 6120,
@@ -986,6 +1019,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platform', value: 'PlayStation 3' },
       { label: 'Genre', value: 'Action / Adventure' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['tlou-left-behind'],
     communityRating: {
       average: 4.8,
       count: 2840,
@@ -1008,6 +1042,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platform', value: 'PlayStation 4' },
       { label: 'Genre', value: 'Action / Adventure' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['tlou-remastered'],
     communityRating: {
       average: 4.9,
       count: 3980,
@@ -1030,6 +1065,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platform', value: 'PlayStation 4' },
       { label: 'Genre', value: 'Action / Adventure' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['tlou-part-ii'],
     communityRating: {
       average: 4.9,
       count: 5290,
@@ -1052,6 +1088,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platforms', value: 'PS5, PC' },
       { label: 'Genre', value: 'Action / Adventure' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['tlou-part-i'],
     communityRating: {
       average: 5.0,
       count: 3410,
@@ -1074,6 +1111,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platforms', value: 'PS5, PC' },
       { label: 'Genre', value: 'Action / Adventure' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['tlou-part-ii-remastered'],
     communityRating: {
       average: 4.8,
       count: 2180,
@@ -1096,6 +1134,7 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platforms', value: 'PC, Console, Mobile' },
       { label: 'Genre', value: 'Country-Life RPG' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['stardew-valley'],
     communityRating: {
       average: 5.0,
       count: 9100,
@@ -1126,18 +1165,11 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platforms', value: 'PC, PS5, Xbox Series' },
       { label: 'Genre', value: '5v5 Tactical Shooter' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['valorant'],
     communityRating: {
       average: 4.7,
       count: 4380,
       distribution: { 5: 78, 4: 16, 3: 4, 2: 1, 1: 1 },
-    },
-    primaryCollection: {
-      title: 'Top Agents',
-      items: [
-        { id: 'val-jett', rank: 1, title: 'Jett', subtitle: 'Duelist', rating: 4.8 },
-        { id: 'val-omen', rank: 2, title: 'Omen', subtitle: 'Controller', rating: 4.7 },
-        { id: 'val-killjoy', rank: 3, title: 'Killjoy', subtitle: 'Sentinel', rating: 4.7 },
-      ],
     },
   },
 
@@ -1156,18 +1188,11 @@ export const UNIVERSAL_MEDIA_ENTITIES: Record<string, UniversalMediaEntity> = {
       { label: 'Platforms', value: 'PC, Mac' },
       { label: 'Genre', value: '5v5 MOBA' },
     ],
+    gameMetadata: GAME_PROFILE_METADATA['league-of-legends'],
     communityRating: {
       average: 4.6,
       count: 6820,
       distribution: { 5: 74, 4: 18, 3: 5, 2: 2, 1: 1 },
-    },
-    primaryCollection: {
-      title: 'Top Champions',
-      items: [
-        { id: 'lol-ahri', rank: 1, title: 'Ahri', subtitle: 'Mage / Assassin', rating: 4.8 },
-        { id: 'lol-jinx', rank: 2, title: 'Jinx', subtitle: 'Marksman', rating: 4.8 },
-        { id: 'lol-yasuo', rank: 3, title: 'Yasuo', subtitle: 'Fighter / Assassin', rating: 4.7 },
-      ],
     },
   },
 

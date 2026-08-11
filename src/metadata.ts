@@ -10,6 +10,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { logApiCall, type ApiProvider } from './services/apiTracker'
 import { resolveArtworkUrl } from './utils/artwork'
+import type { GameMetadata } from './types/mediaEntity'
+import {
+  clearBrowserCacheNamespace,
+  getBrowserCacheValue,
+  setBrowserCacheValue,
+} from './services/browserCache'
 
 export type MetadataType = 'book' | 'album' | 'song' | 'film' | 'tv' | 'game'
 
@@ -26,6 +32,7 @@ export type MetadataResult = {
   year?: string
   summary?: string
   explicit?: boolean
+  gameMetadata?: GameMetadata
   /** Only populated by fetchLyrics — not present in search results */
   lyrics?: string
 }
@@ -136,8 +143,10 @@ export function preloadImage(url: string) {
   if (preloadedImages.has(url)) return
   const img = new Image()
   img.referrerPolicy = 'no-referrer'
+  img.fetchPriority = 'high'
+  img.decoding = 'async'
   img.onload = () => {
-    window.setTimeout(() => preloadedImages.delete(url), 30000)
+    window.setTimeout(() => preloadedImages.delete(url), 120000)
   }
   img.onerror = () => {
     preloadedImages.delete(url)
@@ -234,6 +243,11 @@ export async function fetchWikipediaPortrait(name: string, signal?: AbortSignal)
 
   if (!result) {
     apiResponseCache.delete(cacheKey)
+  } else {
+    preloadImage(result)
+    entityImageCacheMap.set(cacheKey, result)
+    entityImageCacheMap.set(cleanName, result)
+    entityImageCacheMap.set(`artist:${cleanName}`, result)
   }
 
   return result
@@ -269,18 +283,33 @@ function normalizeAlbumTitleForMatch(title: string): string {
     .replace(/\s+/g, ' ')
 }
 
-function albumVariantSignals(title: string): Set<string> {
+function catalogVariantSignals(title: string): Set<string> {
   const normalized = normalizeAlbumTitleForMatch(title)
   const signals = new Set<string>()
   const checks: Array<[string, RegExp]> = [
+    ['anthology', /\banthology\b/],
     ['deluxe', /\bdeluxe\b/],
     ['taylor-version', /\btaylor s version\b|\btaylors version\b|\btv\b/],
+    ['3am', /\b3am\b/],
+    ['til-dawn', /\btil dawn\b|\btill dawn\b/],
+    ['bonus', /\bbonus(?: track)?\b/],
     ['forever', /\bforever\b|\bwe ll all be here forever\b/],
     ['expanded', /\bexpanded\b/],
     ['platinum', /\bplatinum\b/],
     ['anniversary', /\banniversary\b/],
     ['special', /\bspecial\b/],
     ['complete', /\bcomplete\b/],
+    ['remaster', /\bremaster(?:ed)?\b/],
+    ['reissue', /\breissue\b/],
+    ['acoustic', /\bacoustic\b/],
+    ['live', /\blive\b/],
+    ['remix', /\bremix\b/],
+    ['radio-edit', /\bradio edit\b/],
+    ['extended', /\bextended\b/],
+    ['demo', /\bdemo\b/],
+    ['from-vault', /\bfrom (?:the )?vault\b/],
+    ['instrumental', /\binstrumental\b/],
+    ['minute-version', /\b\d+ minute version\b/],
     ['edition', /\bedition\b/],
   ]
 
@@ -291,24 +320,31 @@ function albumVariantSignals(title: string): Set<string> {
   return signals
 }
 
-function scoreAlbumVariantMatch(candidateName: string, requestedName: string): number {
+function scoreCatalogTitleMatch(candidateName: string, requestedName: string): number {
   const candidate = normalizeAlbumTitleForMatch(candidateName)
   const requested = normalizeAlbumTitleForMatch(requestedName)
   if (!candidate || !requested) return 0
 
   let score = 0
-  if (candidate === requested) score += 1000
-  else if (candidate.includes(requested)) score += 500
-  else if (requested.includes(candidate)) score += 300
+  // A full normalized title is the release identity. Track counts and artwork
+  // are only tie-breakers and must never turn a deluxe/expanded edition into
+  // the requested standard album (or vice versa).
+  if (candidate === requested) score += 12000
+  else if (candidate.includes(requested)) score += 1500
+  else if (requested.includes(candidate)) score += 900
 
   const requestedTokens = new Set(requested.split(' ').filter(Boolean))
   const candidateTokens = new Set(candidate.split(' ').filter(Boolean))
   for (const token of requestedTokens) {
     if (candidateTokens.has(token)) score += 20
   }
+  const extraCandidateTokens = [...candidateTokens].filter((token) => !requestedTokens.has(token)).length
+  const missingRequestedTokens = [...requestedTokens].filter((token) => !candidateTokens.has(token)).length
+  score -= extraCandidateTokens * 90
+  score -= missingRequestedTokens * 180
 
-  const requestedSignals = albumVariantSignals(requestedName)
-  const candidateSignals = albumVariantSignals(candidateName)
+  const requestedSignals = catalogVariantSignals(requestedName)
+  const candidateSignals = catalogVariantSignals(candidateName)
   for (const signal of requestedSignals) {
     if (signal === 'taylor-version') {
       score += candidateSignals.has(signal) ? 3000 : -3000
@@ -350,7 +386,8 @@ function selectBestAlbumCollection(
 
   for (const album of albums) {
     if (!album.collectionId || !album.collectionName) continue
-    const officialArtistScore = isOfficialArtistMatch(album.artistName || album.collectionArtistName, requestedArtist) ? 420 : -420
+    if (!isOfficialArtistMatch(album.artistName || album.collectionArtistName, requestedArtist)) continue
+    const officialArtistScore = requestedArtist ? 420 : 0
     const trackCount = Number(album.trackCount || 0)
     const expectedTrackScore =
       expectedTrackCount && trackCount === expectedTrackCount
@@ -360,7 +397,7 @@ function selectBestAlbumCollection(
           : 0
     const artworkScore = album.artworkUrl100 ? 40 : 0
     const score =
-      scoreAlbumVariantMatch(album.collectionName, requestedAlbum) +
+      scoreCatalogTitleMatch(album.collectionName, requestedAlbum) +
       officialArtistScore +
       expectedTrackScore +
       artworkScore
@@ -700,18 +737,22 @@ export async function fetchItunesAlbumDetails(
   artistName?: string,
   signal?: AbortSignal,
   expectedTrackCount?: number,
+  providerCollectionId?: string,
 ) {
   const cacheKey = [
-    'itunes-album-details-v2',
+    'itunes-album-details-v3',
     normalizeAlbumTitleForMatch(albumName),
     normalizeAlbumTitleForMatch(artistName || ''),
     expectedTrackCount || 0,
+    providerCollectionId || '',
   ].join(':')
 
   return cachedApiRequest(cacheKey, signal, async () => {
     try {
     const cleanAlbum = albumName.replace(/^album-\d+/i, '').replace(/^album-/i, '').replace(/-/g, ' ')
-    const requestedCollectionId = collectionIdFromAlbumEntityId(albumName)
+    const requestedCollectionId = /^\d+$/.test(providerCollectionId || '')
+      ? providerCollectionId
+      : collectionIdFromAlbumEntityId(providerCollectionId || albumName)
     let resolvedAlbum = requestedCollectionId
       ? albumEntityMap.get(`album-${requestedCollectionId}`)
       : undefined
@@ -1032,20 +1073,15 @@ function songSearchScore(item: ITunesSearchResult, songQuery: string, targetArti
 
   let score = 0
 
-  if (normTargetArtist && (normArtist === normTargetArtist || normArtist.includes(normTargetArtist) || normTargetArtist.includes(normArtist))) {
+  if (normTargetArtist) {
+    if (normArtist !== normTargetArtist) return -50000
     score += 5000
   }
 
   const boost = knownArtistBoost(item.artistName)
   score += boost * 10
 
-  if (normTrack === normTargetSong) {
-    score += 1200
-  } else if (normTrack.startsWith(normTargetSong)) {
-    score += 800
-  } else if (normTrack.includes(normTargetSong)) {
-    score += 500
-  }
+  score += scoreCatalogTitleMatch(normTrack, normTargetSong)
 
   const isCoverArtist =
     /\b(tribute|karaoke|instrumental|piano|lullaby|string quartet|cover|rendition|sing-along|relaxing|bedtime|acoustic version by|orchestral)\b/i.test(item.artistName || '') ||
@@ -1089,9 +1125,22 @@ function isOfficialSongAppearanceCollection(item: ITunesSearchResult, normalized
   return true
 }
 
+async function fetchItunesTrackById(trackId?: string, signal?: AbortSignal): Promise<ITunesSearchResult | undefined> {
+  if (!/^\d+$/.test(trackId || '')) return undefined
+
+  return cachedApiRequest(`itunes-track:${trackId}`, signal, async () => {
+    const url = `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId as string)}`
+    const res = await fetch(url, { signal })
+    if (!res.ok) return undefined
+
+    const data = (await res.json()) as { results?: ITunesSearchResult[] }
+    return (data.results || []).find((item) => String(item.trackId || '') === String(trackId))
+  })
+}
+
 export async function fetchItunesSongDetails(songName: string, artistName?: string, trackId?: string, signal?: AbortSignal) {
   const cacheKey = [
-    'itunes-song-details',
+    'itunes-song-details-v2',
     normalizeAlbumTitleForMatch(songName),
     normalizeAlbumTitleForMatch(artistName || ''),
     trackId || '',
@@ -1100,17 +1149,23 @@ export async function fetchItunesSongDetails(songName: string, artistName?: stri
   return cachedApiRequest(cacheKey, signal, async () => {
     try {
     const cleanSong = songName.replace(/^song-\d+/i, '').replace(/^song-/i, '').replace(/-/g, ' ')
-    const query = artistName ? `${cleanSong} ${artistName}` : cleanSong
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=25`
-    const res = await fetch(url, { signal })
-    if (!res.ok) return null
-    const data = (await res.json()) as any
-    const songs = data.results || []
+    const exactTrack = await fetchItunesTrackById(trackId, signal)
+    let song = exactTrack
 
-    if (songs.length === 0) return null
-    const sortedSongs = [...songs].sort((a, b) => songSearchScore(b, cleanSong, artistName) - songSearchScore(a, cleanSong, artistName))
-    const exactTrack = trackId ? songs.find((s: ITunesSearchResult) => String(s.trackId) === String(trackId)) : undefined
-    const song = exactTrack || sortedSongs[0]
+    if (!song) {
+      const query = artistName ? `${cleanSong} ${artistName}` : cleanSong
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=50`
+      const res = await fetch(url, { signal })
+      if (!res.ok) return null
+      const data = (await res.json()) as { results?: ITunesSearchResult[] }
+      const songs = data.results || []
+      if (songs.length === 0) return null
+      song = [...songs].sort(
+        (a, b) => songSearchScore(b, cleanSong, artistName) - songSearchScore(a, cleanSong, artistName),
+      )[0]
+    }
+
+    if (!song?.trackName) return null
 
     const cover = formatITunesArt(song.artworkUrl100, song.trackName) || ''
     const year = song.releaseDate ? song.releaseDate.slice(0, 4) : ''
@@ -1118,7 +1173,7 @@ export async function fetchItunesSongDetails(songName: string, artistName?: stri
     const mins = Math.floor(millis / 60000)
     const secs = Math.floor((millis % 60000) / 1000).toString().padStart(2, '0')
 
-    const lyricsData = await fetchLyrics(song.trackName, song.artistName, signal).catch(() => null)
+    const lyricsData = await fetchLyrics(song.artistName || artistName || '', song.trackName, signal).catch(() => null)
 
     return {
       id: `song-${song.trackId}`,
@@ -1157,14 +1212,7 @@ export async function fetchItunesSongAppearances(
       const cleanSong = songName.replace(/^song-\d+/i, '').replace(/^song-/i, '').replace(/-/g, ' ')
       let exactSong: ITunesSearchResult | undefined
 
-      if (trackId) {
-        const lookupUrl = `https://itunes.apple.com/lookup?id=${encodeURIComponent(trackId)}`
-        const lookupRes = await fetch(lookupUrl, { signal })
-        if (lookupRes.ok) {
-          const lookupData = (await lookupRes.json()) as { results?: ITunesSearchResult[] }
-          exactSong = (lookupData.results || []).find((item) => String(item.trackId || '') === String(trackId))
-        }
-      }
+      exactSong = await fetchItunesTrackById(trackId, signal)
 
       const canonicalSongName = exactSong?.trackName || cleanSong
       const canonicalArtistName = exactSong?.artistName || artistName || ''
@@ -1256,18 +1304,27 @@ export async function fetchItunesSongAppearances(
   })
 }
 
-export async function fetchItunesSongArtwork(songName: string, artistName?: string, signal?: AbortSignal): Promise<string> {
+export async function fetchItunesSongArtwork(
+  songName: string,
+  artistName?: string,
+  signal?: AbortSignal,
+  trackId?: string,
+): Promise<string> {
   const cacheKey = [
-    'itunes-song-artwork',
+    'itunes-song-artwork-v2',
     normalizeAlbumTitleForMatch(songName),
     normalizeAlbumTitleForMatch(artistName || ''),
+    trackId || '',
   ].join(':')
 
   const result = await cachedApiRequest(cacheKey, signal, async () => {
     try {
+      const exactTrack = await fetchItunesTrackById(trackId, signal)
+      if (exactTrack) return formatITunesArt(exactTrack.artworkUrl100, exactTrack.trackName || songName) || ''
+
       const cleanSong = songName.replace(/^song-\d+/i, '').replace(/^song-/i, '').replace(/-/g, ' ')
       const query = artistName ? `${cleanSong} ${artistName}` : cleanSong
-      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=25`
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=50`
       const res = await fetch(url, { signal })
       if (!res.ok) return ''
       const data = (await res.json()) as any
@@ -1366,6 +1423,9 @@ type ITunesSearchResult = {
   releaseDate?: string
   primaryGenreName?: string
   trackCount?: number
+  trackNumber?: number
+  trackTimeMillis?: number
+  kind?: string
   longDescription?: string
   shortDescription?: string
   collectionExplicitness?: string
@@ -1391,12 +1451,18 @@ const searchCache = new Map<string, MetadataResult[]>()
 const lyricsCache = new Map<string, string | undefined>()
 const apiResponseCache = new Map<string, unknown>()
 const pendingApiRequestCache = new Map<string, Promise<unknown>>()
+const API_CACHE_NAMESPACE = 'external-api-v3'
+const SEARCH_CACHE_NAMESPACE = 'metadata-search-v2'
+const STATIC_METADATA_TTL = 30 * 24 * 60 * 60 * 1000
+const SEARCH_METADATA_TTL = 14 * 24 * 60 * 60 * 1000
 
 export function clearMetadataCache() {
   searchCache.clear()
   lyricsCache.clear()
   apiResponseCache.clear()
   pendingApiRequestCache.clear()
+  void clearBrowserCacheNamespace(API_CACHE_NAMESPACE)
+  void clearBrowserCacheNamespace(SEARCH_CACHE_NAMESPACE)
 }
 
 async function cachedApiRequest<T>(
@@ -1404,19 +1470,29 @@ async function cachedApiRequest<T>(
   signal: AbortSignal | undefined,
   loader: () => Promise<T>,
 ): Promise<T> {
+  if (apiResponseCache.has(key)) return apiResponseCache.get(key) as T
   if (!signal) {
-    if (apiResponseCache.has(key)) return apiResponseCache.get(key) as T
     const pending = pendingApiRequestCache.get(key)
     if (pending) return pending as Promise<T>
   }
 
-  const request = loader()
+  const request = (async () => {
+    const persisted = await getBrowserCacheValue<T>(API_CACHE_NAMESPACE, key)
+    signal?.throwIfAborted()
+    if (persisted !== undefined) {
+      apiResponseCache.set(key, persisted)
+      return persisted
+    }
+
+    const result = await loader()
+    apiResponseCache.set(key, result)
+    void setBrowserCacheValue(API_CACHE_NAMESPACE, key, result, STATIC_METADATA_TTL)
+    return result
+  })()
   if (!signal) pendingApiRequestCache.set(key, request)
 
   try {
-    const result = await request
-    if (!signal) apiResponseCache.set(key, result)
-    return result
+    return await request
   } finally {
     if (!signal) pendingApiRequestCache.delete(key)
   }
@@ -2280,6 +2356,16 @@ async function searchGames(
         genre: genreStr || 'Video Game',
         coverUrl: safeCoverUrl,
         year: yearFrom(item.released),
+        gameMetadata: {
+          genres: item.genres?.map((genre) => genre.name).filter(Boolean),
+          releaseDate: item.released,
+          platforms: item.platforms?.map(({ platform }) => ({
+            platform: platform.name,
+            status: 'available' as const,
+          })),
+          metadataSource: 'RAWG',
+          metadataUpdatedAt: new Date().toISOString(),
+        },
       }
     })
 
@@ -2333,6 +2419,21 @@ export async function searchMetadata(
     return cached
   }
 
+  const persisted = await getBrowserCacheValue<MetadataResult[]>(SEARCH_CACHE_NAMESPACE, cacheKey)
+  signal?.throwIfAborted()
+  if (persisted) {
+    searchCache.set(cacheKey, persisted)
+    logApiCall({
+      provider: providerMap[type] || 'Google Books',
+      queryOrUrl: `Search "${q}" (${type})`,
+      status: 'CACHE',
+      latencyMs: 0,
+      resultCount: persisted.length,
+      cacheStatus: 'HIT',
+    })
+    return persisted
+  }
+
   let results: MetadataResult[] = []
   if (type === 'book') results = await searchBooks(q, signal)
   else if (type === 'film' || type === 'tv') results = await searchTmdb(type, q, signal)
@@ -2341,5 +2442,6 @@ export async function searchMetadata(
   else if (type === 'game') results = await searchGames(q, signal)
 
   searchCache.set(cacheKey, results)
+  void setBrowserCacheValue(SEARCH_CACHE_NAMESPACE, cacheKey, results, SEARCH_METADATA_TTL)
   return results
 }

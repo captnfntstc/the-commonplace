@@ -50,6 +50,12 @@ import type { MetadataChip, CollectionItem, TopContentItem } from '../types/medi
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { formatFullDateTime, formatRelativeTime } from '../utils/dateUtils'
 import { createArtworkPlaceholder, resolveArtworkUrl } from '../utils/artwork'
+import { normalizeGameMetadata, primaryGameCreator } from '../utils/gameMetadata'
+import {
+  GameAvailableOnPreview,
+  GameInfoTab,
+  PlatformsReleasesTab,
+} from '../components/GameProfile/GameProfileSections'
 
 type ScoredRelatedEntityItem = RelatedEntityItem & {
   sortScore?: number
@@ -271,14 +277,15 @@ const TrackRow: React.FC<{
     if (!artistName || useParentArtwork) return
 
     const abortController = new AbortController()
-    fetchItunesSongArtwork(item.title, artistName, abortController.signal)
+    const providerTrackId = item.id.match(/^song-(\d+)$/i)?.[1]
+    fetchItunesSongArtwork(item.title, artistName, abortController.signal, providerTrackId)
       .then((url) => {
         if (url) setArtworkUrl(resolveArtworkUrl(url, item.title, item.subtitle))
       })
       .catch(() => {})
 
     return () => abortController.abort()
-  }, [artistName, item.artworkUrl, item.subtitle, item.title, useParentArtwork])
+  }, [artistName, item.artworkUrl, item.id, item.subtitle, item.title, useParentArtwork])
 
   const handleActivate = async () => {
     if (isResolvingTarget) return
@@ -633,6 +640,43 @@ const RelatedAlbumTile: React.FC<{
   </button>
 )
 
+const SimilarGameTile: React.FC<{
+  item: ScoredRelatedEntityItem
+  onNavigate?: (entityId: string, entityType?: MediaEntityType) => void
+}> = ({ item, onNavigate }) => {
+  const fallbackArtwork = createArtworkPlaceholder(item.title, 'Game')
+  const [artwork, setArtwork] = useState(
+    resolveArtworkUrl(item.artworkUrl, item.title, 'Game') || fallbackArtwork,
+  )
+
+  useEffect(() => {
+    setArtwork(resolveArtworkUrl(item.artworkUrl, item.title, 'Game') || fallbackArtwork)
+  }, [fallbackArtwork, item.artworkUrl, item.title])
+
+  return (
+    <button
+      type="button"
+      className="related-album-tile similar-game-tile"
+      onClick={() => onNavigate?.(item.id, 'game')}
+      aria-label={`Open ${item.title} game profile`}
+    >
+      <span className="related-album-art-frame similar-game-art-frame">
+        <img
+          src={artwork}
+          alt={item.title}
+          className="collection-thumb"
+          loading="eager"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setArtwork(fallbackArtwork)}
+        />
+      </span>
+      <span className="related-album-title">{item.title}</span>
+      <span className="related-album-subtitle">{item.subtitle}</span>
+    </button>
+  )
+}
+
 const CountUpNumber: React.FC<{
   value: number
   decimals?: number
@@ -700,6 +744,53 @@ function getGenreTokens(genreText: string) {
   }
 
   return tokens
+}
+
+function getGameGenreProfile(entity: UniversalMediaEntity) {
+  const chipGenre = entity.metadataChips.find((chip) => /^genres?$/i.test(chip.label))?.value
+  const labels = (entity.gameMetadata?.genres?.length ? entity.gameMetadata.genres : [chipGenre || ''])
+    .map((label) => label.trim())
+    .filter(Boolean)
+  const genreText = labels.join(' ')
+  const tokens = new Set<string>()
+  const signals: Array<[string, RegExp]> = [
+    ['open-world', /\bopen[ -]?world\b/i],
+    ['western', /\bwestern\b/i],
+    ['survival-horror', /\bsurvival[ -]?horror\b/i],
+    ['horror', /\bhorror\b/i],
+    ['survival', /\bsurvival\b/i],
+    ['tactical-shooter', /\btactical[ -]?shooter\b/i],
+    ['shooter', /\bshooter\b/i],
+    ['moba', /\bmoba\b|multiplayer online battle arena/i],
+    ['rpg', /\brpg\b|role[ -]?playing/i],
+    ['simulation', /\bsimulation\b|\bsim\b/i],
+    ['strategy', /\bstrategy\b/i],
+    ['racing', /\bracing\b/i],
+    ['puzzle', /\bpuzzle\b/i],
+    ['platformer', /\bplatform(?:er|ing)\b/i],
+    ['fighting', /\bfighting\b/i],
+    ['sandbox', /\bsandbox\b/i],
+    ['roguelike', /\brogue[ -]?like\b/i],
+    ['soulslike', /\bsouls[ -]?like\b/i],
+    ['battle-royale', /\bbattle royale\b/i],
+    ['sports', /\bsports?\b/i],
+  ]
+
+  signals.forEach(([token, pattern]) => {
+    if (pattern.test(genreText)) tokens.add(token)
+  })
+
+  const distinctiveLabels = new Set(
+    labels
+      .map((label) => label.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim())
+      .filter((label) => label && !['action', 'adventure', 'action adventure', 'indie'].includes(label)),
+  )
+
+  return {
+    label: labels.join(' / ') || 'Genre match',
+    labels: distinctiveLabels,
+    tokens,
+  }
 }
 
 function genreLabelFromCollectionItem(item: CollectionItem) {
@@ -793,9 +884,13 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   useEffect(() => {
     let isMounted = true
     setFailedHeroArtworkUrl(null)
+    setLiveCollectionItems(null)
+    setLiveTrackItems(null)
+    setLiveAlbumChips(null)
     setLiveRelatedAlbums(null)
     setLiveSongAppearances(null)
     setLiveArtistDiscographies({})
+    setLiveSongLyrics(null)
     setApiSummary(null)
 
     const cachedForEntity =
@@ -811,29 +906,17 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         })
         .catch(() => {})
 
-      const similarArtistCandidates = Object.values(UNIVERSAL_MEDIA_ENTITIES).filter(
-        (candidate) => candidate.type === 'artist' && candidate.id !== entity.id,
-      )
-
-      similarArtistCandidates.forEach((candidate) => {
-        fetchWikipediaPortrait(candidate.name).catch(() => {})
-      })
-
-      Promise.all(
-        similarArtistCandidates.map((candidate) =>
-          fetchItunesDiscography(candidate.name)
-            .then((items) => [candidate.id, items] as const)
-            .catch(() => [candidate.id, []] as const),
-        ),
-      ).then((entries) => {
-        if (!isMounted) return
-        setLiveArtistDiscographies(Object.fromEntries(entries))
-      })
     }
 
     if (entity.type === 'album') {
       const artistChip = entity?.metadataChips?.find((c) => c.label === 'Artist')?.value
-      fetchItunesAlbumDetails(entity.name, artistChip, undefined, getExpectedTrackCount(entity))
+      fetchItunesAlbumDetails(
+        entity.name,
+        artistChip,
+        undefined,
+        getExpectedTrackCount(entity),
+        entity.providerId || entity.id,
+      )
         .then((details) => {
           if (!isMounted) return
           if (details) {
@@ -917,7 +1000,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         .finally(() => {
           if (isMounted) setIsLoadingApi(false)
         })
-    } else if (!existingCache) {
+    } else if (!existingCache && !(entity.type === 'game' && entity.gameMetadata && entity.artworkUrl)) {
       setIsLoadingApi(true)
       const metaType = mapToMetaType(entity.type)
       searchMetadata(metaType, entity.name)
@@ -1076,6 +1159,37 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   )
 
   const relatedItemsToDisplay = useMemo<ScoredRelatedEntityItem[]>(() => {
+    if (entity.type === 'game') {
+      const currentGenreProfile = getGameGenreProfile(entity)
+
+      return Object.values(UNIVERSAL_MEDIA_ENTITIES)
+        .filter((candidate) => candidate.type === 'game' && candidate.id !== entity.id)
+        .map((candidate) => {
+          const candidateGenreProfile = getGameGenreProfile(candidate)
+          const sharedTokens = Array.from(candidateGenreProfile.tokens).filter((token) =>
+            currentGenreProfile.tokens.has(token),
+          ).length
+          const sharedLabels = Array.from(candidateGenreProfile.labels).filter((label) =>
+            currentGenreProfile.labels.has(label),
+          ).length
+
+          return {
+            id: candidate.id,
+            title: candidate.name,
+            subtitle: candidateGenreProfile.label,
+            artworkUrl: candidate.artworkUrl,
+            type: candidate.type,
+            sortScore:
+              sharedLabels * 300 +
+              sharedTokens * 100 +
+              Math.min(candidate.communityRating.count, 10000) / 10000,
+          }
+        })
+        .filter((item) => (item.sortScore || 0) >= 100)
+        .sort((a, b) => (b.sortScore || 0) - (a.sortScore || 0))
+        .slice(0, 4)
+    }
+
     if (entity.type !== 'artist') {
       return entity.relatedEntities?.items || []
     }
@@ -1145,10 +1259,17 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const ratingAverage = entity.communityRating?.average ?? 4.8
   const ratingCount = entity.communityRating?.count ?? 1200
   const ratingDistribution = entity.communityRating?.distribution ?? { 5: 85, 4: 11, 3: 3, 2: 1, 1: 0 }
+  const gameMetadata = useMemo(() => normalizeGameMetadata(entity), [entity])
 
   const glanceItems = useMemo(() => {
     const yearChip = chipsToDisplay.find((chip) => /year|since|release/i.test(chip.label))
     const creatorChip = chipsToDisplay.find((chip) => /artist|author|director|creator|developer/i.test(chip.label))
+    const gameCreator = entity.type === 'game' ? primaryGameCreator(gameMetadata) : undefined
+    const gameCreatorLabel = gameMetadata.developers?.length
+      ? 'Developer'
+      : gameMetadata.publishers?.length
+        ? 'Publisher'
+        : 'Type'
     return [
       {
         label: 'Rating',
@@ -1158,15 +1279,15 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       {
         label: 'Reviews',
         value: matchingReviews.length.toLocaleString(),
-        detail: 'community notes',
+        detail: entity.type === 'game' ? 'community reviews' : 'community notes',
       },
       {
-        label: creatorChip?.label || yearChip?.label || 'Type',
-        value: creatorChip?.value || yearChip?.value || entity.categoryLabel,
-        detail: entity.categoryLabel,
+        label: entity.type === 'game' ? gameCreatorLabel : creatorChip?.label || yearChip?.label || 'Type',
+        value: entity.type === 'game' ? gameCreator || entity.categoryLabel : creatorChip?.value || yearChip?.value || entity.categoryLabel,
+        detail: entity.type === 'game' ? gameCreatorLabel : entity.categoryLabel,
       },
     ]
-  }, [chipsToDisplay, entity.categoryLabel, ratingAverage, ratingCount, matchingReviews.length])
+  }, [chipsToDisplay, entity.categoryLabel, entity.type, gameMetadata, ratingAverage, ratingCount, matchingReviews.length])
 
   const renderCommunityReviewCard = (entry: CardEntry) => (
     <CommunityReviewCard
@@ -1183,7 +1304,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   )
   const shouldShowRelatedSection =
     activeTab === 'related' &&
-    (entity.type === 'artist' || (entity.type !== 'album' && relatedItemsToDisplay.length > 0))
+    (entity.type === 'artist' || entity.type === 'game' || (entity.type !== 'album' && relatedItemsToDisplay.length > 0))
 
   const toggleLyricLine = (index: number) => {
     setSelectedLyricIndexes((current) =>
@@ -1246,6 +1367,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               className="media-artwork-img"
               referrerPolicy="no-referrer"
               loading="eager"
+              fetchPriority="high"
               decoding="async"
               onError={() => setFailedHeroArtworkUrl(displayArtwork)}
             />
@@ -1343,6 +1465,21 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         </section>
       )}
 
+      {entity.type === 'game' && activeTab === 'overview' && (
+        <GameAvailableOnPreview
+          metadata={gameMetadata}
+          onViewAll={() => setActiveTab('platforms_releases')}
+        />
+      )}
+
+      {entity.type === 'game' && activeTab === 'game_info' && (
+        <GameInfoTab metadata={gameMetadata} />
+      )}
+
+      {entity.type === 'game' && activeTab === 'platforms_releases' && (
+        <PlatformsReleasesTab metadata={gameMetadata} />
+      )}
+
       {/* ── Tab Content Sections ── */}
 
       {/* Song Lyrics Section (For Song Profiles) */}
@@ -1422,7 +1559,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       )}
 
       {/* 1. Primary Top Content Section (Tracklist for Albums, Top Songs for Artists, Cast for Movies) */}
-      {entity.type !== 'song' && (activeTab === 'overview' || activeTab === 'top_content') && topItems.length > 0 && (
+      {entity.type !== 'song' && entity.type !== 'game' && (activeTab === 'overview' || activeTab === 'top_content') && topItems.length > 0 && (
         <section className="media-section top-content-section">
           <div className="media-section-header">
             <div className="media-section-title-group">
@@ -1682,7 +1819,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
       {/* 3. Community Reviews Section (Reuses feed Card components) */}
       {(activeTab === 'overview' || activeTab === 'reviews') && (
-        <section className={`media-section community-reviews-section ${activeTab === 'overview' ? 'is-overview' : ''}`}>
+        <section className={`media-section community-reviews-section ${activeTab === 'overview' ? 'is-overview' : ''} ${entity.type === 'game' ? 'is-game-reviews' : ''}`}>
           <div className="media-section-header reviews-header-row">
             <div className="media-section-title-group">
               <BookOpen size={16} className="title-icon" />
@@ -1695,7 +1832,11 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                 className="media-view-all-btn"
                 onClick={() => setActiveTab('reviews')}
               >
-                <span>View All Reviews</span>
+                <span>
+                  {entity.type === 'game'
+                    ? `View All Reviews (${matchingReviews.length}) \u2192`
+                    : 'View All Reviews'}
+                </span>
               </button>
             )}
           </div>
@@ -1707,7 +1848,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             </div>
           ) : activeTab === 'overview' ? (
             <div className="community-review-preview-grid">
-              {reviewItemsToDisplay.slice(0, 4).map((entry) => (
+              {reviewItemsToDisplay.slice(0, entity.type === 'game' ? 3 : 4).map((entry) => (
                 <div key={entry.id} className="community-review-preview-item">
                   {renderCommunityReviewCard(entry)}
                 </div>
@@ -1805,7 +1946,13 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           <div className="media-section-header">
             <div className="media-section-title-group">
               <Sparkles size={16} className="title-icon" />
-              <h2>{entity.type === 'artist' ? 'Similar Artists' : entity.relatedEntities?.title || 'Related'}</h2>
+              <h2>
+                {entity.type === 'artist'
+                  ? 'Similar Artists'
+                  : entity.type === 'game'
+                    ? 'Similar Games'
+                    : entity.relatedEntities?.title || 'Related'}
+              </h2>
             </div>
           </div>
 
@@ -1827,6 +1974,17 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                 ))}
               </div>
             )
+          ) : relatedItemsToDisplay.length === 0 ? (
+            <div className="similar-artists-empty">
+              <Sparkles size={18} />
+              <span>No similar {entity.type === 'game' ? 'games' : 'titles'} available.</span>
+            </div>
+          ) : entity.type === 'game' ? (
+            <div className="related-album-tile-grid">
+              {relatedItemsToDisplay.map((item) => (
+                <SimilarGameTile key={item.id} item={item} onNavigate={onNavigateToEntity} />
+              ))}
+            </div>
           ) : (
             <div className="related-cards-scroll">
               {relatedItemsToDisplay.map((rel) => (

@@ -55,6 +55,7 @@ import type { MediaEntityType, UniversalMediaEntity } from './types/mediaEntity'
 import { resolveArtworkUrl, createArtworkPlaceholder } from './utils/artwork'
 import { ApiUsageTracker } from './components/DeveloperTools/ApiUsageTracker'
 import { AlternateSearch, type AltMediaResult } from './components/Search/AlternateSearch'
+import { cacheProfileEntity, getCachedProfileEntity } from './services/profileCache'
 
 const WARN_UNRATED_KEY = 'the-commonplace.warn-unrated'
 const DEV_ALT_SEARCH_ENABLED_KEY = 'the-commonplace.dev.alternate-search-enabled'
@@ -719,6 +720,7 @@ function metadataResultToUniversalEntity(entity: { id: string; metadataResult: M
     artworkUrl: resolveArtworkUrl(result.coverUrl || '', result.title, result.type),
     providerId: result.providerId,
     explicit: result.explicit,
+    gameMetadata: result.gameMetadata,
     description:
       result.summary ||
       `Catalog entry for ${result.title}${result.creator ? ` by ${result.creator}` : ''} in The Commonplace community archive.`,
@@ -992,6 +994,8 @@ function AppContent() {
 
     if (universalEntity) {
       searchEntityCacheRef.current.set(entity.id, universalEntity)
+      setPersistedEntityCache((current) => ({ ...current, [entity.id]: universalEntity }))
+      void cacheProfileEntity(universalEntity)
     }
     handleOpenEntity(entity.id, universalEntity?.type || entity.type as MediaEntityType)
   }
@@ -1133,6 +1137,24 @@ function AppContent() {
   const gridRef = useRef<HTMLElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const [searchLimit, setSearchLimit] = useState(8)
+  const [persistedEntityCache, setPersistedEntityCache] = useState<Record<string, UniversalMediaEntity>>({})
+
+  useEffect(() => {
+    if (!selectedEntityId || UNIVERSAL_MEDIA_ENTITIES[selectedEntityId] || searchEntityCacheRef.current.has(selectedEntityId)) {
+      return
+    }
+
+    let cancelled = false
+    getCachedProfileEntity(selectedEntityId).then((cachedEntity) => {
+      if (cancelled || !cachedEntity) return
+      searchEntityCacheRef.current.set(cachedEntity.id, cachedEntity)
+      setPersistedEntityCache((current) => ({ ...current, [cachedEntity.id]: cachedEntity }))
+    }).catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedEntityId])
 
   useEffect(() => {
     const segments = location.pathname
@@ -1201,12 +1223,9 @@ function AppContent() {
     setSearchLimit(8)
   }, [query, searchOpen, searchTab])
 
-  // Pre-warm entity image URL cache and fetch live Wikipedia portraits for artists/authors/directors.
+  // Seed known artwork URLs without issuing catalog-wide network requests.
   useEffect(() => {
     Object.values(UNIVERSAL_MEDIA_ENTITIES).forEach((entity) => {
-      if (['artist', 'author', 'director', 'actor'].includes(entity.type)) {
-        fetchWikipediaPortrait(entity.name).catch(() => {})
-      }
       if (entity.artworkUrl) {
         const safeArtworkUrl = resolveArtworkUrl(entity.artworkUrl, entity.name, entity.categoryLabel)
         entityImageCacheMap.set(entity.id, safeArtworkUrl)
@@ -1226,9 +1245,6 @@ function AppContent() {
       }
       if (entity.relatedEntities?.items) {
         entity.relatedEntities.items.forEach((item) => {
-          if (['artist', 'author', 'director', 'actor'].includes(item.type || '')) {
-            fetchWikipediaPortrait(item.title).catch(() => {})
-          }
           if (item.artworkUrl) {
             const safeArtworkUrl = resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle)
             entityImageCacheMap.set(item.id, safeArtworkUrl)
@@ -2046,6 +2062,10 @@ function AppContent() {
           isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
           onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
           onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
+          onOpenProfile={(handle) => {
+            setOverlayEntry(null)
+            handleOpenUserProfile(handle)
+          }}
         />
         <AnimatePresence>
           {deletingEntry && (
@@ -2101,6 +2121,7 @@ function AppContent() {
     let universalEntity: UniversalMediaEntity | null =
       searchEntityCacheRef.current.get(selectedEntityId) ||
       UNIVERSAL_MEDIA_ENTITIES[selectedEntityId] ||
+      persistedEntityCache[selectedEntityId] ||
       (MOCK_ENTITY_PROFILES[selectedEntityId]
         ? {
             id: MOCK_ENTITY_PROFILES[selectedEntityId].id,
@@ -2205,6 +2226,10 @@ function AppContent() {
             isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
             onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
             onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
+            onOpenProfile={(handle) => {
+              setOverlayEntry(null)
+              handleOpenUserProfile(handle)
+            }}
           />
           <AnimatePresence>
             {composerOpen ? (
@@ -2495,6 +2520,10 @@ function AppContent() {
           isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
           onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
           onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
+          onOpenProfile={(handle) => {
+            setOverlayEntry(null)
+            handleOpenUserProfile(handle)
+          }}
         />
 
         {/* Confirm Delete Card Modal */}
