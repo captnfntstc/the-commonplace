@@ -106,6 +106,7 @@ export interface UniversalMediaEntity {
   description: string // 2-5 sentence warm editorial description
   providerId?: string // provider track/album id so exact metadata can be refetched
   explicit?: boolean
+  preferWikipediaArtwork?: boolean
   gameMetadata?: GameMetadata
   metadataChips: MetadataChip[]
   communityRating: {

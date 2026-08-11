@@ -17,6 +17,7 @@ import {
 import { USER_DIRECTORY } from '../../pages/UserProfilePage'
 import { fetchWikipediaPortrait } from '../../metadata'
 import { createArtworkPlaceholder, resolveArtworkUrl } from '../../utils/artwork'
+import { AdaptiveGameArtwork } from '../GameArtwork/AdaptiveGameArtwork'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Alternate Search — experimental developer feature.
@@ -55,6 +56,7 @@ export type AltMediaResult = {
   type: AltSearchType
   subtitle: string
   explicit?: boolean
+  preferWikipediaArtwork?: boolean
 }
 
 export type AltSearchUser = {
@@ -128,7 +130,8 @@ const AltSearchThumb: React.FC<{
   name: string
   type: AltSearchType
   square?: boolean
-}> = ({ image, name, type, square = false }) => {
+  preferWikipediaArtwork?: boolean
+}> = ({ image, name, type, square = false, preferWikipediaArtwork = false }) => {
   const isPortrait = PORTRAIT_TYPES.has(type)
   const [photo, setPhoto] = useState(() => image || createArtworkPlaceholder(name, TYPE_BADGES[type]))
 
@@ -156,7 +159,18 @@ const AltSearchThumb: React.FC<{
 
   return (
     <span className={`alt-search-thumb ${square ? 'is-square' : ''}`}>
-      {photo ? (
+      {type === 'game' ? (
+        <AdaptiveGameArtwork
+          src={photo}
+          title={name}
+          preferWikipedia={preferWikipediaArtwork}
+          alt=""
+          frameAspect={36 / 50}
+          referrerPolicy="no-referrer"
+          loading="eager"
+          decoding="async"
+        />
+      ) : photo ? (
         <img
           src={photo}
           alt=""
@@ -204,6 +218,7 @@ const AltMediaResultRow: React.FC<{
       name={result.name}
       type={result.type}
       square={isSquareThumb(result.type)}
+      preferWikipediaArtwork={result.preferWikipediaArtwork}
     />
     <span className="alt-search-result-copy">
       <span className="alt-search-result-title">

@@ -36,6 +36,7 @@ import {
   entityImageCacheMap,
   albumEntityMap,
   knownArtistBoost,
+  scoreGameTitleMatch,
 } from './metadata'
 import { ExpansionProvider, useCardExpansion } from './context/ExpansionContext'
 import { Card } from './components/CommonplaceCard/Card'
@@ -55,6 +56,7 @@ import type { MediaEntityType, UniversalMediaEntity } from './types/mediaEntity'
 import { resolveArtworkUrl, createArtworkPlaceholder } from './utils/artwork'
 import { ApiUsageTracker } from './components/DeveloperTools/ApiUsageTracker'
 import { AlternateSearch, type AltMediaResult } from './components/Search/AlternateSearch'
+import { AdaptiveGameArtwork } from './components/GameArtwork/AdaptiveGameArtwork'
 import { cacheProfileEntity, getCachedProfileEntity } from './services/profileCache'
 
 const WARN_UNRATED_KEY = 'the-commonplace.warn-unrated'
@@ -145,6 +147,7 @@ type Entry = {
   coverUrl?: string
   summary?: string
   explicit?: boolean
+  preferWikipediaArtwork?: boolean
   createdAt: string
   updatedAt: string
   coverTone: CoverTone
@@ -300,6 +303,7 @@ const EntitySearchItem: React.FC<{
     creatorValue: string
     bio: string
     explicit?: boolean
+    preferWikipediaArtwork?: boolean
   }
   onSelect: () => void
 }> = ({ entity, onSelect }) => {
@@ -332,7 +336,18 @@ const EntitySearchItem: React.FC<{
       onClick={onSelect}
     >
       <span className={isSquareThumb ? 'metadata-thumb metadata-thumb--square' : 'metadata-thumb'}>
-        {photo ? (
+        {entity.type === 'game' ? (
+          <AdaptiveGameArtwork
+            src={photo}
+            title={entity.title}
+            preferWikipedia={entity.preferWikipediaArtwork}
+            alt={entity.title}
+            frameAspect={36 / 50}
+            referrerPolicy="no-referrer"
+            loading="eager"
+            decoding="async"
+          />
+        ) : photo ? (
           <img
             src={photo}
             alt={entity.title}
@@ -370,6 +385,7 @@ type HeaderSearchEntity = {
   creatorValue: string
   bio: string
   explicit?: boolean
+  preferWikipediaArtwork?: boolean
   source: 'metadata' | 'universal'
   rank: number
   metadataResult?: MetadataResult
@@ -395,6 +411,10 @@ function metadataResultToSearchEntity(result: MetadataResult, rank: number): Hea
     creatorValue: result.creator,
     bio: result.provider || result.genre || '',
     explicit: result.explicit,
+    preferWikipediaArtwork:
+      result.type === 'game' && (
+        Boolean(result.preferWikipediaArtwork) || /steam/i.test(result.gameMetadata?.metadataSource || '')
+      ),
     source: 'metadata',
     rank,
     metadataResult: result,
@@ -414,6 +434,10 @@ function universalEntityToSearchEntity(entity: UniversalMediaEntity, rank: numbe
     creatorValue: creatorChip ? `${creatorChip.label}: ${creatorChip.value}` : entity.categoryLabel,
     bio: entity.description || entity.categoryLabel,
     explicit: entity.explicit,
+    preferWikipediaArtwork:
+      entity.type === 'game' && (
+        Boolean(entity.preferWikipediaArtwork) || /steam/i.test(entity.gameMetadata?.metadataSource || '')
+      ),
     source: 'universal',
     rank,
     universalEntity: entity,
@@ -557,6 +581,7 @@ function toAltMediaResult(entity: HeaderSearchEntity): AltMediaResult {
     type,
     subtitle: altSearchSubtitle(entity),
     explicit: entity.explicit,
+    preferWikipediaArtwork: entity.preferWikipediaArtwork,
   }
 }
 
@@ -565,8 +590,6 @@ function getEntityPopularityScore(entity: HeaderSearchEntity): number {
     const { count, average } = entity.universalEntity.communityRating
     return count * average
   }
-  // Metadata results arrive provider-sorted (iTunes/TMDB return results in
-  // popularity order), so a lower rank means a more popular result.
   return Math.max(0, 6000 - entity.rank * 150)
 }
 
@@ -574,7 +597,12 @@ function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
   const seen = new Set<string>()
   return entities.filter((entity) => {
     const creatorKey = normalizeSearchText(entity.creatorValue.replace(/^[^:]+:\s*/, ''))
-    const key = `${entity.type}:${normalizeSearchText(entity.title)}:${creatorKey}`
+    const gameYear = entity.type === 'game'
+      ? entity.metadataResult?.year || entity.universalEntity?.gameMetadata?.releaseDate?.match(/\b\d{4}\b/)?.[0]
+      : undefined
+    const key = entity.type === 'game'
+      ? `${entity.type}:${normalizeSearchText(entity.title)}:${gameYear || creatorKey}`
+      : `${entity.type}:${normalizeSearchText(entity.title)}:${creatorKey}`
     const idKey = entity.id.toLowerCase()
     if (seen.has(idKey) || seen.has(key)) return false
     seen.add(idKey)
@@ -632,12 +660,18 @@ function decodeRouteSegment(value: string) {
 }
 
 function inferEntityTypeFromId(entityId: string): MediaEntityType {
-  if (entityId.startsWith('song-')) return 'song'
-  if (entityId.startsWith('album-') || entityId.includes('ep')) return 'album'
-  if (entityId.startsWith('book-')) return 'book'
-  if (entityId.startsWith('movie-') || entityId.startsWith('film-')) return 'movie'
-  if (entityId.startsWith('tv-') || entityId.startsWith('show-')) return 'tv'
-  if (entityId.startsWith('game-') || entityId.startsWith('rawg:game:')) return 'game'
+  if (entityId.startsWith('itunes:song:') || entityId.startsWith('song-')) return 'song'
+  if (entityId.startsWith('itunes:album:') || entityId.startsWith('album-') || entityId.includes('ep')) return 'album'
+  if (entityId.startsWith('itunes:artist:')) return 'artist'
+  if (entityId.startsWith('googlebooks:book:') || entityId.startsWith('book-')) return 'book'
+  if (entityId.startsWith('tmdb:movie:') || entityId.startsWith('movie-') || entityId.startsWith('film-')) return 'movie'
+  if (entityId.startsWith('tmdb:tv:') || entityId.startsWith('tv-') || entityId.startsWith('show-')) return 'tv'
+  if (
+    entityId.startsWith('game-') ||
+    entityId.startsWith('igdb:game:') ||
+    entityId.startsWith('rawg:game:') ||
+    entityId.startsWith('steam:game:')
+  ) return 'game'
   if (entityId.startsWith('author-')) return 'author'
   if (entityId.startsWith('director-')) return 'director'
   if (entityId.startsWith('actor-')) return 'actor'
@@ -720,6 +754,10 @@ function metadataResultToUniversalEntity(entity: { id: string; metadataResult: M
     artworkUrl: resolveArtworkUrl(result.coverUrl || '', result.title, result.type),
     providerId: result.providerId,
     explicit: result.explicit,
+    preferWikipediaArtwork:
+      result.type === 'game' && (
+        Boolean(result.preferWikipediaArtwork) || /steam/i.test(result.gameMetadata?.metadataSource || '')
+      ),
     gameMetadata: result.gameMetadata,
     description:
       result.summary ||
@@ -737,6 +775,59 @@ function metadataResultToUniversalEntity(entity: { id: string; metadataResult: M
       distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
     },
   }
+}
+
+function localGameMetadataResults(query: string): MetadataResult[] {
+  const normalizedQuery = normalizeSearchText(query)
+  if (!normalizedQuery) return []
+
+  return Object.values(UNIVERSAL_MEDIA_ENTITIES)
+    .filter((entity) => {
+      if (entity.type !== 'game') return false
+      const normalizedTitle = normalizeSearchText(entity.name)
+      return normalizedTitle.includes(normalizedQuery) || normalizedQuery.includes(normalizedTitle)
+    })
+    .map((entity) => {
+      const developer = entity.gameMetadata?.developers?.join(', ')
+      const publisher = entity.gameMetadata?.publishers?.join(', ')
+      const genres = entity.gameMetadata?.genres?.join(', ')
+      return {
+        id: entity.id,
+        type: 'game' as const,
+        title: entity.name,
+        creator: developer || publisher || 'Game',
+        provider: genres || entity.categoryLabel,
+        providerId: entity.providerId || entity.id,
+        genre: genres,
+        coverUrl: resolveArtworkUrl(entity.artworkUrl, entity.name, 'Game'),
+        year: entity.gameMetadata?.releaseDate?.match(/\b\d{4}\b/)?.[0],
+        summary: entity.description,
+        gameMetadata: entity.gameMetadata,
+      }
+    })
+    .sort((left, right) => scoreGameTitleMatch(right.title, query) - scoreGameTitleMatch(left.title, query))
+}
+
+function mergeMetadataSearchResults(...groups: MetadataResult[][]) {
+  const flattened = groups.flat()
+  const steamArtworkFallbackActive = flattened.some((result) =>
+    result.type === 'game' && (
+      Boolean(result.preferWikipediaArtwork) || /steam/i.test(result.gameMetadata?.metadataSource || '')
+    ),
+  )
+  const seen = new Set<string>()
+  return flattened
+    .filter((result) => {
+      const key = result.type === 'game'
+        ? `${result.type}:${normalizeSearchText(result.title)}:${result.year || result.providerId || result.id}`
+        : `${result.type}:${result.providerId || result.id}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((result) => steamArtworkFallbackActive && result.type === 'game'
+      ? { ...result, preferWikipediaArtwork: true }
+      : result)
 }
 
 function draftFromMetadata(
@@ -760,6 +851,10 @@ function draftFromMetadata(
     coverUrl: resolveArtworkUrl(result.coverUrl, result.title, result.type),
     summary: result.summary,
     explicit: result.explicit,
+    preferWikipediaArtwork:
+      result.type === 'game' && (
+        Boolean(result.preferWikipediaArtwork) || /steam/i.test(result.gameMetadata?.metadataSource || '')
+      ),
     coverTone: getDefaultCoverTone(result.type),
   }
 }
@@ -885,7 +980,7 @@ const MOCK_EXTERNAL_PROFILES: Record<string, { profile: UserProfileState; entrie
         createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),
         updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),
         coverTone: 'rose',
-        coverUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/8b/ef/07/8bef075b-e48f-3617-e854-3c8297b830d1/634904032429.png/1000x1000bb.jpg',
+        coverUrl: 'https://is2-ssl.mzstatic.com/image/thumb/Music115/v4/9a/4f/8a/9a4f8a4b-0254-d5ab-74b5-ebe39bbbe85d/634904032463.png/1000x1000bb.jpg',
         authorHandle: 'marcus_v',
         authorName: 'Marcus Vance',
         authorAvatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop',
@@ -942,7 +1037,7 @@ function AppContent() {
   const [selectedProfileHandle, setSelectedProfileHandle] = useState<string | null>(null)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
   const [selectedEntityType, setSelectedEntityType] = useState<MediaEntityType | null>(null)
-  const [, setEntityBreadcrumb] = useState<string[]>([])
+  const [entityBreadcrumb, setEntityBreadcrumb] = useState<string[]>([])
   const [searchTab, setSearchTab] = useState<'media' | 'users'>('media')
   const [headerMediaResults, setHeaderMediaResults] = useState<MetadataResult[]>([])
   const [headerMediaSearchLoading, setHeaderMediaSearchLoading] = useState(false)
@@ -956,8 +1051,8 @@ function AppContent() {
   const getPathForEntity = (entityId: string, entityType?: MediaEntityType) => {
     const resolvedType =
       entityType ||
-      searchEntityCacheRef.current.get(entityId)?.type ||
       UNIVERSAL_MEDIA_ENTITIES[entityId]?.type ||
+      searchEntityCacheRef.current.get(entityId)?.type ||
       (MOCK_ENTITY_PROFILES[entityId]?.type as MediaEntityType | undefined) ||
       inferEntityTypeFromId(entityId)
 
@@ -967,8 +1062,8 @@ function AppContent() {
   const handleOpenEntity = (entityId: string, entityType?: MediaEntityType) => {
     const resolvedType =
       entityType ||
-      searchEntityCacheRef.current.get(entityId)?.type ||
       UNIVERSAL_MEDIA_ENTITIES[entityId]?.type ||
+      searchEntityCacheRef.current.get(entityId)?.type ||
       (MOCK_ENTITY_PROFILES[entityId]?.type as MediaEntityType | undefined) ||
       inferEntityTypeFromId(entityId)
 
@@ -1018,28 +1113,28 @@ function AppContent() {
   }
 
   const handleEntityBack = () => {
-    setEntityBreadcrumb((prev) => {
-      const next = [...prev]
-      const previousEntityId = next.pop()
-      if (previousEntityId) {
-        const previousEntityType =
-          searchEntityCacheRef.current.get(previousEntityId)?.type ||
-          UNIVERSAL_MEDIA_ENTITIES[previousEntityId]?.type ||
-          (MOCK_ENTITY_PROFILES[previousEntityId]?.type as MediaEntityType | undefined) ||
-          inferEntityTypeFromId(previousEntityId)
-        setSelectedEntityId(previousEntityId)
-        setSelectedEntityType(previousEntityType)
-        setActiveView('entity')
-        navigate(getEntityRoutePath(previousEntityId, previousEntityType))
-        return next
-      }
+    const previousEntityId = entityBreadcrumb.at(-1)
 
-      setSelectedEntityId(null)
-      setSelectedEntityType(null)
-      setActiveView('feed')
-      navigate('/')
-      return []
-    })
+    if (previousEntityId) {
+      const previousEntityType =
+        UNIVERSAL_MEDIA_ENTITIES[previousEntityId]?.type ||
+        searchEntityCacheRef.current.get(previousEntityId)?.type ||
+        (MOCK_ENTITY_PROFILES[previousEntityId]?.type as MediaEntityType | undefined) ||
+        inferEntityTypeFromId(previousEntityId)
+
+      setEntityBreadcrumb(entityBreadcrumb.slice(0, -1))
+      setSelectedEntityId(previousEntityId)
+      setSelectedEntityType(previousEntityType)
+      setActiveView('entity')
+      navigate(getEntityRoutePath(previousEntityId, previousEntityType))
+      return
+    }
+
+    setEntityBreadcrumb([])
+    setSelectedEntityId(null)
+    setSelectedEntityType(null)
+    setActiveView('feed')
+    navigate('/')
   }
 
   const handleHome = () => {
@@ -1260,7 +1355,7 @@ function AppContent() {
 
     Object.values(MOCK_ENTITY_PROFILES).forEach((profile) => {
       if (profile.coverUrl) {
-        entityImageCacheMap.set(profile.id, profile.coverUrl)
+        entityImageCacheMap.set(profile.id, resolveArtworkUrl(profile.coverUrl, profile.title, profile.type))
       }
     })
   }, [])
@@ -1345,6 +1440,11 @@ function AppContent() {
     if (!normalizedQuery) return []
 
     const isYearQuery = /^\d{4}$/.test(normalizedQuery)
+    const steamArtworkFallbackActive = headerMediaResults.some((result) =>
+      result.type === 'game' && (
+        Boolean(result.preferWikipediaArtwork) || /steam/i.test(result.gameMetadata?.metadataSource || '')
+      ),
+    )
 
     const localProfileResults = Object.values(UNIVERSAL_MEDIA_ENTITIES)
       .filter((entity) => {
@@ -1372,15 +1472,21 @@ function AppContent() {
       })
       .map((entity, index) => {
         const searchEntity = universalEntityToSearchEntity(entity, index)
-        if (entity.type !== 'game' || searchEntity.artworkUrl) return searchEntity
+        if (entity.type !== 'game') return searchEntity
 
-        const normalizedTitle = normalizeSearchText(entity.name)
-        const rawgMatch = headerMediaResults.find(
-          (result) => result.type === 'game' && normalizeSearchText(result.title) === normalizedTitle,
-        )
-        return rawgMatch?.coverUrl
-          ? { ...searchEntity, artworkUrl: resolveArtworkUrl(rawgMatch.coverUrl, entity.name, entity.type) }
+        const gameSearchEntity = steamArtworkFallbackActive
+          ? { ...searchEntity, preferWikipediaArtwork: true }
           : searchEntity
+        if (gameSearchEntity.artworkUrl) return gameSearchEntity
+
+        const gameMetadataMatch = headerMediaResults
+          .filter((result) => result.type === 'game')
+          .map((result) => ({ result, score: scoreGameTitleMatch(result.title, entity.name) }))
+          .sort((a, b) => b.score - a.score)
+          .find((item) => item.score > 1000)?.result
+        return gameMetadataMatch?.coverUrl
+          ? { ...gameSearchEntity, artworkUrl: resolveArtworkUrl(gameMetadataMatch.coverUrl, entity.name, entity.type) }
+          : gameSearchEntity
       })
 
     const typeRankCounters: Record<string, number> = {}
@@ -2119,8 +2225,8 @@ function AppContent() {
 
   if (activeView === 'entity' && selectedEntityId) {
     let universalEntity: UniversalMediaEntity | null =
-      searchEntityCacheRef.current.get(selectedEntityId) ||
       UNIVERSAL_MEDIA_ENTITIES[selectedEntityId] ||
+      searchEntityCacheRef.current.get(selectedEntityId) ||
       persistedEntityCache[selectedEntityId] ||
       (MOCK_ENTITY_PROFILES[selectedEntityId]
         ? {
@@ -2141,24 +2247,22 @@ function AppContent() {
               count: 2413,
               distribution: { 5: 85, 4: 11, 3: 3, 2: 1, 1: 0 },
             },
-            primaryCollection: {
-              title: MOCK_ENTITY_PROFILES[selectedEntityId].topItemsTitle,
-              items: MOCK_ENTITY_PROFILES[selectedEntityId].topItems.map((item, idx) => ({
-                id: item.id,
-                rank: idx + 1,
-                title: item.name,
-                subtitle: item.detail,
-                rating: item.rating,
-              })),
-            },
           }
         : null)
 
     if (!universalEntity) {
       const mapItem = albumEntityMap.get(selectedEntityId) || albumEntityMap.get(selectedEntityId.toLowerCase())
+      const igdbGameMatch = selectedEntityId.match(/^igdb:game:(.+)$/i)
+      const steamGameMatch = selectedEntityId.match(/^steam:game:(.+)$/i)
+      const trackIdMatch = selectedEntityId.match(/^song-(\d+)$/i)
+      const albumIdMatch = selectedEntityId.match(/^album-(\d+)$/i)
+
       const cleanName = mapItem
         ? mapItem.name
         : selectedEntityId
+            .replace(/^igdb:game:/i, '')
+            .replace(/^steam:game:/i, '')
+            .replace(/^game-/i, '')
             .replace(/^album-\d+/i, '')
             .replace(/^album-/i, '')
             .replace(/^song-\d+/i, '')
@@ -2169,25 +2273,42 @@ function AppContent() {
       const fallbackType = selectedEntityType || inferEntityTypeFromId(selectedEntityId)
       const isSong = fallbackType === 'song'
       const isAlbum = fallbackType === 'album'
-      const trackIdMatch = selectedEntityId.match(/^song-(\d+)$/i)
-      const albumIdMatch = selectedEntityId.match(/^album-(\d+)$/i)
+      const isGame = fallbackType === 'game'
+
+      const providerId = trackIdMatch
+        ? trackIdMatch[1]
+        : albumIdMatch
+          ? albumIdMatch[1]
+          : igdbGameMatch
+            ? igdbGameMatch[1]
+            : steamGameMatch
+              ? steamGameMatch[1]
+              : undefined
+
+      const gameMetadata = isGame
+        ? {
+            metadataSource: igdbGameMatch ? 'IGDB' : steamGameMatch ? 'Steam Store' : 'IGDB',
+            metadataUpdatedAt: new Date().toISOString(),
+          }
+        : undefined
 
       universalEntity = {
         id: selectedEntityId,
         name: cleanName,
         type: fallbackType,
         categoryLabel: fallbackType === 'movie' ? 'Film' : fallbackType.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-        providerId: trackIdMatch ? trackIdMatch[1] : albumIdMatch ? albumIdMatch[1] : undefined,
+        providerId,
         explicit: mapItem?.explicit,
+        preferWikipediaArtwork: isGame && Boolean(steamGameMatch),
+        gameMetadata,
         artworkUrl: resolveArtworkUrl(
-          mapItem?.artworkUrl ||
-          '',
+          mapItem?.artworkUrl || '',
           cleanName,
           isSong ? 'Song' : isAlbum ? 'Album' : fallbackType,
         ),
         description: `Official catalog entry for ${cleanName} in The Commonplace community reflections archive.`,
         metadataChips: [
-          { label: isAlbum || isSong ? 'Artist' : 'Creator', value: mapItem?.artist || 'Unknown' },
+          { label: isAlbum || isSong ? 'Artist' : isGame ? 'Studio' : 'Creator', value: mapItem?.artist || 'Unknown' },
           { label: 'Category', value: fallbackType === 'movie' ? 'Film' : fallbackType.replace('_', ' ') },
           { label: 'Release Year', value: mapItem?.year || '2023' },
           ...(mapItem?.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
@@ -2727,6 +2848,7 @@ function EntryComposer({
         coverUrl: entry.coverUrl,
         summary: entry.summary,
         explicit: entry.explicit,
+        preferWikipediaArtwork: entry.preferWikipediaArtwork,
         coverTone: entry.coverTone,
       }
     : initialDraftSeed || emptyDraft
@@ -2835,6 +2957,9 @@ function EntryComposer({
     const normalizedQuery = metadataQuery.trim()
     const isSelectedValue =
       draft.providerId && normalizedQuery === draft.title.trim()
+    const localGameResults = draft.type === 'game'
+      ? localGameMetadataResults(normalizedQuery)
+      : []
 
     if (normalizedQuery.length < 2 || isSelectedValue) {
       setSearchStatus('idle')
@@ -2846,14 +2971,21 @@ function EntryComposer({
     // Instant return if result is already cached
     const cached = getCachedMetadata(draft.type, normalizedQuery)
     if (cached) {
-      setMetadataResults(cached)
+      setMetadataResults(mergeMetadataSearchResults(localGameResults, cached))
       setSearchStatus('ready')
       setStatusMessage('')
       return
     }
 
-    setSearchStatus('searching')
-    setStatusMessage('Searching')
+    if (localGameResults.length > 0) {
+      setMetadataResults(localGameResults)
+      setSearchStatus('ready')
+      setStatusMessage('')
+    } else {
+      setMetadataResults([])
+      setSearchStatus('searching')
+      setStatusMessage('Searching')
+    }
 
     let cancelled = false
     const abortController = new AbortController()
@@ -2862,17 +2994,28 @@ function EntryComposer({
       searchMetadata(draft.type, normalizedQuery, abortController.signal)
         .then((results) => {
           if (cancelled) return
-          setMetadataResults(results)
+          const mergedResults = mergeMetadataSearchResults(localGameResults, results)
+          setMetadataResults(mergedResults)
           setSearchStatus('ready')
           setStatusMessage(
-            results.length > 0 ? '' : 'No results found. You can still fill details manually.',
+            mergedResults.length > 0 ? '' : 'No results found. You can still fill details manually.',
           )
         })
         .catch((err: unknown) => {
           if (cancelled || (err instanceof Error && err.name === 'AbortError')) return
+          if (localGameResults.length > 0) {
+            setMetadataResults(localGameResults)
+            setSearchStatus('ready')
+            setStatusMessage('')
+            return
+          }
           setSearchStatus('error')
           setStatusMessage(
-            err instanceof Error ? err.message : 'Failed to search metadata API.',
+            draft.type === 'game'
+              ? 'Game search services are temporarily unavailable. Please try again shortly.'
+              : err instanceof Error
+                ? err.message
+                : 'Failed to search metadata API.',
           )
         })
     }, 120)
@@ -2912,6 +3055,7 @@ function EntryComposer({
       providerId: '',
       coverUrl: undefined,
       summary: undefined,
+      preferWikipediaArtwork: undefined,
       favoritePassage: isMusicEntry ? '' : cur.favoritePassage,
     }))
     setSelectedLyricIndexes([])
@@ -3080,7 +3224,18 @@ function EntryComposer({
                                 : 'metadata-thumb'
                             }
                           >
-                            {result.coverUrl ? (
+                            {result.type === 'game' ? (
+                              <AdaptiveGameArtwork
+                                src={result.coverUrl}
+                                title={result.title}
+                                preferWikipedia={
+                                  Boolean(result.preferWikipediaArtwork) ||
+                                  /steam/i.test(result.gameMetadata?.metadataSource || '')
+                                }
+                                frameAspect={2 / 3}
+                                alt=""
+                              />
+                            ) : result.coverUrl ? (
                               <img src={resolveArtworkUrl(result.coverUrl, result.title, result.type)} alt="" />
                             ) : (
                               <Search aria-hidden="true" />
@@ -3114,7 +3269,15 @@ function EntryComposer({
                       : 'selected-cover'
                   }
                 >
-                  {draft.coverUrl ? (
+                  {draft.type === 'game' ? (
+                    <AdaptiveGameArtwork
+                      src={draft.coverUrl}
+                      title={draft.title}
+                      preferWikipedia={draft.preferWikipediaArtwork}
+                      frameAspect={2 / 3}
+                      alt=""
+                    />
+                  ) : draft.coverUrl ? (
                     <img src={resolveArtworkUrl(draft.coverUrl, draft.title, draft.type)} alt="" />
                   ) : (
                     <BookOpen aria-hidden="true" />

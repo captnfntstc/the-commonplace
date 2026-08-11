@@ -7,13 +7,34 @@ const PROXIED_IMAGE_HOSTS = [
 
 const DEV_IMAGE_PROXY_HOSTS: Array<{ pattern: RegExp; prefix: string }> = [
   { pattern: /^cdn\.cloudflare\.steamstatic\.com$/i, prefix: '/steam-images' },
+  { pattern: /^kotaku\.com$/i, prefix: '/kotaku-images' },
   { pattern: /^www\.ireddead\.com$/i, prefix: '/ireddead-images' },
   { pattern: /^image\.api\.playstation\.com$/i, prefix: '/playstation-store-images' },
   { pattern: /^gmedia\.playstation\.com$/i, prefix: '/playstation-media-images' },
   { pattern: /^media\.valorant-api\.com$/i, prefix: '/valorant-images' },
   { pattern: /^ddragon\.leagueoflegends\.com$/i, prefix: '/league-images' },
   { pattern: /^media\.rawg\.io$/i, prefix: '/rawg-images' },
+  { pattern: /^cdn2\.steamgriddb\.com$/i, prefix: '/steamgriddb-images' },
+  { pattern: /^cdn\.shopify\.com$/i, prefix: '/shopify-images' },
 ]
+
+export function isLikelyRetailCaseArtworkUrl(url?: string | null, label?: string) {
+  if (!url || url.startsWith('data:') || url.startsWith('/')) return false
+  if (label && !/(game|playstation|xbox|nintendo|switch|pc)/i.test(label)) return false
+
+  try {
+    const parsed = new URL(url)
+    const haystack = `${parsed.hostname} ${parsed.pathname} ${parsed.search}`.toLowerCase()
+    const retailHost = /(shopify|walmart|bestbuy|ebay|gamestop|amazon|target|store|product)/i.test(parsed.hostname)
+    const platformCase =
+      /\bps[345]\b|playstation[-_\s]?[345]|xbox[-_\s]?(one|series|360)|nintendo[-_\s]?switch|switch[-_\s]case/.test(haystack)
+    const retailImageTerms = /case|box|packshot|product|sku|front[-_\s]?cover|game[-_\s]?card|physical/.test(haystack)
+
+    return (retailHost && platformCase) || (platformCase && retailImageTerms)
+  } catch {
+    return false
+  }
+}
 
 export function isBlockedArtworkUrl(url?: string | null) {
   if (!url || url.startsWith('data:') || url.startsWith('/')) return false
@@ -88,6 +109,7 @@ export function createArtworkPlaceholder(title = 'Artwork', label = 'Album') {
 
 export function resolveArtworkUrl(url?: string | null, _title?: string, _label?: string) {
   if (!url) return ''
+  if (isLikelyRetailCaseArtworkUrl(url, _label)) return ''
 
   if (import.meta.env.DEV && !url.startsWith('data:') && !url.startsWith('/')) {
     try {

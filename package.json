@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node server.mjs",
+    "test": "node --test server/*.test.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

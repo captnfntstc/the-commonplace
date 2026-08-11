@@ -31,6 +31,7 @@ import {
   type UniversalMediaEntity,
   type MediaEntityType,
   type RelatedEntityItem,
+  type GameMetadata,
   getEntityTabs,
 } from '../types/mediaEntity'
 import {
@@ -44,6 +45,8 @@ import {
   fetchItunesSongArtwork,
   entityImageCacheMap,
   albumEntityMap,
+  scoreGameTitleMatch,
+  fetchGameDetails,
   type MetadataType,
 } from '../metadata'
 import type { MetadataChip, CollectionItem, TopContentItem } from '../types/mediaEntity'
@@ -56,9 +59,11 @@ import {
   GameInfoTab,
   PlatformsReleasesTab,
 } from '../components/GameProfile/GameProfileSections'
+import { AdaptiveGameArtwork } from '../components/GameArtwork/AdaptiveGameArtwork'
 
 type ScoredRelatedEntityItem = RelatedEntityItem & {
   sortScore?: number
+  preferWikipediaArtwork?: boolean
 }
 
 interface UniversalMediaProfilePageProps {
@@ -644,15 +649,6 @@ const SimilarGameTile: React.FC<{
   item: ScoredRelatedEntityItem
   onNavigate?: (entityId: string, entityType?: MediaEntityType) => void
 }> = ({ item, onNavigate }) => {
-  const fallbackArtwork = createArtworkPlaceholder(item.title, 'Game')
-  const [artwork, setArtwork] = useState(
-    resolveArtworkUrl(item.artworkUrl, item.title, 'Game') || fallbackArtwork,
-  )
-
-  useEffect(() => {
-    setArtwork(resolveArtworkUrl(item.artworkUrl, item.title, 'Game') || fallbackArtwork)
-  }, [fallbackArtwork, item.artworkUrl, item.title])
-
   return (
     <button
       type="button"
@@ -661,14 +657,15 @@ const SimilarGameTile: React.FC<{
       aria-label={`Open ${item.title} game profile`}
     >
       <span className="related-album-art-frame similar-game-art-frame">
-        <img
-          src={artwork}
+        <AdaptiveGameArtwork
+          src={item.artworkUrl}
+          title={item.title}
+          preferWikipedia={item.preferWikipediaArtwork}
           alt={item.title}
           className="collection-thumb"
           loading="eager"
           decoding="async"
           referrerPolicy="no-referrer"
-          onError={() => setArtwork(fallbackArtwork)}
         />
       </span>
       <span className="related-album-title">{item.title}</span>
@@ -880,6 +877,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const [liveSongAppearances, setLiveSongAppearances] = useState<CollectionItem[] | null>(null)
   const [liveArtistDiscographies, setLiveArtistDiscographies] = useState<Record<string, CollectionItem[]>>({})
   const [liveSongLyrics, setLiveSongLyrics] = useState<string | null>(null)
+  const [liveGameMetadata, setLiveGameMetadata] = useState<GameMetadata | null>(null)
+  const [gameArtworkFallbackActive, setGameArtworkFallbackActive] = useState(false)
 
   useEffect(() => {
     let isMounted = true
@@ -891,12 +890,47 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     setLiveSongAppearances(null)
     setLiveArtistDiscographies({})
     setLiveSongLyrics(null)
+    setLiveGameMetadata(null)
+    setGameArtworkFallbackActive(false)
     setApiSummary(null)
 
     const cachedForEntity =
       entityImageCacheMap.get(imageCacheKey) ||
       null
     setApiCoverUrl(cachedForEntity)
+
+    const gameMetadataSource = entity.gameMetadata?.metadataSource || ''
+    const hasApiGameIdentity =
+      entity.type === 'game' &&
+      Boolean(entity.providerId) &&
+      (entity.id.startsWith('igdb:game:') ||
+        entity.id.startsWith('steam:game:') ||
+        /igdb|steam/i.test(gameMetadataSource))
+
+    if (hasApiGameIdentity && entity.providerId) {
+      setIsLoadingApi(true)
+      fetchGameDetails(entity.providerId, gameMetadataSource)
+        .then((details) => {
+          if (!isMounted) return
+          if (!details) {
+            if (/igdb/i.test(gameMetadataSource)) setGameArtworkFallbackActive(true)
+            return
+          }
+          if (details.coverUrl) {
+            const safeCoverUrl = resolveArtworkUrl(details.coverUrl, details.title, 'Game')
+            entityImageCacheMap.set(imageCacheKey, safeCoverUrl)
+            setApiCoverUrl(safeCoverUrl)
+          }
+          if (details.summary) setApiSummary(details.summary)
+          if (details.gameMetadata) setLiveGameMetadata(details.gameMetadata)
+        })
+        .catch(() => {
+          if (isMounted && /igdb/i.test(gameMetadataSource)) setGameArtworkFallbackActive(true)
+        })
+        .finally(() => {
+          if (isMounted) setIsLoadingApi(false)
+        })
+    }
 
     if (entity.type === 'artist') {
       fetchItunesDiscography(entity.name)
@@ -1000,29 +1034,43 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         .finally(() => {
           if (isMounted) setIsLoadingApi(false)
         })
-    } else if (!existingCache && !(entity.type === 'game' && entity.gameMetadata && entity.artworkUrl)) {
-      setIsLoadingApi(true)
-      const metaType = mapToMetaType(entity.type)
-      searchMetadata(metaType, entity.name)
-        .then((results) => {
-          if (!isMounted) return
-          if (results && results.length > 0) {
-            const match = entity.type === 'game'
-              ? results.find((result) => result.title.localeCompare(entity.name, undefined, { sensitivity: 'base' }) === 0) || results[0]
-              : results[0]
-            if (match.coverUrl) {
-              const safeCoverUrl = resolveArtworkUrl(match.coverUrl, entity.name, entity.categoryLabel)
-              entityImageCacheMap.set(imageCacheKey, safeCoverUrl)
-              setApiCoverUrl(safeCoverUrl)
-            }
-            if (match.summary) setApiSummary(match.summary)
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (isMounted) setIsLoadingApi(false)
-        })
     }
+
+    setIsLoadingApi(true)
+    const metaType = mapToMetaType(entity.type)
+    searchMetadata(metaType, entity.name)
+      .then((results) => {
+        if (!isMounted) return
+        if (results && results.length > 0) {
+          const match = entity.type === 'game'
+            ? [...results]
+                .map((result) => ({ result, score: scoreGameTitleMatch(result.title, entity.name) }))
+                .sort((a, b) => b.score - a.score)
+                .find((item) => item.score > 1000)?.result || results[0]
+            : results[0]
+
+          if (match?.coverUrl) {
+            const safeCoverUrl = resolveArtworkUrl(match.coverUrl, entity.name, entity.categoryLabel)
+            entityImageCacheMap.set(imageCacheKey, safeCoverUrl)
+            setApiCoverUrl(safeCoverUrl)
+          }
+          if (match?.summary) {
+            setApiSummary(match.summary)
+          }
+          if (match?.gameMetadata) {
+            setLiveGameMetadata(match.gameMetadata)
+          }
+
+          const newChips = buildChipsFromMetadataResult(match, entity.type)
+          if (newChips.length > 0) {
+            setLiveAlbumChips((prev) => prev || newChips)
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (isMounted) setIsLoadingApi(false)
+      })
 
     return () => {
       isMounted = false
@@ -1031,7 +1079,9 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
   const fallbackArtwork = createArtworkPlaceholder(entity.name, entity.categoryLabel)
   const preferredArtworkUrl = entity.type === 'game'
-    ? entity.artworkUrl || apiCoverUrl
+    ? liveGameMetadata
+      ? apiCoverUrl || entity.artworkUrl
+      : entity.artworkUrl || apiCoverUrl
     : apiCoverUrl || entity.artworkUrl
   const displayArtwork = resolveArtworkUrl(preferredArtworkUrl, entity.name, entity.categoryLabel) || fallbackArtwork
   const heroArtworkSrc = failedHeroArtworkUrl === displayArtwork ? fallbackArtwork : displayArtwork
@@ -1160,9 +1210,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
   const relatedItemsToDisplay = useMemo<ScoredRelatedEntityItem[]>(() => {
     if (entity.type === 'game') {
+      if (entity.relatedEntities?.items && entity.relatedEntities.items.length > 0) {
+        return entity.relatedEntities.items
+      }
       const currentGenreProfile = getGameGenreProfile(entity)
 
-      return Object.values(UNIVERSAL_MEDIA_ENTITIES)
+      const matches = Object.values(UNIVERSAL_MEDIA_ENTITIES)
         .filter((candidate) => candidate.type === 'game' && candidate.id !== entity.id)
         .map((candidate) => {
           const candidateGenreProfile = getGameGenreProfile(candidate)
@@ -1179,6 +1232,9 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             subtitle: candidateGenreProfile.label,
             artworkUrl: candidate.artworkUrl,
             type: candidate.type,
+            preferWikipediaArtwork:
+              Boolean(candidate.preferWikipediaArtwork) ||
+              /steam/i.test(candidate.gameMetadata?.metadataSource || ''),
             sortScore:
               sharedLabels * 300 +
               sharedTokens * 100 +
@@ -1188,6 +1244,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         .filter((item) => (item.sortScore || 0) >= 100)
         .sort((a, b) => (b.sortScore || 0) - (a.sortScore || 0))
         .slice(0, 4)
+
+      return matches.length > 0 ? matches : (entity.relatedEntities?.items || [])
     }
 
     if (entity.type !== 'artist') {
@@ -1259,7 +1317,14 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const ratingAverage = entity.communityRating?.average ?? 4.8
   const ratingCount = entity.communityRating?.count ?? 1200
   const ratingDistribution = entity.communityRating?.distribution ?? { 5: 85, 4: 11, 3: 3, 2: 1, 1: 0 }
-  const gameMetadata = useMemo(() => normalizeGameMetadata(entity), [entity])
+  const gameMetadata = useMemo(
+    () => normalizeGameMetadata(
+      liveGameMetadata
+        ? { ...entity, gameMetadata: { ...entity.gameMetadata, ...liveGameMetadata } }
+        : entity,
+    ),
+    [entity, liveGameMetadata],
+  )
 
   const glanceItems = useMemo(() => {
     const yearChip = chipsToDisplay.find((chip) => /year|since|release/i.test(chip.label))
@@ -1361,16 +1426,34 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         {/* Left Column: Artwork / Photo */}
         <div className="media-hero-left">
           <div className={`media-artwork-container ${entity.type === 'album' || entity.type === 'song' ? 'is-square-artwork' : ''}`}>
-            <img
-              src={heroArtworkSrc}
-              alt={entity.name}
-              className="media-artwork-img"
-              referrerPolicy="no-referrer"
-              loading="eager"
-              fetchPriority="high"
-              decoding="async"
-              onError={() => setFailedHeroArtworkUrl(displayArtwork)}
-            />
+            {entity.type === 'game' ? (
+              <AdaptiveGameArtwork
+                src={heroArtworkSrc}
+                title={entity.name}
+                preferWikipedia={
+                  gameArtworkFallbackActive ||
+                  Boolean(entity.preferWikipediaArtwork) ||
+                  /steam/i.test(gameMetadata.metadataSource || '')
+                }
+                alt={entity.name}
+                className="media-artwork-img"
+                referrerPolicy="no-referrer"
+                loading="eager"
+                fetchPriority="high"
+                decoding="async"
+              />
+            ) : (
+              <img
+                src={heroArtworkSrc}
+                alt={entity.name}
+                className="media-artwork-img"
+                referrerPolicy="no-referrer"
+                loading="eager"
+                fetchPriority="high"
+                decoding="async"
+                onError={() => setFailedHeroArtworkUrl(displayArtwork)}
+              />
+            )}
             {isLoadingApi && (
               <div className="media-artwork-loader">
                 <Loader2 size={20} className="spin-icon" />

@@ -288,7 +288,7 @@ export const ApiUsageTracker: React.FC<ApiUsageTrackerProps> = ({
           <option value="tv">TV Shows (TMDB)</option>
           <option value="song">Songs (iTunes)</option>
           <option value="album">Albums (iTunes)</option>
-          <option value="game">Games (RAWG)</option>
+          <option value="game">Games (IGDB)</option>
           <option value="lyrics">Lyrics (LRCLIB)</option>
         </select>
         <input

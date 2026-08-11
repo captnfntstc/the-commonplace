@@ -39,17 +39,28 @@ VITE_APP_CONTACT=your_email@example.com
 
 Lyrics are fetched only for songs after a song result is selected. Albums use a freeform passage field for now.
 
-## RAWG Games
+## IGDB Games
 
-Current app status: game metadata and artwork use RAWG directly.
+Game metadata and cover artwork come from IGDB through the app's server-side
+proxy. The browser never receives the Twitch client secret. Steam remains a
+fallback when IGDB is unavailable and supplies PC-specific metadata for Steam
+records.
 
-1. Create a RAWG API account and key.
-2. Add the key to `.env.local`:
+1. Sign in to the [Twitch Developer Console](https://dev.twitch.tv/console/apps),
+   enable two-factor authentication, and register an application.
+2. Create a client secret for the application.
+3. Add both server-only values to `.env.local` for local development:
 
 ```env
-VITE_RAWG_API_KEY=your_rawg_api_key
+IGDB_CLIENT_ID=your_twitch_application_client_id
+IGDB_CLIENT_SECRET=your_twitch_application_client_secret
 ```
 
-Game search uses RAWG's `background_image`, then its first screenshot. When RAWG
-does not return artwork, the app uses a generated local placeholder instead of
-calling another image API.
+Do not prefix these values with `VITE_`; Vite-prefixed variables are included in
+the browser bundle. For Render, configure the same two secrets in the service's
+Environment settings. They are declared with `sync: false` in `render.yaml`.
+
+The IGDB adapter groups versions, ports, and remasters under a canonical game.
+Platform-specific dates appear in the release timeline, while remakes remain
+separate games. Cancelled games are filtered from normal catalog and search
+results.

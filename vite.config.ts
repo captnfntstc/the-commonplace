@@ -1,26 +1,43 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
+// @ts-expect-error This JavaScript plugin runs only inside Vite's Node process.
+import { createIgdbDevPlugin } from './server/vite-plugin.mjs'
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(({ mode }) => {
+  const serverEnv = loadEnv(mode, process.cwd(), '')
+
+  return {
+  plugins: [react(), createIgdbDevPlugin(serverEnv)],
   server: {
     host: true,
     port: 5173,
     strictPort: true,
     proxy: {
-      '/rawg-api': {
-        target: 'https://api.rawg.io',
-        changeOrigin: true,
-        secure: true,
-        rewrite: (path) => path.replace(/^\/rawg-api/, '/api'),
-      },
       '/steam-images': {
         target: 'https://cdn.cloudflare.steamstatic.com',
         changeOrigin: true,
         secure: true,
         rewrite: (path) => path.replace(/^\/steam-images/, ''),
+      },
+      '/steam-store-api': {
+        target: 'https://store.steampowered.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/steam-store-api/, '/api'),
+      },
+      '/steam-store-search': {
+        target: 'https://store.steampowered.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/steam-store-search/, ''),
+      },
+      '/kotaku-images': {
+        target: 'https://kotaku.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/kotaku-images/, ''),
       },
       '/ireddead-images': {
         target: 'https://www.ireddead.com',
@@ -58,6 +75,18 @@ export default defineConfig({
         secure: true,
         rewrite: (path) => path.replace(/^\/rawg-images/, ''),
       },
+      '/steamgriddb-images': {
+        target: 'https://cdn2.steamgriddb.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/steamgriddb-images/, ''),
+      },
+      '/shopify-images': {
+        target: 'https://cdn.shopify.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/shopify-images/, ''),
+      },
     },
   },
   build: {
@@ -68,4 +97,5 @@ export default defineConfig({
       },
     },
   },
+  }
 })

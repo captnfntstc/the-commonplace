@@ -5,14 +5,15 @@
 //   🎬 Films/TV   → TMDB API
 //   🎵 Songs      → iTunes Search API + MusicBrainz fallback
 //   💿 Albums     → iTunes Search API + MusicBrainz fallback
-//   🎮 Games      → RAWG
+//   🎮 Games      → IGDB + Steam fallback
 //   🎵 Lyrics     → lrclib.net
 // ─────────────────────────────────────────────────────────────────────────────
 import { logApiCall, type ApiProvider } from './services/apiTracker'
 import { resolveArtworkUrl } from './utils/artwork'
-import type { GameMetadata } from './types/mediaEntity'
+import type { GameMetadata, GameSystemRequirementSet } from './types/mediaEntity'
 import {
   clearBrowserCacheNamespace,
+  deleteBrowserCacheValue,
   getBrowserCacheValue,
   setBrowserCacheValue,
 } from './services/browserCache'
@@ -32,6 +33,11 @@ export type MetadataResult = {
   year?: string
   summary?: string
   explicit?: boolean
+  preferWikipediaArtwork?: boolean
+  /** Game-only relevance returned by the IGDB query matcher. */
+  gameSearchRelevance?: number
+  /** Game-only popularity score derived from IGDB ratings, follows, and hype. */
+  gamePopularity?: number
   gameMetadata?: GameMetadata
   /** Only populated by fetchLyrics — not present in search results */
   lyrics?: string
@@ -1125,6 +1131,78 @@ function isOfficialSongAppearanceCollection(item: ITunesSearchResult, normalized
   return true
 }
 
+export async function fetchWikipediaArtwork(
+  name: string,
+  context: 'game' = 'game',
+  signal?: AbortSignal,
+): Promise<string> {
+  const cleanName = name.trim().toLowerCase()
+  if (!cleanName) return ''
+
+  const cacheKey = `wiki-artwork-v2:${context}:${cleanName}`
+  const existing = entityImageCacheMap.get(cacheKey)
+  if (existing) return existing
+
+  const result = await cachedApiRequest(cacheKey, signal, async () => {
+    try {
+      const url = new URL('https://en.wikipedia.org/w/api.php')
+      const titleCandidates = context === 'game'
+        ? `${name} (video game)|${name}`
+        : name
+      url.searchParams.set('action', 'query')
+      url.searchParams.set('titles', titleCandidates)
+      url.searchParams.set('prop', 'pageimages')
+      url.searchParams.set('piprop', 'thumbnail|original')
+      url.searchParams.set('pithumbsize', '1000')
+      url.searchParams.set('redirects', '1')
+      url.searchParams.set('format', 'json')
+      url.searchParams.set('origin', '*')
+
+      const res = await fetch(url, { signal })
+      if (!res.ok) return ''
+
+      const data = (await res.json()) as {
+        query?: {
+          pages?: Record<string, {
+            title?: string
+            missing?: string
+            thumbnail?: { source?: string }
+            original?: { source?: string }
+          }>
+        }
+      }
+      const normalizedName = normalizeGameTitle(name)
+      const pages = Object.values(data.query?.pages || {})
+        .filter((page) => !page.missing && (page.original?.source || page.thumbnail?.source))
+        .sort((left, right) => {
+          const score = (title?: string) => {
+            const normalizedTitle = normalizeGameTitle(title || '')
+            if (normalizedTitle === normalizedName) return 3
+            if (normalizedTitle.startsWith(normalizedName)) return 2
+            if (normalizedTitle.includes(normalizedName)) return 1
+            return 0
+          }
+          return score(right.title) - score(left.title)
+        })
+      const artworkUrl = pages[0]?.original?.source || pages[0]?.thumbnail?.source || ''
+      if (artworkUrl) {
+        entityImageCacheMap.set(cacheKey, artworkUrl)
+        preloadImage(artworkUrl)
+      }
+      return artworkUrl
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') throw error
+      return ''
+    }
+  })
+
+  if (!result) {
+    apiResponseCache.delete(cacheKey)
+    void deleteBrowserCacheValue(API_CACHE_NAMESPACE, cacheKey)
+  }
+  return result
+}
+
 async function fetchItunesTrackById(trackId?: string, signal?: AbortSignal): Promise<ITunesSearchResult | undefined> {
   if (!/^\d+$/.test(trackId || '')) return undefined
 
@@ -1436,10 +1514,15 @@ type ITunesSearchResult = {
 // ─── Env ──────────────────────────────────────────────────────────────────────
 
 const tmdbToken = import.meta.env.VITE_TMDB_ACCESS_TOKEN as string | undefined
-const rawgApiKey = import.meta.env.VITE_RAWG_API_KEY as string | undefined
-const rawgApiBaseUrl =
-  (import.meta.env.VITE_RAWG_API_BASE_URL as string | undefined) ??
-  (import.meta.env.DEV ? '/rawg-api/games' : 'https://api.rawg.io/api/games')
+const igdbApiBaseUrl =
+  (import.meta.env.VITE_IGDB_API_BASE_URL as string | undefined) ??
+  '/api/igdb/games'
+const steamStoreApiBaseUrl =
+  (import.meta.env.VITE_STEAM_STORE_API_BASE_URL as string | undefined) ??
+  (import.meta.env.DEV ? '/steam-store-api' : 'https://store.steampowered.com/api')
+const steamStoreSearchBaseUrl =
+  (import.meta.env.VITE_STEAM_STORE_SEARCH_BASE_URL as string | undefined) ??
+  (import.meta.env.DEV ? '/steam-store-search' : 'https://store.steampowered.com')
 const googleBooksApiKey = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY as string | undefined
 const appContact =
   (import.meta.env.VITE_APP_CONTACT as string | undefined) ??
@@ -1451,8 +1534,8 @@ const searchCache = new Map<string, MetadataResult[]>()
 const lyricsCache = new Map<string, string | undefined>()
 const apiResponseCache = new Map<string, unknown>()
 const pendingApiRequestCache = new Map<string, Promise<unknown>>()
-const API_CACHE_NAMESPACE = 'external-api-v3'
-const SEARCH_CACHE_NAMESPACE = 'metadata-search-v2'
+const API_CACHE_NAMESPACE = 'external-api-v7'
+const SEARCH_CACHE_NAMESPACE = 'metadata-search-v7'
 const STATIC_METADATA_TTL = 30 * 24 * 60 * 60 * 1000
 const SEARCH_METADATA_TTL = 14 * 24 * 60 * 60 * 1000
 
@@ -1504,7 +1587,7 @@ const providerMap: Record<MetadataType, ApiProvider> = {
   tv: 'TMDB',
   song: 'iTunes',
   album: 'iTunes',
-  game: 'RAWG',
+  game: 'IGDB',
 }
 
 export function getCachedMetadata(
@@ -2288,91 +2371,466 @@ export async function fetchLyrics(
   return undefined
 }
 
-// ─── Games (RAWG) ──────────────────────────────────────────────────────────
+// ─── Games (IGDB + Steam fallback) ─────────────────────────────────────────
 
-type RawgGameItem = {
-  id: number
+type IgdbGameEdition = {
+  providerId: string
   name: string
-  released?: string
-  background_image?: string
-  short_screenshots?: Array<{ image: string }>
-  genres?: Array<{ name: string }>
-  platforms?: Array<{ platform: { name: string } }>
+  type?: string
+  description?: string
+  releaseDate?: string
+  platforms?: string[]
+  coverUrl?: string
 }
 
-async function searchGames(
-  query: string,
-  signal?: AbortSignal,
-): Promise<MetadataResult[]> {
-  const startTime = performance.now()
-  if (!rawgApiKey) {
-    const errorMsg = 'Please add VITE_RAWG_API_KEY to .env.local to search Video Games.'
-    logApiCall({
-      provider: 'RAWG',
-      queryOrUrl: query,
-      status: 'ERROR',
-      latencyMs: 0,
-      resultCount: 0,
-      cacheStatus: 'MISS',
-      error: errorMsg,
-    })
-    throw new Error(errorMsg)
+type IgdbGameItem = {
+  id: number
+  name: string
+  summary?: string
+  firstReleaseDate?: string
+  gameType?: string
+  coverUrl?: string
+  alternativeNames?: string[]
+  popularityScore?: number
+  searchRelevance?: number
+  platforms?: Array<{ platform: string; releaseDate?: string; status?: string }>
+  developers?: string[]
+  publishers?: string[]
+  genres?: string[]
+  gameModes?: string[]
+  franchise?: string
+  ageRating?: string
+  officialWebsite?: string
+  editions?: IgdbGameEdition[]
+  relatedRemakes?: Array<{ id: number; name: string; releaseDate?: string; coverUrl?: string }>
+}
+
+type IgdbGamePage = {
+  results?: IgdbGameItem[]
+  page?: number
+  hasNextPage?: boolean
+}
+
+type StoreRequirements = {
+  minimum?: string
+  recommended?: string
+}
+
+type SteamStoreSearchItem = {
+  id: number
+  name: string
+  tiny_image?: string
+  platforms?: { windows?: boolean; mac?: boolean; linux?: boolean }
+}
+
+type SteamStoreGameDetails = {
+  name: string
+  short_description?: string
+  header_image?: string
+  developers?: string[]
+  publishers?: string[]
+  website?: string
+  required_age?: number | string
+  release_date?: { date?: string }
+  genres?: Array<{ description: string }>
+  categories?: Array<{ description: string }>
+  platforms?: { windows?: boolean; mac?: boolean; linux?: boolean }
+  pc_requirements?: StoreRequirements
+}
+
+export type GameCatalogSearchOptions = {
+  /** Number of IGDB records requested per page. */
+  pageSize?: number
+  /** Maximum pages for an automatically detected series/franchise query. */
+  maxSeriesPages?: number
+  /** Force or disable series expansion. The default detects it from exact title-phrase matches. */
+  seriesMode?: 'auto' | 'always' | 'never'
+}
+
+export type GameCatalogPageRequest = {
+  /** Omit the query to browse the wider IGDB catalog. */
+  query?: string
+  page?: number
+  pageSize?: number
+  ordering?: string
+}
+
+export type GameCatalogPageResult = {
+  results: MetadataResult[]
+  page: number
+  hasNextPage: boolean
+}
+
+const gameEditionSignals = [
+  'part 1',
+  'part 2',
+  'part 3',
+  'left behind',
+  'remastered',
+  'remaster',
+  'remake',
+  'definitive',
+  'complete',
+  'ultimate',
+  'deluxe',
+  'gold',
+  'standard',
+  'director s cut',
+  'directors cut',
+  'goty',
+  'game of the year',
+  'anniversary',
+  'collection',
+  'standalone',
+]
+
+function normalizeGameTitle(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/['’]/g, '')
+    .replace(/\biii\b/g, '3')
+    .replace(/\bii\b/g, '2')
+    .replace(/\bi\b/g, '1')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function gameTitleTokens(value: string) {
+  return new Set(normalizeGameTitle(value).split(' ').filter(Boolean))
+}
+
+function gameEditionTokens(value: string) {
+  const normalized = normalizeGameTitle(value)
+  return gameEditionSignals.filter((signal) => normalized.includes(signal))
+}
+
+export function scoreGameTitleMatch(resultTitle: string, query: string, rawIndex = 0) {
+  const resultNorm = normalizeGameTitle(resultTitle)
+  const queryNorm = normalizeGameTitle(query)
+  const resultTokens = gameTitleTokens(resultTitle)
+  const queryTokens = gameTitleTokens(query)
+  const queryEditionTokens = gameEditionTokens(query)
+  const resultEditionTokens = gameEditionTokens(resultTitle)
+  const queryNumberTokens = Array.from(queryTokens).filter((token) => /^\d+$/.test(token))
+  const resultNumberTokens = Array.from(resultTokens).filter((token) => /^\d+$/.test(token))
+  const missingQueryEdition = queryEditionTokens.filter((token) => !resultEditionTokens.includes(token))
+  const extraResultEdition = resultEditionTokens.filter((token) => !queryEditionTokens.includes(token))
+  const missingQueryNumbers = queryNumberTokens.filter((token) => !resultNumberTokens.includes(token))
+  const extraResultNumbers = resultNumberTokens.filter((token) => !queryNumberTokens.includes(token))
+  const resultTokenList = Array.from(resultTokens)
+  const sharedTokenCount = Array.from(queryTokens).filter((qToken) =>
+    resultTokenList.some((rToken) => rToken === qToken || rToken.startsWith(qToken)),
+  ).length
+  const tokenCoverage = queryTokens.size > 0 ? sharedTokenCount / queryTokens.size : 0
+
+  let score = Math.max(0, 500 - rawIndex * 12)
+
+  if (resultNorm === queryNorm) {
+    score += 7000
+  } else if (resultNorm.startsWith(queryNorm) || queryNorm.startsWith(resultNorm)) {
+    score += 3600
+  } else if (resultNorm.includes(queryNorm) || queryNorm.includes(resultNorm)) {
+    score += 2400
   }
 
-  const url = new URL(rawgApiBaseUrl, window.location.origin)
-  url.searchParams.set('search', query)
-  url.searchParams.set('key', rawgApiKey)
-  url.searchParams.set('page_size', '8')
+  score += Math.round(tokenCoverage * 1400)
+  score += sharedTokenCount * 80
+  score += queryEditionTokens.length * 240
+  score += queryNumberTokens.length * 200
+
+  if (missingQueryEdition.length > 0) score -= 2200 * missingQueryEdition.length
+  if (extraResultEdition.length > 0) score -= 650 * extraResultEdition.length
+  if (missingQueryNumbers.length > 0) score -= 1200 * missingQueryNumbers.length
+  if (extraResultNumbers.length > 0) score -= 450 * extraResultNumbers.length
+  if (queryEditionTokens.length > 0 && resultEditionTokens.length === 0) score -= 1600
+
+  return score
+}
+
+function igdbUrl(pathSuffix = '') {
+  return new URL(`${igdbApiBaseUrl.replace(/\/$/, '')}${pathSuffix}`, window.location.origin)
+}
+
+function steamStoreUrl(path: string) {
+  return new URL(`${steamStoreApiBaseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`, window.location.origin)
+}
+
+function steamStoreSearchUrl(path: string) {
+  return new URL(`${steamStoreSearchBaseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`, window.location.origin)
+}
+
+function gameTitleContainsPhrase(title: string, query: string) {
+  const normalizedTitle = normalizeGameTitle(title)
+  const normalizedQuery = normalizeGameTitle(query)
+  return Boolean(normalizedQuery && (` ${normalizedTitle} `).includes(` ${normalizedQuery} `))
+}
+
+function parseGameRequirements(value?: string) {
+  if (!value) return undefined
+
+  const fields: Record<string, keyof GameSystemRequirementSet> = {
+    os: 'os',
+    processor: 'processor',
+    memory: 'memory',
+    graphics: 'graphics',
+    storage: 'storage',
+    directx: 'directX',
+    network: 'network',
+    'sound card': 'sound',
+    notes: 'additionalNotes',
+    'additional notes': 'additionalNotes',
+  }
+  const parsed: GameSystemRequirementSet = {}
+  const plainText = value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+
+  plainText.split(/\r?\n/).forEach((line) => {
+    const match = line.trim().match(/^([^:]{2,24}):\s*(.+)$/)
+    if (!match) return
+    const field = fields[match[1].trim().toLowerCase()]
+    if (field) parsed[field] = match[2].trim()
+  })
+
+  return Object.keys(parsed).length > 0 ? parsed : { additionalNotes: plainText.trim() }
+}
+
+function steamPlatformNames(platforms?: SteamStoreSearchItem['platforms']) {
+  if (!platforms) return []
+  return [
+    platforms.windows ? 'PC' : undefined,
+    platforms.mac ? 'macOS' : undefined,
+    platforms.linux ? 'Linux' : undefined,
+  ].filter((platform): platform is string => Boolean(platform))
+}
+
+function steamGameToMetadataResult(item: SteamStoreSearchItem): MetadataResult {
+  const platforms = steamPlatformNames(item.platforms)
+  return {
+    id: `steam:game:${item.id}`,
+    type: 'game',
+    title: item.name,
+    creator: platforms.join(', ') || 'PC',
+    provider: 'Steam',
+    providerId: String(item.id),
+    genre: 'Video Game',
+    coverUrl: item.tiny_image ? resolveArtworkUrl(item.tiny_image, item.name, 'Game') : undefined,
+    preferWikipediaArtwork: true,
+    gameMetadata: {
+      platforms: platforms.map((platform) => ({ platform, status: 'available' as const })),
+      metadataSource: 'Steam Store',
+      metadataUpdatedAt: new Date().toISOString(),
+    },
+  }
+}
+
+async function searchSteamGameCatalog(query: string, signal?: AbortSignal) {
+  const startTime = performance.now()
+  let allItems: SteamStoreSearchItem[] = []
+  let responseStatus = 200
 
   try {
-    const res = await fetch(url, { signal })
-    const latencyMs = Math.round(performance.now() - startTime)
+    const url = steamStoreSearchUrl('search/results/')
+    url.searchParams.set('term', query)
+    url.searchParams.set('l', 'english')
+    url.searchParams.set('cc', 'US')
+    url.searchParams.set('start', '0')
+    url.searchParams.set('count', '100')
+    url.searchParams.set('infinite', '1')
+    url.searchParams.set('category1', '998')
 
-    if (!res.ok) {
-      logApiCall({
-        provider: 'RAWG',
-        queryOrUrl: query,
-        status: res.status,
-        latencyMs,
-        resultCount: 0,
-        cacheStatus: 'MISS',
-        error: `RAWG API HTTP ${res.status}`,
+    const res = await fetch(url, { signal })
+    responseStatus = res.status
+    if (!res.ok) throw new Error(`Steam catalog search failed with HTTP ${res.status}.`)
+
+    const data = (await res.json()) as { results_html?: string }
+    const document = new DOMParser().parseFromString(`<main>${data.results_html || ''}</main>`, 'text/html')
+    allItems = Array.from(document.querySelectorAll<HTMLAnchorElement>('a.search_result_row'))
+      .map((row): SteamStoreSearchItem | null => {
+        const appId = Number(row.dataset.dsAppid || row.href.match(/\/app\/(\d+)/)?.[1])
+        const name = row.querySelector<HTMLElement>('.title')?.textContent?.trim()
+        if (!Number.isFinite(appId) || !name) return null
+
+        const platformText = Array.from(row.querySelectorAll<HTMLElement>('.platform_img'))
+          .map((platform) => platform.className)
+          .join(' ')
+        return {
+          id: appId,
+          name,
+          tiny_image: row.querySelector<HTMLImageElement>('img')?.src,
+          platforms: {
+            windows: /\bwin\b/i.test(platformText),
+            mac: /\bmac\b/i.test(platformText),
+            linux: /\blinux\b/i.test(platformText),
+          },
+        }
       })
-      throw new Error('RAWG game search failed. Please check your RAWG API key in .env.local.')
+      .filter((item): item is SteamStoreSearchItem => Boolean(item))
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') throw error
+
+    const fallbackUrl = steamStoreUrl('storesearch')
+    fallbackUrl.searchParams.set('term', query)
+    fallbackUrl.searchParams.set('l', 'english')
+    fallbackUrl.searchParams.set('cc', 'US')
+    const fallbackResponse = await fetch(fallbackUrl, { signal })
+    responseStatus = fallbackResponse.status
+    if (!fallbackResponse.ok) {
+      throw new Error(`Steam Store game search failed with HTTP ${fallbackResponse.status}.`)
     }
-    const data = (await res.json()) as { results?: RawgGameItem[] }
-    const results = (data.results ?? []).map((item) => {
-      const platforms = item.platforms?.map((p) => p.platform.name).slice(0, 3).join(', ')
-      const genreStr = item.genres?.map((g) => g.name).join(', ')
-      const coverUrl = item.background_image || item.short_screenshots?.[0]?.image
-      const safeCoverUrl = coverUrl ? resolveArtworkUrl(coverUrl, item.name, 'Game') : undefined
-      return {
-        id: `rawg:game:${item.id}`,
-        type: 'game' as const,
-        title: item.name,
-        creator: platforms || 'PC / Console',
-        provider: genreStr || 'Video Game',
-        providerId: String(item.id),
-        genre: genreStr || 'Video Game',
-        coverUrl: safeCoverUrl,
-        year: yearFrom(item.released),
-        gameMetadata: {
-          genres: item.genres?.map((genre) => genre.name).filter(Boolean),
-          releaseDate: item.released,
-          platforms: item.platforms?.map(({ platform }) => ({
-            platform: platform.name,
-            status: 'available' as const,
-          })),
-          metadataSource: 'RAWG',
-          metadataUpdatedAt: new Date().toISOString(),
-        },
+    const fallbackData = (await fallbackResponse.json()) as { items?: SteamStoreSearchItem[] }
+    allItems = fallbackData.items ?? []
+  }
+
+  const latencyMs = Math.round(performance.now() - startTime)
+  const exactPhraseItems = allItems.filter((item) => gameTitleContainsPhrase(item.name, query))
+  const catalogItems = exactPhraseItems.length >= 3 ? exactPhraseItems : allItems
+  const results = catalogItems
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => scoreGameTitleMatch(b.item.name, query, b.index) - scoreGameTitleMatch(a.item.name, query, a.index))
+    .map(({ item }) => steamGameToMetadataResult(item))
+
+  logApiCall({
+    provider: 'Steam Store',
+    queryOrUrl: query,
+    status: responseStatus,
+    latencyMs,
+    resultCount: results.length,
+    cacheStatus: 'MISS',
+  })
+  return results
+}
+
+function igdbPlatformStatus(releaseDate?: string) {
+  if (!releaseDate) return 'available' as const
+  const timestamp = new Date(releaseDate).getTime()
+  return Number.isFinite(timestamp) && timestamp > Date.now() ? 'upcoming' as const : 'available' as const
+}
+
+function igdbGameToMetadataResult(item: IgdbGameItem): MetadataResult {
+  const platformNames = item.platforms?.map((release) => release.platform).filter(Boolean)
+  const genres = item.genres?.filter(Boolean)
+  const editionCount = item.editions?.length ?? 0
+  const providerLabel = [
+    item.publishers?.join(', '),
+    genres?.join(', ') || 'Video Game',
+    editionCount > 0 ? `${editionCount} ${editionCount === 1 ? 'edition' : 'editions'}` : undefined,
+  ].filter(Boolean).join(' · ')
+
+  return {
+    id: `igdb:game:${item.id}`,
+    type: 'game',
+    title: item.name,
+    creator: item.developers?.join(', ') || platformNames?.slice(0, 3).join(', ') || 'PC / Console',
+    provider: providerLabel,
+    providerId: String(item.id),
+    genre: genres?.join(', ') || 'Video Game',
+    coverUrl: item.coverUrl ? resolveArtworkUrl(item.coverUrl, item.name, 'Game') : undefined,
+    year: yearFrom(item.firstReleaseDate),
+    summary: item.summary?.trim() || undefined,
+    gameSearchRelevance: item.searchRelevance,
+    gamePopularity: item.popularityScore,
+    gameMetadata: {
+      developers: item.developers,
+      publishers: item.publishers,
+      genres,
+      gameModes: item.gameModes,
+      franchise: item.franchise,
+      ageRating: item.ageRating,
+      releaseDate: item.firstReleaseDate,
+      officialWebsite: item.officialWebsite,
+      platforms: item.platforms?.map((release) => ({
+        platform: release.platform,
+        releaseDate: release.releaseDate,
+        status: igdbPlatformStatus(release.releaseDate),
+      })),
+      editions: item.editions?.map((edition) => ({
+        name: edition.name,
+        description: edition.description || edition.type,
+        releaseDate: edition.releaseDate,
+        platforms: edition.platforms,
+      })),
+      metadataSource: 'IGDB',
+      metadataUpdatedAt: new Date().toISOString(),
+    },
+  }
+}
+
+export async function fetchGameCatalogPage(
+  request: GameCatalogPageRequest = {},
+  signal?: AbortSignal,
+): Promise<GameCatalogPageResult> {
+  const page = Math.max(1, request.page ?? 1)
+  const pageSize = Math.min(100, Math.max(1, request.pageSize ?? 40))
+  const url = igdbUrl()
+  if (request.query?.trim()) url.searchParams.set('search', request.query.trim())
+  if (request.ordering?.trim()) url.searchParams.set('ordering', request.ordering.trim())
+  url.searchParams.set('page_size', String(pageSize))
+  url.searchParams.set('page', String(page))
+
+  const timeoutSignal = AbortSignal.timeout(8000)
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+  const res = await fetch(url, { signal: requestSignal })
+  if (!res.ok) {
+    const payload = await res.json().catch(() => undefined) as { error?: string } | undefined
+    throw new Error(payload?.error || `IGDB game catalog failed with HTTP ${res.status}.`)
+  }
+
+  const data = (await res.json()) as IgdbGamePage
+  return {
+    results: (data.results ?? []).map((item) => igdbGameToMetadataResult(item)),
+    page,
+    hasNextPage: Boolean(data.hasNextPage),
+  }
+}
+
+export async function searchGameCatalog(
+  query: string,
+  signal?: AbortSignal,
+  options: GameCatalogSearchOptions = {},
+): Promise<MetadataResult[]> {
+  const startTime = performance.now()
+  try {
+    const pageSize = Math.min(100, Math.max(1, options.pageSize ?? 40))
+    const maxSeriesPages = Math.min(8, Math.max(1, options.maxSeriesPages ?? 5))
+    const allResults: MetadataResult[] = []
+    let page = 1
+    let hasNextPage = true
+    let expandSeries = options.seriesMode === 'always'
+
+    while (hasNextPage && page <= (expandSeries ? maxSeriesPages : 1)) {
+      const catalogPage = await fetchGameCatalogPage({ query, pageSize, page }, signal)
+      allResults.push(...catalogPage.results)
+      hasNextPage = catalogPage.hasNextPage
+
+      if (page === 1 && (options.seriesMode === 'auto' || options.seriesMode === undefined)) {
+        const phraseMatches = allResults.filter((item) => gameTitleContainsPhrase(item.title, query)).length
+        const queryWordCount = normalizeGameTitle(query).split(' ').filter(Boolean).length
+        expandSeries = queryWordCount >= 2 && phraseMatches >= Math.min(8, Math.ceil(allResults.length / 3))
       }
-    })
+
+      if (options.seriesMode === 'never') expandSeries = false
+      page += 1
+    }
+
+    const latencyMs = Math.round(performance.now() - startTime)
+    const uniqueResults = Array.from(new Map(allResults.map((result) => [result.id, result])).values())
+    const results = uniqueResults
+      .map((result, index) => ({ result, index }))
+      .sort((a, b) =>
+        (b.result.gameSearchRelevance ?? 0) - (a.result.gameSearchRelevance ?? 0) ||
+        (b.result.gamePopularity ?? 0) - (a.result.gamePopularity ?? 0) ||
+        scoreGameTitleMatch(b.result.title, query, b.index) - scoreGameTitleMatch(a.result.title, query, a.index),
+      )
+      .map(({ result }) => result)
 
     logApiCall({
-      provider: 'RAWG',
+      provider: 'IGDB',
       queryOrUrl: query,
-      status: res.status,
+      status: 200,
       latencyMs,
       resultCount: results.length,
       cacheStatus: 'MISS',
@@ -2383,7 +2841,7 @@ async function searchGames(
     if ((err as Error)?.name === 'AbortError') throw err
     const latencyMs = Math.round(performance.now() - startTime)
     logApiCall({
-      provider: 'RAWG',
+      provider: 'IGDB',
       queryOrUrl: query,
       status: 'ERROR',
       latencyMs,
@@ -2391,8 +2849,142 @@ async function searchGames(
       cacheStatus: 'MISS',
       error: err instanceof Error ? err.message : String(err),
     })
-    throw err
+    try {
+      return await searchSteamGameCatalog(query, signal)
+    } catch (fallbackError) {
+      if ((fallbackError as Error)?.name === 'AbortError') throw fallbackError
+      throw err
+    }
   }
+}
+
+async function searchGames(query: string, signal?: AbortSignal) {
+  return searchGameCatalog(query, signal)
+}
+
+async function fetchSteamGameDetails(providerId: string, signal?: AbortSignal) {
+  return cachedApiRequest<MetadataResult | undefined>(
+    `steam-game-details:${providerId}`,
+    signal,
+    async () => {
+      const startTime = performance.now()
+      const url = steamStoreUrl('appdetails')
+      url.searchParams.set('appids', providerId)
+      url.searchParams.set('l', 'english')
+      url.searchParams.set('cc', 'US')
+      const res = await fetch(url, { signal })
+      const latencyMs = Math.round(performance.now() - startTime)
+      if (!res.ok) return undefined
+
+      const payload = (await res.json()) as Record<string, { success?: boolean; data?: SteamStoreGameDetails }>
+      const details = payload[providerId]?.data
+      if (!payload[providerId]?.success || !details) return undefined
+
+      const platforms = steamPlatformNames(details.platforms)
+      const requirements = details.pc_requirements
+      const result: MetadataResult = {
+        id: `steam:game:${providerId}`,
+        type: 'game',
+        title: details.name,
+        creator: details.developers?.join(', ') || platforms.join(', ') || 'PC',
+        provider: details.genres?.map((genre) => genre.description).join(', ') || 'Video Game',
+        providerId,
+        genre: details.genres?.map((genre) => genre.description).join(', ') || 'Video Game',
+        coverUrl: details.header_image
+          ? resolveArtworkUrl(details.header_image, details.name, 'Game')
+          : undefined,
+        preferWikipediaArtwork: true,
+        year: details.release_date?.date?.match(/\b\d{4}\b/)?.[0],
+        summary: details.short_description?.trim() || undefined,
+        gameMetadata: {
+          developers: details.developers,
+          publishers: details.publishers,
+          genres: details.genres?.map((genre) => genre.description),
+          gameModes: details.categories
+            ?.map((category) => category.description)
+            .filter((name) => /single.?player|multi.?player|co.?op|pvp|online/i.test(name))
+            .slice(0, 6),
+          ageRating: details.required_age ? `${details.required_age}+` : undefined,
+          releaseDate: details.release_date?.date,
+          officialWebsite: details.website || undefined,
+          platforms: platforms.map((platform) => ({
+            platform,
+            releaseDate: details.release_date?.date,
+            status: 'available' as const,
+          })),
+          pcRequirements: requirements
+            ? {
+                minimum: parseGameRequirements(requirements.minimum),
+                recommended: parseGameRequirements(requirements.recommended),
+              }
+            : undefined,
+          features: details.categories?.map((category) => category.description).slice(0, 10),
+          metadataSource: 'Steam Store',
+          metadataUpdatedAt: new Date().toISOString(),
+        },
+      }
+
+      logApiCall({
+        provider: 'Steam Store',
+        queryOrUrl: `Game details ${providerId}`,
+        status: res.status,
+        latencyMs,
+        resultCount: 1,
+        cacheStatus: 'MISS',
+      })
+      return result
+    },
+  )
+}
+
+export async function fetchGameDetails(
+  providerId: string,
+  metadataSource = 'IGDB',
+  signal?: AbortSignal,
+) {
+  const cleanProviderId = providerId.trim()
+  if (!cleanProviderId) return undefined
+  if (/steam/i.test(metadataSource)) return fetchSteamGameDetails(cleanProviderId, signal)
+  if (/rawg/i.test(metadataSource)) return undefined
+
+  return cachedApiRequest<MetadataResult | undefined>(
+    `igdb-game-details:${cleanProviderId}`,
+    signal,
+    async () => {
+      const startTime = performance.now()
+      const url = igdbUrl(`/${encodeURIComponent(cleanProviderId)}`)
+      const res = await fetch(url, { signal })
+      const latencyMs = Math.round(performance.now() - startTime)
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => undefined) as { error?: string } | undefined
+        logApiCall({
+          provider: 'IGDB',
+          queryOrUrl: `Game details ${cleanProviderId}`,
+          status: res.status,
+          latencyMs,
+          resultCount: 0,
+          cacheStatus: 'MISS',
+          error: payload?.error || `IGDB game details HTTP ${res.status}`,
+        })
+        return undefined
+      }
+
+      const payload = (await res.json()) as IgdbGamePage
+      const details = payload.results?.[0]
+      if (!details) return undefined
+      const result = igdbGameToMetadataResult(details)
+      logApiCall({
+        provider: 'IGDB',
+        queryOrUrl: `Game details ${cleanProviderId}`,
+        status: res.status,
+        latencyMs,
+        resultCount: 1,
+        cacheStatus: 'MISS',
+      })
+      return result
+    },
+  )
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -2408,20 +3000,23 @@ export async function searchMetadata(
   const cacheKey = `${type}:${q.toLowerCase()}`
   if (searchCache.has(cacheKey)) {
     const cached = searchCache.get(cacheKey)!
-    logApiCall({
-      provider: providerMap[type] || 'Google Books',
-      queryOrUrl: `Search "${q}" (${type})`,
-      status: 'CACHE',
-      latencyMs: 0,
-      resultCount: cached.length,
-      cacheStatus: 'HIT',
-    })
-    return cached
+    if (cached.length > 0) {
+      logApiCall({
+        provider: providerMap[type] || 'Google Books',
+        queryOrUrl: `Search "${q}" (${type})`,
+        status: 'CACHE',
+        latencyMs: 0,
+        resultCount: cached.length,
+        cacheStatus: 'HIT',
+      })
+      return cached
+    }
+    searchCache.delete(cacheKey)
   }
 
   const persisted = await getBrowserCacheValue<MetadataResult[]>(SEARCH_CACHE_NAMESPACE, cacheKey)
   signal?.throwIfAborted()
-  if (persisted) {
+  if (persisted && persisted.length > 0) {
     searchCache.set(cacheKey, persisted)
     logApiCall({
       provider: providerMap[type] || 'Google Books',
@@ -2441,7 +3036,9 @@ export async function searchMetadata(
   else if (type === 'album') results = await searchAlbums(q, signal)
   else if (type === 'game') results = await searchGames(q, signal)
 
-  searchCache.set(cacheKey, results)
-  void setBrowserCacheValue(SEARCH_CACHE_NAMESPACE, cacheKey, results, SEARCH_METADATA_TTL)
+  if (results.length > 0) {
+    searchCache.set(cacheKey, results)
+    void setBrowserCacheValue(SEARCH_CACHE_NAMESPACE, cacheKey, results, SEARCH_METADATA_TTL)
+  }
   return results
 }

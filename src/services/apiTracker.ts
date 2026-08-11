@@ -4,7 +4,8 @@ export type ApiProvider =
   | 'iTunes'
   | 'MusicBrainz'
   | 'LRCLIB'
-  | 'RAWG'
+  | 'IGDB'
+  | 'Steam Store'
   | 'Wikipedia'
 
 export type CacheStatus = 'HIT' | 'MISS'
@@ -37,7 +38,8 @@ export const ALL_PROVIDERS: ApiProvider[] = [
   'iTunes',
   'MusicBrainz',
   'LRCLIB',
-  'RAWG',
+  'IGDB',
+  'Steam Store',
   'Wikipedia',
 ]
 
@@ -97,7 +99,8 @@ export function getApiStats(): ApiTrackerStats {
     iTunes: 0,
     MusicBrainz: 0,
     LRCLIB: 0,
-    RAWG: 0,
+    IGDB: 0,
+    'Steam Store': 0,
     Wikipedia: 0,
   }
 

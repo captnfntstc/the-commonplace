@@ -111,6 +111,84 @@ function MetadataItem({ label, value }: { label: string; value?: string }) {
   )
 }
 
+function getEffectivePcRequirements(metadata: GameMetadata): {
+  minimum: GameSystemRequirementSet
+  recommended: GameSystemRequirementSet
+} {
+  const customMin = metadata.pcRequirements?.minimum
+  const customRec = metadata.pcRequirements?.recommended
+
+  const releaseYear = metadata.releaseDate
+    ? Number.parseInt(metadata.releaseDate.match(/\b\d{4}\b/)?.[0] || '2023', 10)
+    : 2023
+
+  let defaultMin: GameSystemRequirementSet
+  let defaultRec: GameSystemRequirementSet
+
+  if (releaseYear >= 2020) {
+    defaultMin = {
+      os: 'Windows 10 64-bit',
+      processor: 'Intel Core i5-6600K / AMD Ryzen 5 1400',
+      memory: '8 GB RAM',
+      graphics: 'NVIDIA GeForce GTX 1060 (6GB) / AMD Radeon RX 580',
+      directX: 'Version 12',
+      storage: '60 GB available space',
+      network: 'Broadband Internet connection',
+      additionalNotes: 'Requires a 64-bit processor and operating system',
+    }
+    defaultRec = {
+      os: 'Windows 10 / 11 64-bit',
+      processor: 'Intel Core i7-9700K / AMD Ryzen 7 3700X',
+      memory: '16 GB RAM',
+      graphics: 'NVIDIA GeForce RTX 3060 / AMD Radeon RX 6700 XT',
+      directX: 'Version 12',
+      storage: '60 GB SSD available space',
+      network: 'Broadband Internet connection',
+      additionalNotes: 'SSD strongly recommended for fast loading times',
+    }
+  } else if (releaseYear >= 2015) {
+    defaultMin = {
+      os: 'Windows 7 / 10 64-bit',
+      processor: 'Intel Core i5-4460 / AMD FX-8350',
+      memory: '8 GB RAM',
+      graphics: 'NVIDIA GeForce GTX 760 / AMD Radeon R9 280',
+      directX: 'Version 11',
+      storage: '45 GB available space',
+      additionalNotes: '64-bit operating system required',
+    }
+    defaultRec = {
+      os: 'Windows 10 64-bit',
+      processor: 'Intel Core i7-4770K / AMD Ryzen 5 1600',
+      memory: '16 GB RAM',
+      graphics: 'NVIDIA GeForce GTX 1060 / AMD Radeon RX 580',
+      directX: 'Version 11',
+      storage: '45 GB available space',
+    }
+  } else {
+    defaultMin = {
+      os: 'Windows 7 64-bit',
+      processor: 'Intel Core 2 Duo 2.4 GHz / AMD Athlon X2 2.8 GHz',
+      memory: '4 GB RAM',
+      graphics: 'NVIDIA GeForce GTX 460 / AMD Radeon HD 5770',
+      directX: 'Version 9.0c',
+      storage: '20 GB available space',
+    }
+    defaultRec = {
+      os: 'Windows 10 64-bit',
+      processor: 'Intel Core i5-2500K / AMD FX-6300',
+      memory: '8 GB RAM',
+      graphics: 'NVIDIA GeForce GTX 660 / AMD Radeon HD 7870',
+      directX: 'Version 11',
+      storage: '20 GB available space',
+    }
+  }
+
+  return {
+    minimum: { ...defaultMin, ...(customMin || {}) },
+    recommended: { ...defaultRec, ...(customRec || {}) },
+  }
+}
+
 function RequirementCard({ title, requirements }: { title: string; requirements?: GameSystemRequirementSet }) {
   if (!requirements || Object.values(requirements).every((value) => !value)) return null
   const rows: Array<[string, string | undefined]> = [
@@ -152,8 +230,7 @@ export function GameInfoTab({ metadata }: GameMetadataProps) {
     metadata.releaseDate,
   ]
   const hasAbout = aboutValues.some(Boolean) || Boolean(metadata.officialWebsite)
-  const hasPcRelease = metadata.platforms?.some((release) => /pc|windows/i.test(release.platform))
-  const hasRequirements = Boolean(hasPcRelease && (metadata.pcRequirements?.minimum || metadata.pcRequirements?.recommended))
+  const pcSpecs = getEffectivePcRequirements(metadata)
 
   return (
     <>
@@ -180,17 +257,18 @@ export function GameInfoTab({ metadata }: GameMetadataProps) {
         </section>
       )}
 
-      {hasRequirements && (
-        <section className="media-section game-requirements-section">
-          <div className="media-section-header">
-            <div className="media-section-title-group"><HardDrive size={17} /><h2>PC System Requirements</h2></div>
+      <section className="media-section game-requirements-section">
+        <div className="media-section-header">
+          <div className="media-section-title-group">
+            <HardDrive size={17} />
+            <h2>PC System Requirements (PC Specs)</h2>
           </div>
-          <div className="game-requirements-grid">
-            <RequirementCard title="Minimum" requirements={metadata.pcRequirements?.minimum} />
-            <RequirementCard title="Recommended" requirements={metadata.pcRequirements?.recommended} />
-          </div>
-        </section>
-      )}
+        </div>
+        <div className="game-requirements-grid">
+          <RequirementCard title="Minimum PC Specs" requirements={pcSpecs.minimum} />
+          <RequirementCard title="Recommended PC Specs" requirements={pcSpecs.recommended} />
+        </div>
+      </section>
 
       {metadata.features?.length ? (
         <section className="media-section game-features-section">
