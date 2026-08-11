@@ -24,7 +24,6 @@ import {
   MessageSquareOff,
 } from 'lucide-react'
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { BrowserRouter, useLocation, useNavigate } from 'react-router-dom'
 import './App.css'
 import {
   fetchLyrics,
@@ -35,7 +34,6 @@ import {
   fetchWikipediaPortrait,
   entityImageCacheMap,
   albumEntityMap,
-  knownArtistBoost,
 } from './metadata'
 import { ExpansionProvider, useCardExpansion } from './context/ExpansionContext'
 import { Card } from './components/CommonplaceCard/Card'
@@ -54,10 +52,11 @@ import { UNIVERSAL_MEDIA_ENTITIES } from './data/universalMediaEntities'
 import type { MediaEntityType, UniversalMediaEntity } from './types/mediaEntity'
 import { resolveArtworkUrl, createArtworkPlaceholder } from './utils/artwork'
 import { ApiUsageTracker } from './components/DeveloperTools/ApiUsageTracker'
-import { AlternateSearch, type AltMediaResult } from './components/Search/AlternateSearch'
 
 const WARN_UNRATED_KEY = 'the-commonplace.warn-unrated'
 const DEV_ALT_SEARCH_ENABLED_KEY = 'the-commonplace.dev.alternate-search-enabled'
+const DEV_ALT_SEARCH_TYPES_KEY = 'the-commonplace.dev.alternate-search-types'
+const DEV_ALT_SEARCH_PEOPLE_KEY = 'the-commonplace.dev.alternate-search-people'
 
 function getWarnUnratedPreference(): boolean {
   const stored = localStorage.getItem(WARN_UNRATED_KEY)
@@ -143,7 +142,6 @@ type Entry = {
   year?: string
   coverUrl?: string
   summary?: string
-  explicit?: boolean
   createdAt: string
   updatedAt: string
   coverTone: CoverTone
@@ -168,6 +166,14 @@ const entryTypes: Array<{
   { id: 'song', label: 'Songs', Icon: Music4 },
   { id: 'tv', label: 'Shows', Icon: Tv },
 ]
+
+const peopleEntityTypes = new Set<MediaEntityType>([
+  'artist',
+  'author',
+  'director',
+  'actor',
+  'game_studio',
+])
 
 const defaultCoverToneByType: Record<EntryType, CoverTone> = {
   album: 'gold',
@@ -262,18 +268,6 @@ function getSearchEntityArtwork(entity: {
   const cleanTitle = entity.title.toLowerCase()
   const mockProfile = MOCK_ENTITY_PROFILES[entity.id]
   const universalEntity = UNIVERSAL_MEDIA_ENTITIES[entity.id]
-  const isMusicMedia = entity.type === 'album' || entity.type === 'song'
-
-  if (isMusicMedia) {
-    return (
-      entity.artworkUrl ||
-      entityImageCacheMap.get(`${entity.type}:${entity.id}`) ||
-      entityImageCacheMap.get(entity.id) ||
-      universalEntity?.artworkUrl ||
-      mockProfile?.coverUrl ||
-      createArtworkPlaceholder(entity.title, entity.type)
-    )
-  }
 
   return (
     entityImageCacheMap.get(`${entity.type}:${entity.id}`) ||
@@ -298,7 +292,6 @@ const EntitySearchItem: React.FC<{
     type: string
     creatorValue: string
     bio: string
-    explicit?: boolean
   }
   onSelect: () => void
 }> = ({ entity, onSelect }) => {
@@ -348,12 +341,9 @@ const EntitySearchItem: React.FC<{
         )}
       </span>
       <span className="metadata-option-copy">
-        <strong className="metadata-option-title">
-          <span>{entity.title}</span>
-          {entity.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-        </strong>
+        <strong>{entity.title}</strong>
         <span className="metadata-type-line">
-          <span>{formatMediaSearchSubtitle(entity.type, entity)}</span>
+          <span>{formatMediaSearchSubtitle(entity)}</span>
         </span>
       </span>
       <span className="search-entity-type-badge">{entity.type.replace('_', ' ').toUpperCase()}</span>
@@ -368,7 +358,6 @@ type HeaderSearchEntity = {
   type: string
   creatorValue: string
   bio: string
-  explicit?: boolean
   source: 'metadata' | 'universal'
   rank: number
   metadataResult?: MetadataResult
@@ -393,7 +382,6 @@ function metadataResultToSearchEntity(result: MetadataResult, rank: number): Hea
     type: result.type,
     creatorValue: result.creator,
     bio: result.provider || result.genre || '',
-    explicit: result.explicit,
     source: 'metadata',
     rank,
     metadataResult: result,
@@ -412,168 +400,27 @@ function universalEntityToSearchEntity(entity: UniversalMediaEntity, rank: numbe
     type: entity.type,
     creatorValue: creatorChip ? `${creatorChip.label}: ${creatorChip.value}` : entity.categoryLabel,
     bio: entity.description || entity.categoryLabel,
-    explicit: entity.explicit,
     source: 'universal',
     rank,
     universalEntity: entity,
   }
 }
 
-function artistRoleFromDescription(bio: string): string {
-  const text = bio.toLowerCase()
-  const patterns: Array<[RegExp, string]> = [
-    [/singer[\s-]songwriter/, 'Singer-Songwriter'],
-    [/songwriter/, 'Songwriter'],
-    [/composer/, 'Composer'],
-    [/rapper/, 'Rapper'],
-    [/record producer|music producer/, 'Record Producer'],
-    [/singer/, 'Singer'],
-    [/duo/, 'Musical Duo'],
-    [/band|group/, 'Musician'],
-  ]
-  for (const [re, label] of patterns) {
-    if (re.test(text)) return label
-  }
-  return ''
-}
-
-function isCollaborationCredit(value: string) {
-  return /(?:\s&\s|\s\/\s|\s\+\s|\bfeat\.?\b|\bfeaturing\b|\bwith\b|,\s*)/i.test(value)
-}
-
-function formatMediaSearchSubtitle(type: string, entity: { creatorValue: string; bio: string }) {
+function formatMediaSearchSubtitle(entity: { creatorValue: string; bio: string }) {
   const creator = entity.creatorValue.replace(/^[^:]+:\s*/, '').trim()
-  if (type === 'artist') {
-    const role = artistRoleFromDescription(entity.bio)
-    return (role || creator).toUpperCase()
-  }
-  if (type === 'album') return creator.toUpperCase()
   const detail = entity.bio.replace(/\b(19|20)\d{2}\b/g, '').replace(/\s+/g, ' ').trim()
   return [creator, detail].filter(Boolean).join(' • ').toUpperCase()
 }
 
-// ── Alternate search result normalization ─────────────────────────────────────
-// Media results are normalized into a category ("people", "books", ...) plus a
-// distinct type ("artist", "author", ...) so the alternate search UI can filter
-// all creator types under a single "People" category while still showing each
-// person's actual profession as its type badge.
-
-function altSearchCategoryAndType(entity: HeaderSearchEntity): {
-  category: AltMediaResult['category']
-  type: AltMediaResult['type']
-} {
-  switch (entity.type) {
-    case 'artist':
-      return { category: 'people', type: 'artist' }
-    case 'author':
-      return { category: 'people', type: 'author' }
-    case 'director':
-      return { category: 'people', type: 'director' }
-    case 'actor':
-      return { category: 'people', type: 'actor' }
-    case 'game_studio':
-      return { category: 'people', type: 'game_creator' }
-    case 'album':
-      return { category: 'albums', type: 'album' }
-    case 'song':
-      return { category: 'songs', type: 'song' }
-    case 'book':
-      return { category: 'books', type: 'book' }
-    case 'movie':
-    case 'film':
-      return { category: 'films', type: 'film' }
-    case 'tv':
-    case 'show':
-    case 'series':
-      return { category: 'shows', type: 'show' }
-    case 'game':
-      return { category: 'games', type: 'game' }
-    default: {
-      const t = entity.type?.toLowerCase() || ''
-      if (t.includes('film') || t.includes('movie')) return { category: 'films', type: 'film' }
-      if (t.includes('album')) return { category: 'albums', type: 'album' }
-      if (t.includes('song') || t.includes('track')) return { category: 'songs', type: 'song' }
-      if (t.includes('book')) return { category: 'books', type: 'book' }
-      if (t.includes('tv') || t.includes('show')) return { category: 'shows', type: 'show' }
-      if (t.includes('game')) return { category: 'games', type: 'game' }
-      return { category: 'albums', type: 'album' }
-    }
-  }
+function getEntityPopularityScore(entity: UniversalMediaEntity) {
+  return entity.communityRating.count * entity.communityRating.average
 }
-
-function altSearchYear(entity: HeaderSearchEntity): string {
-  if (entity.metadataResult?.year) return entity.metadataResult.year
-  const yearChip = entity.universalEntity?.metadataChips.find((chip) =>
-    /\b(19|20)\d{2}\b/.test(chip.value),
-  )
-  const yearMatch = yearChip?.value.match(/\b(19|20)\d{2}\b/)
-  return yearMatch?.[0] || ''
-}
-
-function altSearchSubtitle(entity: HeaderSearchEntity): string {
-  const creator = entity.creatorValue.replace(/^[^:]+:\s*/, '').trim()
-  const year = altSearchYear(entity)
-
-  switch (entity.type) {
-    case 'artist': {
-      const role = artistRoleFromDescription(entity.bio)
-      return role || creator || 'Artist'
-    }
-    case 'author':
-      return creator || 'Author'
-    case 'director':
-      return creator || 'Director'
-    case 'actor':
-      return creator || 'Actor'
-    case 'game_studio':
-      return creator || 'Game Studio'
-    case 'album':
-      return creator
-    case 'song':
-      return [creator, entity.bio].filter(Boolean).join(' · ')
-    case 'book':
-      return creator
-    case 'movie':
-      return [creator, year].filter(Boolean).join(' · ')
-    case 'tv': {
-      const yearLabel = year ? `${year}–` : ''
-      return [creator, yearLabel].filter(Boolean).join(' · ') || 'TV Show'
-    }
-    case 'game':
-      return [creator, year].filter(Boolean).join(' · ')
-    default:
-      return creator
-  }
-}
-
-function toAltMediaResult(entity: HeaderSearchEntity): AltMediaResult {
-  const { category, type } = altSearchCategoryAndType(entity)
-  return {
-    id: entity.id,
-    name: entity.title,
-    image: getSearchEntityArtwork(entity),
-    category,
-    type,
-    subtitle: altSearchSubtitle(entity),
-    explicit: entity.explicit,
-  }
-}
-
-function getEntityPopularityScore(entity: HeaderSearchEntity): number {
-  if (entity.universalEntity) {
-    const { count, average } = entity.universalEntity.communityRating
-    return count * average
-  }
-  // Metadata results arrive provider-sorted (iTunes/TMDB return results in
-  // popularity order), so a lower rank means a more popular result.
-  return Math.max(0, 6000 - entity.rank * 150)
-}
+void getEntityPopularityScore
 
 function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
   const seen = new Set<string>()
   return entities.filter((entity) => {
-    const creatorKey = normalizeSearchText(entity.creatorValue.replace(/^[^:]+:\s*/, ''))
-    const key = `${entity.type}:${normalizeSearchText(entity.title)}:${creatorKey}`
+    const key = `${entity.type}:${normalizeSearchText(entity.title)}:${normalizeSearchText(entity.creatorValue)}`
     const idKey = entity.id.toLowerCase()
     if (seen.has(idKey) || seen.has(key)) return false
     seen.add(idKey)
@@ -587,115 +434,16 @@ function metadataTypeToEntityType(type: MetadataType): MediaEntityType {
   return type
 }
 
-const entityRouteSegmentByType: Record<MediaEntityType, string> = {
-  artist: 'artists',
-  album: 'albums',
-  song: 'songs',
-  author: 'authors',
-  book: 'books',
-  movie: 'films',
-  tv: 'shows',
-  actor: 'actors',
-  director: 'directors',
-  game: 'games',
-  game_studio: 'game-studios',
-}
-
-const entityTypeByRouteSegment: Record<string, MediaEntityType> = {
-  artists: 'artist',
-  albums: 'album',
-  songs: 'song',
-  authors: 'author',
-  books: 'book',
-  films: 'movie',
-  movies: 'movie',
-  shows: 'tv',
-  tv: 'tv',
-  actors: 'actor',
-  directors: 'director',
-  games: 'game',
-  studios: 'game_studio',
-  'game-studios': 'game_studio',
-}
-
-function routeSegment(value: string) {
-  return encodeURIComponent(value.replace(/^@/, ''))
-}
-
-function decodeRouteSegment(value: string) {
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return value
-  }
-}
-
-function inferEntityTypeFromId(entityId: string): MediaEntityType {
-  if (entityId.startsWith('song-')) return 'song'
-  if (entityId.startsWith('album-') || entityId.includes('ep')) return 'album'
-  if (entityId.startsWith('book-')) return 'book'
-  if (entityId.startsWith('movie-') || entityId.startsWith('film-')) return 'movie'
-  if (entityId.startsWith('tv-') || entityId.startsWith('show-')) return 'tv'
-  if (entityId.startsWith('game-') || entityId.startsWith('rawg:game:')) return 'game'
-  if (entityId.startsWith('author-')) return 'author'
-  if (entityId.startsWith('director-')) return 'director'
-  if (entityId.startsWith('actor-')) return 'actor'
-  if (entityId.startsWith('studio-') || entityId.startsWith('game-studio-')) return 'game_studio'
-  return 'artist'
-}
-
-function getEntityRoutePath(entityId: string, type: MediaEntityType) {
-  return `/${entityRouteSegmentByType[type]}/${routeSegment(entityId)}`
+function entityTypeToMetadataFilter(type: MediaEntityType): MetadataType | null {
+  if (type === 'movie') return 'film'
+  if (type === 'album' || type === 'song' || type === 'book' || type === 'tv' || type === 'game') return type
+  return null
 }
 
 function metadataTypeLabel(type: MetadataType) {
   if (type === 'film') return 'Film'
   if (type === 'tv') return 'Show'
   return type.charAt(0).toUpperCase() + type.slice(1)
-}
-
-
-
-// Drops results that only matched the query through their release year
-// (e.g. searching "1989" should not surface films released in 1989).
-function isYearOnlyMetadataMatch(result: MetadataResult, normalizedQuery: string): boolean {
-  if (!/^\d{4}$/.test(normalizedQuery)) return false
-  const titleMatches = normalizeSearchText(result.title).includes(normalizedQuery)
-  const creatorMatches = normalizeSearchText(result.creator).includes(normalizedQuery)
-  return !titleMatches && !creatorMatches
-}
-
-function getSearchEntityScore(entity: HeaderSearchEntity, normalizedQuery: string): number {
-  const titleNorm = normalizeSearchText(entity.title)
-  const rawCreator = entity.creatorValue.replace(/^[^:]+:\s*/, '')
-  const creatorNorm = normalizeSearchText(rawCreator)
-
-  // Match quality tiers, spaced far enough that popularity never overrides a
-  // stronger match. Within the same tier, popularity decides the order.
-  let tier: number
-  if (titleNorm === normalizedQuery) {
-    tier = 1000000
-  } else if (titleNorm.startsWith(normalizedQuery)) {
-    tier = 800000
-  } else if (titleNorm.includes(normalizedQuery)) {
-    tier = 600000
-  } else if (creatorNorm === normalizedQuery) {
-    tier = 500000
-  } else if (creatorNorm.startsWith(normalizedQuery)) {
-    tier = 400000
-  } else if (creatorNorm.includes(normalizedQuery)) {
-    tier = 300000
-  } else {
-    tier = 0
-  }
-
-  // Popularity is the decisive factor within a match tier, capped so it can
-  // never outweigh a stronger match.
-  const popularityScore = Math.min(200000, getEntityPopularityScore(entity) * 10)
-
-  const artistBoost = knownArtistBoost(rawCreator)
-
-  return tier + popularityScore + artistBoost * 10 + (entity.artworkUrl ? 100 : 0)
 }
 
 function creatorLabelForMetadata(type: MetadataType) {
@@ -717,8 +465,6 @@ function metadataResultToUniversalEntity(entity: { id: string; metadataResult: M
     type: metadataTypeToEntityType(result.type),
     categoryLabel,
     artworkUrl: resolveArtworkUrl(result.coverUrl || '', result.title, result.type),
-    providerId: result.providerId,
-    explicit: result.explicit,
     description:
       result.summary ||
       `Catalog entry for ${result.title}${result.creator ? ` by ${result.creator}` : ''} in The Commonplace community archive.`,
@@ -727,7 +473,6 @@ function metadataResultToUniversalEntity(entity: { id: string; metadataResult: M
       { label: 'Category', value: categoryLabel },
       ...(detail ? [{ label: result.year && detail === result.year ? 'Year' : 'Detail', value: detail }] : []),
       ...(result.year && detail !== result.year ? [{ label: 'Year', value: result.year }] : []),
-      ...(result.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
     ],
     communityRating: {
       average: 4.7,
@@ -757,7 +502,6 @@ function draftFromMetadata(
     genre: result.genre,
     coverUrl: resolveArtworkUrl(result.coverUrl, result.title, result.type),
     summary: result.summary,
-    explicit: result.explicit,
     coverTone: getDefaultCoverTone(result.type),
   }
 }
@@ -929,8 +673,6 @@ const MOCK_EXTERNAL_PROFILES: Record<string, { profile: UserProfileState; entrie
 }
 
 function AppContent() {
-  const location = useLocation()
-  const navigate = useNavigate()
   const [entries, setEntries] = useState<Entry[]>(loadEntries)
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<EntryType | 'all'>('all')
@@ -939,7 +681,6 @@ function AppContent() {
   const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings' | 'entity'>('feed')
   const [selectedProfileHandle, setSelectedProfileHandle] = useState<string | null>(null)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
-  const [selectedEntityType, setSelectedEntityType] = useState<MediaEntityType | null>(null)
   const [, setEntityBreadcrumb] = useState<string[]>([])
   const [searchTab, setSearchTab] = useState<'media' | 'users'>('media')
   const [headerMediaResults, setHeaderMediaResults] = useState<MetadataResult[]>([])
@@ -951,35 +692,15 @@ function AppContent() {
   const [profileCategoryFilter, setProfileCategoryFilter] = useState<string>('all')
   const searchEntityCacheRef = useRef(new Map<string, UniversalMediaEntity>())
 
-  const getPathForEntity = (entityId: string, entityType?: MediaEntityType) => {
-    const resolvedType =
-      entityType ||
-      searchEntityCacheRef.current.get(entityId)?.type ||
-      UNIVERSAL_MEDIA_ENTITIES[entityId]?.type ||
-      (MOCK_ENTITY_PROFILES[entityId]?.type as MediaEntityType | undefined) ||
-      inferEntityTypeFromId(entityId)
-
-    return getEntityRoutePath(entityId, resolvedType)
-  }
-
-  const handleOpenEntity = (entityId: string, entityType?: MediaEntityType) => {
-    const resolvedType =
-      entityType ||
-      searchEntityCacheRef.current.get(entityId)?.type ||
-      UNIVERSAL_MEDIA_ENTITIES[entityId]?.type ||
-      (MOCK_ENTITY_PROFILES[entityId]?.type as MediaEntityType | undefined) ||
-      inferEntityTypeFromId(entityId)
-
+  const handleOpenEntity = (entityId: string) => {
     setEntityBreadcrumb((prev) =>
       activeView === 'entity' && selectedEntityId && selectedEntityId !== entityId
         ? [...prev, selectedEntityId]
         : [],
     )
     setSelectedEntityId(entityId)
-    setSelectedEntityType(resolvedType)
     setActiveView('entity')
     setSearchOpen(false)
-    navigate(getEntityRoutePath(entityId, resolvedType))
   }
 
   const handleOpenSearchEntity = (entity: HeaderSearchEntity) => {
@@ -993,24 +714,15 @@ function AppContent() {
     if (universalEntity) {
       searchEntityCacheRef.current.set(entity.id, universalEntity)
     }
-    handleOpenEntity(entity.id, universalEntity?.type || entity.type as MediaEntityType)
+    handleOpenEntity(entity.id)
   }
 
-  const handleNavigateEntityBreadcrumb = (entityId: string, entityType?: MediaEntityType) => {
-    const resolvedType =
-      entityType ||
-      searchEntityCacheRef.current.get(entityId)?.type ||
-      UNIVERSAL_MEDIA_ENTITIES[entityId]?.type ||
-      (MOCK_ENTITY_PROFILES[entityId]?.type as MediaEntityType | undefined) ||
-      inferEntityTypeFromId(entityId)
-
+  const handleNavigateEntityBreadcrumb = (entityId: string) => {
     setEntityBreadcrumb((prev) =>
       selectedEntityId && selectedEntityId !== entityId ? [...prev, selectedEntityId] : prev,
     )
     setSelectedEntityId(entityId)
-    setSelectedEntityType(resolvedType)
     setActiveView('entity')
-    navigate(getPathForEntity(entityId, resolvedType))
   }
 
   const handleEntityBack = () => {
@@ -1018,22 +730,13 @@ function AppContent() {
       const next = [...prev]
       const previousEntityId = next.pop()
       if (previousEntityId) {
-        const previousEntityType =
-          searchEntityCacheRef.current.get(previousEntityId)?.type ||
-          UNIVERSAL_MEDIA_ENTITIES[previousEntityId]?.type ||
-          (MOCK_ENTITY_PROFILES[previousEntityId]?.type as MediaEntityType | undefined) ||
-          inferEntityTypeFromId(previousEntityId)
         setSelectedEntityId(previousEntityId)
-        setSelectedEntityType(previousEntityType)
         setActiveView('entity')
-        navigate(getEntityRoutePath(previousEntityId, previousEntityType))
         return next
       }
 
       setSelectedEntityId(null)
-      setSelectedEntityType(null)
       setActiveView('feed')
-      navigate('/')
       return []
     })
   }
@@ -1041,20 +744,8 @@ function AppContent() {
   const handleHome = () => {
     setEntityBreadcrumb([])
     setSelectedEntityId(null)
-    setSelectedEntityType(null)
     setSelectedProfileHandle(null)
     setActiveView('feed')
-    navigate('/')
-  }
-
-  const handleOpenSettings = () => {
-    setEntityBreadcrumb([])
-    setSelectedEntityId(null)
-    setSelectedEntityType(null)
-    setSelectedProfileHandle(null)
-    setActiveView('settings')
-    setProfileMenuOpen(false)
-    navigate('/settings')
   }
 
   const [userProfile, setUserProfile] = useState<UserProfileState>({
@@ -1120,8 +811,6 @@ function AppContent() {
 
   const [composerOpen, setComposerOpen] = useState(false)
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
-  const [composerInitialDraft, setComposerInitialDraft] = useState<EntryDraft | null>(null)
-  const [composerInitialLyrics, setComposerInitialLyrics] = useState<string>('')
   const [overlayEntry, setOverlayEntry] = useState<Entry | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
@@ -1130,63 +819,24 @@ function AppContent() {
   const [alternateSearchEnabled, setAlternateSearchEnabledState] = useState(() => {
     return localStorage.getItem(DEV_ALT_SEARCH_ENABLED_KEY) === 'true'
   })
+  const [alternateSearchTypes, setAlternateSearchTypesState] = useState<MetadataType[]>(() => {
+    const allTypes = entryTypes.map((entryType) => entryType.id)
+    const storedTypes = localStorage.getItem(DEV_ALT_SEARCH_TYPES_KEY)
+    if (storedTypes === null) return allTypes
+
+    try {
+      const parsed = JSON.parse(storedTypes) as MetadataType[]
+      return parsed.filter((type) => allTypes.includes(type))
+    } catch {
+      return allTypes
+    }
+  })
+  const [alternateSearchIncludesPeople, setAlternateSearchIncludesPeopleState] = useState(() => {
+    return localStorage.getItem(DEV_ALT_SEARCH_PEOPLE_KEY) !== 'false'
+  })
   const gridRef = useRef<HTMLElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const [searchLimit, setSearchLimit] = useState(8)
-
-  useEffect(() => {
-    const segments = location.pathname
-      .split('/')
-      .filter(Boolean)
-      .map(decodeRouteSegment)
-
-    const [section, rawId] = segments
-
-    if (!section) {
-      setActiveView('feed')
-      setSelectedProfileHandle(null)
-      setSelectedEntityId(null)
-      setSelectedEntityType(null)
-      setEntityBreadcrumb([])
-      return
-    }
-
-    if (section === 'profile') {
-      navigate(`/users/${routeSegment(userProfile.handle)}`, { replace: true })
-      return
-    }
-
-    if (section === 'settings') {
-      setActiveView('settings')
-      setSelectedProfileHandle(null)
-      setSelectedEntityId(null)
-      setSelectedEntityType(null)
-      setEntityBreadcrumb([])
-      return
-    }
-
-    if (section === 'users' && rawId) {
-      const cleanHandle = rawId.replace(/^@/, '')
-      setActiveView('profile')
-      setSelectedProfileHandle(cleanHandle === userProfile.handle ? null : cleanHandle)
-      setSelectedEntityId(null)
-      setSelectedEntityType(null)
-      setEntityBreadcrumb([])
-      return
-    }
-
-    const routeEntityType = entityTypeByRouteSegment[section]
-    if (routeEntityType && rawId) {
-      setActiveView('entity')
-      setSelectedProfileHandle(null)
-      setSelectedEntityId(rawId)
-      setSelectedEntityType(routeEntityType)
-      setEntityBreadcrumb([])
-      return
-    }
-
-    navigate('/', { replace: true })
-  }, [location.pathname, navigate, userProfile.handle])
 
   const setAlternateSearchEnabled = (enabled: boolean) => {
     setAlternateSearchEnabledState(enabled)
@@ -1197,9 +847,42 @@ function AppContent() {
     }
   }
 
+  const setAlternateSearchTypes = (types: MetadataType[]) => {
+    const allTypes = entryTypes.map((entryType) => entryType.id)
+    const validTypes = types.filter((type) => allTypes.includes(type))
+    const nextTypes = validTypes
+    setAlternateSearchTypesState(nextTypes)
+    localStorage.setItem(DEV_ALT_SEARCH_TYPES_KEY, JSON.stringify(nextTypes))
+  }
+
+  const setAlternateSearchIncludesPeople = (enabled: boolean) => {
+    setAlternateSearchIncludesPeopleState(enabled)
+    localStorage.setItem(DEV_ALT_SEARCH_PEOPLE_KEY, String(enabled))
+  }
+
+  const toggleAlternateSearchPeople = () => {
+    const nextPeopleState = !alternateSearchIncludesPeople
+    if (!nextPeopleState && alternateSearchTypes.length === 0) {
+      setAlternateSearchTypes(entryTypes.map((entryType) => entryType.id))
+    }
+    setAlternateSearchIncludesPeople(nextPeopleState)
+  }
+
+  const toggleAlternateSearchType = (type: MetadataType) => {
+    const nextTypes = alternateSearchTypes.includes(type)
+      ? alternateSearchTypes.filter((item) => item !== type)
+      : [...alternateSearchTypes, type]
+
+    if (nextTypes.length === 0 && !alternateSearchIncludesPeople) {
+      setAlternateSearchIncludesPeople(true)
+    }
+
+    setAlternateSearchTypes(nextTypes)
+  }
+
   useEffect(() => {
     setSearchLimit(8)
-  }, [query, searchOpen, searchTab])
+  }, [alternateSearchIncludesPeople, alternateSearchTypes, query, searchOpen, searchTab])
 
   // Pre-warm entity image URL cache and fetch live Wikipedia portraits for artists/authors/directors.
   useEffect(() => {
@@ -1210,17 +893,18 @@ function AppContent() {
       if (entity.artworkUrl) {
         const safeArtworkUrl = resolveArtworkUrl(entity.artworkUrl, entity.name, entity.categoryLabel)
         entityImageCacheMap.set(entity.id, safeArtworkUrl)
-        if (['artist', 'author', 'director', 'actor'].includes(entity.type)) {
-          entityImageCacheMap.set(entity.name.toLowerCase(), safeArtworkUrl)
-          entityImageCacheMap.set(`artist:${entity.id}`, safeArtworkUrl)
-          entityImageCacheMap.set(`artist:${entity.name.toLowerCase()}`, safeArtworkUrl)
-        }
+        entityImageCacheMap.set(entity.name.toLowerCase(), safeArtworkUrl)
+        entityImageCacheMap.set(`artist:${entity.id}`, safeArtworkUrl)
+        entityImageCacheMap.set(`artist:${entity.name.toLowerCase()}`, safeArtworkUrl)
       }
       if (entity.secondaryCollection?.items) {
         entity.secondaryCollection.items.forEach((item) => {
           if (item.artworkUrl) {
             const safeArtworkUrl = resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle)
             entityImageCacheMap.set(item.id, safeArtworkUrl)
+            entityImageCacheMap.set(item.title.toLowerCase(), safeArtworkUrl)
+            entityImageCacheMap.set(`artist:${item.id}`, safeArtworkUrl)
+            entityImageCacheMap.set(`artist:${item.title.toLowerCase()}`, safeArtworkUrl)
           }
         })
       }
@@ -1232,11 +916,9 @@ function AppContent() {
           if (item.artworkUrl) {
             const safeArtworkUrl = resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle)
             entityImageCacheMap.set(item.id, safeArtworkUrl)
-            if (['artist', 'author', 'director', 'actor'].includes(item.type || '')) {
-              entityImageCacheMap.set(item.title.toLowerCase(), safeArtworkUrl)
-              entityImageCacheMap.set(`artist:${item.id}`, safeArtworkUrl)
-              entityImageCacheMap.set(`artist:${item.title.toLowerCase()}`, safeArtworkUrl)
-            }
+            entityImageCacheMap.set(item.title.toLowerCase(), safeArtworkUrl)
+            entityImageCacheMap.set(`artist:${item.id}`, safeArtworkUrl)
+            entityImageCacheMap.set(`artist:${item.title.toLowerCase()}`, safeArtworkUrl)
           }
         })
       }
@@ -1245,13 +927,18 @@ function AppContent() {
     Object.values(MOCK_ENTITY_PROFILES).forEach((profile) => {
       if (profile.coverUrl) {
         entityImageCacheMap.set(profile.id, profile.coverUrl)
+        entityImageCacheMap.set(profile.title.toLowerCase(), profile.coverUrl)
       }
     })
   }, [])
 
   useEffect(() => {
     const normalizedQuery = query.trim()
-    if (!searchOpen || searchTab !== 'media' || normalizedQuery.length < 2) {
+    const shouldSearchMedia = alternateSearchEnabled
+      ? alternateSearchTypes.length > 0
+      : searchTab === 'media'
+
+    if (!searchOpen || !shouldSearchMedia || normalizedQuery.length < 2) {
       setHeaderMediaResults([])
       setHeaderMediaSearchLoading(false)
       return
@@ -1259,7 +946,11 @@ function AppContent() {
 
     const abortController = new AbortController()
     const timer = window.setTimeout(() => {
-      const typesToSearch = entryTypes.map((entryType) => entryType.id)
+      const fallbackTypes = entryTypes.map((entryType) => entryType.id)
+      const filteredTypes = entryTypes
+        .filter((entryType) => alternateSearchTypes.includes(entryType.id))
+        .map((entryType) => entryType.id)
+      const typesToSearch = alternateSearchEnabled ? filteredTypes : fallbackTypes
       setHeaderMediaSearchLoading(true)
 
       let pendingSearches = typesToSearch.length
@@ -1280,7 +971,7 @@ function AppContent() {
             if (pendingSearches === 0 && !abortController.signal.aborted) {
               setHeaderMediaSearchLoading(false)
             }
-          })
+        })
       })
     }, 250)
 
@@ -1288,7 +979,7 @@ function AppContent() {
       abortController.abort()
       window.clearTimeout(timer)
     }
-  }, [query, searchOpen, searchTab])
+  }, [alternateSearchEnabled, alternateSearchTypes, query, searchOpen, searchTab])
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -1306,10 +997,12 @@ function AppContent() {
 
   const handleOpenUserProfile = (handle?: string) => {
     const cleanHandle = (handle || userProfile.handle).replace(/^@/, '')
-    setSelectedProfileHandle(cleanHandle === userProfile.handle ? null : cleanHandle)
+    if (cleanHandle === userProfile.handle) {
+      setSelectedProfileHandle(null)
+    } else if (MOCK_EXTERNAL_PROFILES[cleanHandle]) {
+      setSelectedProfileHandle(cleanHandle)
+    }
     setActiveView('profile')
-    setSearchOpen(false)
-    navigate(`/users/${routeSegment(cleanHandle)}`)
   }
 
   const userSearchResults = useMemo(() => {
@@ -1328,22 +1021,16 @@ function AppContent() {
     const normalizedQuery = normalizeSearchText(query)
     if (!normalizedQuery) return []
 
-    const isYearQuery = /^\d{4}$/.test(normalizedQuery)
-
     const localProfileResults = Object.values(UNIVERSAL_MEDIA_ENTITIES)
       .filter((entity) => {
-        const titleNorm = normalizeSearchText(entity.name)
-        const creatorChips = entity.metadataChips
-          .filter((c) => /artist|author|director|creator|developer|studio/i.test(c.label))
-          .map((c) => c.value)
-          .join(' ')
-        const creatorNorm = normalizeSearchText(creatorChips)
+        const metadataFilter = entityTypeToMetadataFilter(entity.type)
+        const isPeopleEntity = peopleEntityTypes.has(entity.type)
+        const allowedByAlternateFilters = !alternateSearchEnabled || (
+          (isPeopleEntity && alternateSearchIncludesPeople) ||
+          (metadataFilter !== null && alternateSearchTypes.includes(metadataFilter))
+        )
 
-        if (isYearQuery) {
-          const titleMatches = titleNorm.includes(normalizedQuery)
-          const creatorMatches = creatorNorm.includes(normalizedQuery)
-          if (!titleMatches && !creatorMatches) return false
-        }
+        if (!allowedByAlternateFilters) return false
 
         const searchableText = normalizeSearchText([
           entity.name,
@@ -1354,83 +1041,26 @@ function AppContent() {
 
         return searchableText.includes(normalizedQuery)
       })
-      .map((entity, index) => {
-        const searchEntity = universalEntityToSearchEntity(entity, index)
-        if (entity.type !== 'game' || searchEntity.artworkUrl) return searchEntity
-
-        const normalizedTitle = normalizeSearchText(entity.name)
-        const rawgMatch = headerMediaResults.find(
-          (result) => result.type === 'game' && normalizeSearchText(result.title) === normalizedTitle,
-        )
-        return rawgMatch?.coverUrl
-          ? { ...searchEntity, artworkUrl: resolveArtworkUrl(rawgMatch.coverUrl, entity.name, entity.type) }
-          : searchEntity
-      })
-
-    const typeRankCounters: Record<string, number> = {}
-    const metadataResults = headerMediaResults
-      .filter((result) => !isYearOnlyMetadataMatch(result, normalizedQuery))
-      .map((result) => {
-        typeRankCounters[result.type] = (typeRankCounters[result.type] || 0) + 1
-        return metadataResultToSearchEntity(result, typeRankCounters[result.type] - 1)
-      })
-
-    const synthesizedArtistResults: HeaderSearchEntity[] = []
-    const seenArtistNames = new Set<string>(
-      localProfileResults
-        .filter((e) => e.type === 'artist' || e.type === 'author' || e.type === 'director')
-        .map((e) => normalizeSearchText(e.title)),
-    )
-
-    headerMediaResults.forEach((result) => {
-      if (!result.creator) return
-      if (result.type === 'album' || result.type === 'song') {
-        if (isCollaborationCredit(result.creator)) return
-      }
-      const creatorNorm = normalizeSearchText(result.creator)
-      if (!creatorNorm || creatorNorm.length < 2) return
-      if (creatorNorm.includes(normalizedQuery) || normalizedQuery.includes(creatorNorm)) {
-        if (!seenArtistNames.has(creatorNorm)) {
-          seenArtistNames.add(creatorNorm)
-          synthesizedArtistResults.push({
-            id: `artist:${creatorNorm.replace(/\s+/g, '-')}`,
-            title: result.creator,
-            artworkUrl: '',
-            type: 'artist',
-            creatorValue: 'Artist',
-            bio: 'Musician / Artist',
-            source: 'metadata',
-            rank: 0,
-          })
-        }
-      }
-    })
-
-    const combined = dedupeSearchEntities([
-      ...synthesizedArtistResults,
-      ...localProfileResults,
-      ...metadataResults,
-    ])
-
-    return combined.sort((a, b) => {
-      const scoreA = getSearchEntityScore(a, normalizedQuery)
-      const scoreB = getSearchEntityScore(b, normalizedQuery)
-      return scoreB - scoreA
-    })
-  }, [headerMediaResults, query])
-
-  const altMediaResults = useMemo(() => {
-    const normalizedQuery = normalizeSearchText(query)
-
-    return [...mediaSearchResults]
       .sort((a, b) => {
-        const popularityDelta = getEntityPopularityScore(b) - getEntityPopularityScore(a)
-        if (Math.abs(popularityDelta) > 0.001) return popularityDelta
+        const aTitle = normalizeSearchText(a.name)
+        const bTitle = normalizeSearchText(b.name)
+        const aExact = aTitle === normalizedQuery ? 0 : 1
+        const bExact = bTitle === normalizedQuery ? 0 : 1
+        if (aExact !== bExact) return aExact - bExact
 
-        return getSearchEntityScore(b, normalizedQuery) - getSearchEntityScore(a, normalizedQuery)
+        const aPerson = peopleEntityTypes.has(a.type) ? 0 : 1
+        const bPerson = peopleEntityTypes.has(b.type) ? 0 : 1
+        if (aPerson !== bPerson) return aPerson - bPerson
+
+        return getEntityPopularityScore(b) - getEntityPopularityScore(a)
       })
-      .map(toAltMediaResult)
-  }, [mediaSearchResults, query])
+      .map((entity, index) => universalEntityToSearchEntity(entity, index))
+
+    const metadataResults = headerMediaResults.map((result, index) =>
+      metadataResultToSearchEntity(result, localProfileResults.length + index),
+    )
+    return dedupeSearchEntities([...localProfileResults, ...metadataResults])
+  }, [alternateSearchEnabled, alternateSearchIncludesPeople, alternateSearchTypes, headerMediaResults, query])
 
   const [followedUserHandles, setFollowedUserHandles] = useState<string[]>(() => {
     try {
@@ -1614,13 +1244,39 @@ function AppContent() {
     </div>
   )
 
-  const handleOpenUserFromSearch = (handle: string) => {
-    const cleanHandle = handle.replace(/^@/, '')
-    setSelectedProfileHandle(cleanHandle === userProfile.handle ? null : cleanHandle)
-    setActiveView('profile')
-    setSearchOpen(false)
-    navigate(`/users/${routeSegment(cleanHandle)}`)
-  }
+  const renderHeaderSearchFilters = () => (
+    <div className="search-filter-row" role="group" aria-label="Search filters">
+      <button
+        type="button"
+        className={`search-filter-chip ${alternateSearchIncludesPeople ? 'active selected' : ''}`}
+        onClick={() => {
+          toggleAlternateSearchPeople()
+          setSearchTab('media')
+        }}
+      >
+        <User aria-hidden="true" />
+        <span>People</span>
+      </button>
+      {entryTypes.map(({ id, label, Icon }) => {
+        const active = alternateSearchTypes.includes(id)
+        return (
+          <button
+            key={id}
+            type="button"
+            className={`search-filter-chip ${active ? 'active' : ''} ${searchTab === 'media' && active ? 'selected' : ''}`}
+            onClick={() => {
+              const removingLastMediaType = active && alternateSearchTypes.length === 1
+              toggleAlternateSearchType(id)
+              setSearchTab(removingLastMediaType && alternateSearchIncludesPeople ? 'users' : 'media')
+            }}
+          >
+            <Icon aria-hidden="true" />
+            <span>{label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
 
   const renderHeaderSearchTabs = () => (
     <div className="search-tabs-row">
@@ -1641,150 +1297,125 @@ function AppContent() {
     </div>
   )
 
-  // Default search box — rendered verbatim while the alternate search toggle is off.
-  const renderDefaultSearch = () => (
-    <div className={`hdr-search-box ${searchOpen ? 'open' : ''}`}>
-      <button
-        className="hdr-icon-btn"
-        type="button"
-        aria-label="Search"
-        onClick={() => setSearchOpen((v) => !v)}
-        title="Search entries and users"
-      >
-        <Search aria-hidden="true" />
-      </button>
-      {searchOpen && (
-        <>
-          <input
-            type="text"
-            className="hdr-search-input"
-            value={query}
-            onChange={(e) => handleQueryChange(e.target.value)}
-            placeholder="Search title, user, author..."
-            aria-label="Search entries and users"
-            autoFocus
-          />
-          <button
-            type="button"
-            className="hdr-search-close"
-            title="Close search"
-            aria-label="Close search"
-            onClick={() => {
-              setQuery('')
-              setSearchOpen(false)
-            }}
-          >
-            <X aria-hidden="true" />
-          </button>
-        </>
-      )}
-
-      {searchOpen && query.trim().length > 0 && (
-        <div className="search-results-dropdown">
-          {renderHeaderSearchTabs()}
-
-          <div className="search-dropdown-section">
-            {searchTab === 'users' ? (
-              query.trim().length === 0 ? (
-                <div className="search-no-results">Start typing to search people.</div>
-              ) : userSearchResults.length === 0 ? (
-                <div className="search-no-results">No people matching "{query}"</div>
-              ) : (
-                userSearchResults.map((u) => {
-                  const isOwn = u.handle === userProfile.handle
-                  return (
-                    <button
-                      key={u.handle}
-                      type="button"
-                      className="search-user-item"
-                      onClick={() => handleOpenUserFromSearch(u.handle)}
-                    >
-                      <div className="search-user-left">
-                        <div className="search-user-avatar">
-                          {u.avatar ? (
-                            <img src={u.avatar} alt={u.name} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
-                          ) : (
-                            <User aria-hidden="true" />
-                          )}
-                        </div>
-                        <div className="search-user-info">
-                          <span className="search-user-name">
-                            {u.name}
-                            {u.isPrivate && <Lock size={12} style={{ marginLeft: 5, verticalAlign: 'middle', color: 'var(--secondary)' }} />}
-                          </span>
-                          <span className="search-user-handle">@{u.handle} &bull; {u.reviews} reviews</span>
-                        </div>
-                      </div>
-                      <span className="search-user-action">{isOwn ? 'My Profile' : 'View Profile'}</span>
-                    </button>
-                  )
-                })
-              )
-            ) : (
-              <>
-                {query.trim().length === 0 ? (
-                  <div className="search-no-results">
-                    Start typing to search media.
-                  </div>
-                ) : mediaSearchResults.length === 0 ? (
-                  <div className="search-no-results">
-                    {headerMediaSearchLoading ? 'Searching' : `No media profiles matching "${query}"`}
-                  </div>
-                ) : (
-                  <>
-                    {mediaSearchResults.slice(0, searchLimit).map((entity) => (
-                      <EntitySearchItem
-                        key={entity.id}
-                        entity={entity}
-                        onSelect={() => handleOpenSearchEntity(entity)}
-                      />
-                    ))}
-                    {mediaSearchResults.length > searchLimit && (
-                      <div className="search-load-more-container">
-                        <button
-                          type="button"
-                          className="search-load-more-btn"
-                          onClick={() => setSearchLimit((prev) => prev + 8)}
-                        >
-                          <span>Load more</span>
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-
-  // Alternate search box — replaces the default search while the toggle is on.
-  const renderAlternateSearch = () => (
-    <AlternateSearch
-      query={query}
-      onQueryChange={handleQueryChange}
-      open={searchOpen}
-      onOpenChange={setSearchOpen}
-      mode={searchTab}
-      onModeChange={setSearchTab}
-      mediaResults={altMediaResults}
-      mediaLoading={headerMediaSearchLoading}
-      onOpenEntity={(result) => {
-        const entity = mediaSearchResults.find((e) => e.id === result.id)
-        if (entity) handleOpenSearchEntity(entity)
-      }}
-      onOpenUser={handleOpenUserFromSearch}
-    />
-  )
-
-  const renderSearchBox = () =>
-    alternateSearchEnabled ? renderAlternateSearch() : renderDefaultSearch()
-
   const renderFloatingHeaderActions = () => (
     <div className="floating-header-actions">
-      {renderSearchBox()}
+      <div className={`hdr-search-box ${searchOpen ? 'open' : ''}`}>
+        <button
+          className="hdr-icon-btn"
+          type="button"
+          aria-label="Search"
+          onClick={() => setSearchOpen((v) => !v)}
+          title="Search entries and users"
+        >
+          <Search aria-hidden="true" />
+        </button>
+        {searchOpen && (
+          <>
+            <input
+              type="text"
+              className="hdr-search-input"
+              value={query}
+              onChange={(e) => handleQueryChange(e.target.value)}
+              placeholder="Search title, user, author..."
+              aria-label="Search entries and users"
+              autoFocus
+            />
+            <button
+              type="button"
+              className="hdr-search-close"
+              title="Close search"
+              aria-label="Close search"
+              onClick={() => {
+                setQuery('')
+                setSearchOpen(false)
+              }}
+            >
+              <X aria-hidden="true" />
+            </button>
+          </>
+        )}
+
+        {searchOpen && (query.trim().length > 0 || alternateSearchEnabled) && (
+          <div className="search-results-dropdown">
+            {alternateSearchEnabled ? renderHeaderSearchFilters() : renderHeaderSearchTabs()}
+
+            <div className="search-dropdown-section">
+              {!alternateSearchEnabled && searchTab === 'users' ? (
+                query.trim().length === 0 ? (
+                  <div className="search-no-results">Start typing to search people.</div>
+                ) : userSearchResults.length === 0 ? (
+                  <div className="search-no-results">No people matching "{query}"</div>
+                ) : (
+                  userSearchResults.map((u) => {
+                    const isOwn = u.handle === userProfile.handle
+                    return (
+                      <button
+                        key={u.handle}
+                        type="button"
+                        className="search-user-item"
+                        onClick={() => {
+                          setSelectedProfileHandle(isOwn ? null : u.handle)
+                          setActiveView('profile')
+                          setSearchOpen(false)
+                        }}
+                      >
+                        <div className="search-user-left">
+                          <div className="search-user-avatar">
+                            {u.avatar ? (
+                              <img src={u.avatar} alt={u.name} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
+                            ) : (
+                              <User aria-hidden="true" />
+                            )}
+                          </div>
+                          <div className="search-user-info">
+                            <span className="search-user-name">
+                              {u.name}
+                              {u.isPrivate && <Lock size={12} style={{ marginLeft: 5, verticalAlign: 'middle', color: 'var(--secondary)' }} />}
+                            </span>
+                            <span className="search-user-handle">@{u.handle} &bull; {u.reviews} reviews</span>
+                          </div>
+                        </div>
+                        <span className="search-user-action">{isOwn ? 'My Profile' : 'View Profile'}</span>
+                      </button>
+                    )
+                  })
+                )
+              ) : (
+                <>
+                  {query.trim().length === 0 ? (
+                    <div className="search-no-results">Start typing to search media.</div>
+                  ) : mediaSearchResults.length === 0 ? (
+                    <div className="search-no-results">
+                      {headerMediaSearchLoading ? 'Searching' : `No media profiles matching "${query}"`}
+                    </div>
+                  ) : (
+                    <>
+                      {mediaSearchResults.slice(0, searchLimit).map((entity) => (
+                        <EntitySearchItem
+                          key={entity.id}
+                          entity={entity}
+                          onSelect={() => handleOpenSearchEntity(entity)}
+                        />
+                      ))}
+                      {mediaSearchResults.length > searchLimit && (
+                        <div className="search-load-more-container">
+                          <button
+                            type="button"
+                            className="search-load-more-btn"
+                            onClick={() => setSearchLimit((prev) => prev + 8)}
+                          >
+                            <span>Load more</span>
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
 
       {renderNotificationsGroup()}
 
@@ -1821,7 +1452,8 @@ function AppContent() {
                   type="button"
                   className="menu-view-profile-link"
                   onClick={() => {
-                    handleOpenUserProfile(userProfile.handle)
+                    setSelectedProfileHandle(null)
+                    setActiveView('profile')
                     setProfileMenuOpen(false)
                   }}
                 >
@@ -1833,7 +1465,10 @@ function AppContent() {
             <button
               type="button"
               className="menu-item"
-              onClick={handleOpenSettings}
+              onClick={() => {
+                setActiveView('settings')
+                setProfileMenuOpen(false)
+              }}
             >
               <Settings aria-hidden="true" />
               <span>Settings</span>
@@ -1879,66 +1514,14 @@ function AppContent() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const openComposer = (
-    entry: Entry | null = null,
-    initialDraft: EntryDraft | null = null,
-    initialLyrics = '',
-  ) => {
+  const openComposer = (entry: Entry | null = null) => {
     setEditingEntry(entry)
-    setComposerInitialDraft(entry ? null : initialDraft)
-    setComposerInitialLyrics(entry ? '' : initialLyrics)
     setComposerOpen(true)
   }
 
   const closeComposer = () => {
     setComposerOpen(false)
     setEditingEntry(null)
-    setComposerInitialDraft(null)
-    setComposerInitialLyrics('')
-  }
-
-  const handleQuickAddEntityEntry = ({
-    entity,
-    favoritePassage,
-    lyrics,
-    artworkUrl,
-    metadataChips,
-  }: {
-    entity: UniversalMediaEntity
-    favoritePassage: string
-    lyrics: string
-    artworkUrl: string
-    metadataChips: Array<{ label: string; value: string }>
-  }) => {
-    const getChip = (pattern: RegExp) =>
-      metadataChips.find((chip) => pattern.test(chip.label))?.value || ''
-    const artist = getChip(/artist|creator/i)
-    const album = getChip(/album/i)
-    const year = getChip(/year|release/i)
-
-    openComposer(
-      null,
-      {
-        ...emptyDraft,
-        type: entity.type === 'song' ? 'song' : 'album',
-        title: entity.name,
-        creator: artist,
-        provider: album || entity.categoryLabel,
-        providerId: entity.providerId || entity.id,
-        year,
-        coverUrl: artworkUrl,
-        summary: entity.description,
-        explicit: entity.explicit || metadataChips.some((chip) =>
-          chip.label.toLowerCase() === 'explicit' && chip.value.toLowerCase() === 'yes',
-        ),
-        favoritePassage,
-        coverTone: getDefaultCoverTone(entity.type === 'song' ? 'song' : 'album'),
-        authorHandle: userProfile.handle,
-        authorName: userProfileName,
-        authorAvatarUrl: userProfile.avatarUrl,
-      },
-      lyrics,
-    )
   }
 
   const handleSave = (draft: EntryDraft, disableComments?: boolean) => {
@@ -2016,7 +1599,10 @@ function AppContent() {
       <>
         {renderFloatingHeaderActions()}
         <UserProfilePage
-          onBack={handleHome}
+          onBack={() => {
+            setSelectedProfileHandle(null)
+            setActiveView('feed')
+          }}
           entries={currentProfileData.entries}
           savedEntryIds={savedEntryIds}
           likedEntryIds={likedEntryIds}
@@ -2026,13 +1612,20 @@ function AppContent() {
           onToggleSave={toggleSaveEntry}
           onToggleCommentsDisabled={toggleCommentsDisabled}
           userProfile={currentProfileData.profile}
-          onNavigateToSettings={handleOpenSettings}
+          onNavigateToSettings={() => setActiveView('settings')}
           onDeleteEntry={(id) => promptDeleteEntry(id)}
           onEditEntry={(entry) => openComposer(entry)}
           categoryFilter={profileCategoryFilter}
           onCategoryFilterChange={setProfileCategoryFilter}
           isOwnProfile={isViewingOwn}
-          onSelectUserProfile={handleOpenUserProfile}
+          onSelectUserProfile={(handle) => {
+            const cleanHandle = handle.replace(/^@/, '')
+            if (cleanHandle === userProfile.handle) {
+              setSelectedProfileHandle(null)
+            } else if (MOCK_EXTERNAL_PROFILES[cleanHandle]) {
+              setSelectedProfileHandle(cleanHandle)
+            }
+          }}
           followedUserHandles={followedUserHandles}
           onToggleFollowUser={toggleFollowUser}
           currentUserProfile={userProfile}
@@ -2084,8 +1677,6 @@ function AppContent() {
           {composerOpen ? (
             <EntryComposer
               entry={editingEntry}
-              initialDraft={composerInitialDraft}
-              initialLyrics={composerInitialLyrics}
               onClose={closeComposer}
               onSave={handleSave}
               commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
@@ -2145,31 +1736,26 @@ function AppContent() {
             .replace(/-/g, ' ')
             .replace(/\b\w/g, (l) => l.toUpperCase())
 
-      const fallbackType = selectedEntityType || inferEntityTypeFromId(selectedEntityId)
-      const isSong = fallbackType === 'song'
-      const isAlbum = fallbackType === 'album'
-      const trackIdMatch = selectedEntityId.match(/^song-(\d+)$/i)
-      const albumIdMatch = selectedEntityId.match(/^album-(\d+)$/i)
+      const isSong = selectedEntityId.startsWith('song-')
+      const isAlbum = selectedEntityId.startsWith('album-') || selectedEntityId.includes('ep')
 
       universalEntity = {
         id: selectedEntityId,
         name: cleanName,
-        type: fallbackType,
-        categoryLabel: fallbackType === 'movie' ? 'Film' : fallbackType.replace('_', ' ').replace(/\b\w/g, (l) => l.toUpperCase()),
-        providerId: trackIdMatch ? trackIdMatch[1] : albumIdMatch ? albumIdMatch[1] : undefined,
-        explicit: mapItem?.explicit,
+        type: isSong ? 'song' : isAlbum ? 'album' : 'artist',
+        categoryLabel: isSong ? 'Song' : isAlbum ? 'Album' : 'Artist',
         artworkUrl: resolveArtworkUrl(
           mapItem?.artworkUrl ||
+          entityImageCacheMap.get(cleanName) ||
           '',
           cleanName,
-          isSong ? 'Song' : isAlbum ? 'Album' : fallbackType,
+          isSong ? 'Song' : isAlbum ? 'Album' : 'Artist',
         ),
         description: `Official catalog entry for ${cleanName} in The Commonplace community reflections archive.`,
         metadataChips: [
-          { label: isAlbum || isSong ? 'Artist' : 'Creator', value: mapItem?.artist || 'Unknown' },
-          { label: 'Category', value: fallbackType === 'movie' ? 'Film' : fallbackType.replace('_', ' ') },
+          { label: 'Artist', value: mapItem?.artist || 'Artist' },
+          { label: 'Category', value: isSong ? 'Song' : isAlbum ? 'Album' : 'Artist' },
           { label: 'Release Year', value: mapItem?.year || '2023' },
-          ...(mapItem?.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
         ],
         communityRating: {
           average: 4.9,
@@ -2191,7 +1777,6 @@ function AppContent() {
             onSelectEntry={setOverlayEntry}
             onOpenUserProfile={handleOpenUserProfile}
             onNavigateToEntity={handleNavigateEntityBreadcrumb}
-            onQuickAddEntry={handleQuickAddEntityEntry}
             likedEntryIds={likedEntryIds}
             savedEntryIds={savedEntryIds}
             disabledCommentEntryIds={disabledCommentEntryIds}
@@ -2206,18 +1791,6 @@ function AppContent() {
             onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
             onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
           />
-          <AnimatePresence>
-            {composerOpen ? (
-              <EntryComposer
-                entry={editingEntry}
-                initialDraft={composerInitialDraft}
-                initialLyrics={composerInitialLyrics}
-                onClose={closeComposer}
-                onSave={handleSave}
-                commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
-              />
-            ) : null}
-          </AnimatePresence>
           {renderQuickDevTools()}
         </>
       )
@@ -2228,7 +1801,7 @@ function AppContent() {
     return (
       <>
         <SettingsPage
-          onBack={handleHome}
+          onBack={() => setActiveView('feed')}
           onClearAllData={() => {
             setEntries([])
             localStorage.removeItem(storageKey)
@@ -2255,7 +1828,130 @@ function AppContent() {
               <h1 className="commonplace-title">The Commonplace.</h1>
             </div>
             <div className="header-actions">
-              {renderSearchBox()}
+              <div className={`hdr-search-box ${searchOpen ? 'open' : ''}`}>
+                <button
+                  className="hdr-icon-btn"
+                  type="button"
+                  aria-label="Search"
+                  onClick={() => setSearchOpen((v) => !v)}
+                  title="Search entries and users"
+                >
+                  <Search aria-hidden="true" />
+                </button>
+                {searchOpen && (
+                  <>
+                    <input
+                      type="text"
+                      className="hdr-search-input"
+                      value={query}
+                      onChange={(e) => handleQueryChange(e.target.value)}
+                      placeholder="Search title, user, author…"
+                      aria-label="Search entries and users"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      className="hdr-search-close"
+                      title="Close search"
+                      aria-label="Close search"
+                      onClick={() => {
+                        setQuery('')
+                        setSearchOpen(false)
+                      }}
+                    >
+                      <X aria-hidden="true" />
+                    </button>
+                  </>
+                )}
+
+                {/* Search Dropdown with Tabs for Users vs Media/Entities */}
+                {searchOpen && (query.trim().length > 0 || alternateSearchEnabled) && (
+                  <div className="search-results-dropdown">
+                    {alternateSearchEnabled ? renderHeaderSearchFilters() : renderHeaderSearchTabs()}
+
+                    <div className="search-dropdown-section">
+                      {!alternateSearchEnabled && searchTab === 'users' ? (
+                        query.trim().length === 0 ? (
+                          <div className="search-no-results">
+                            Start typing to search people.
+                          </div>
+                        ) : userSearchResults.length === 0 ? (
+                          <div className="search-no-results">
+                            No people matching "{query}"
+                          </div>
+                        ) : (
+                          userSearchResults.map((u) => {
+                            const isOwn = u.handle === userProfile.handle
+                            return (
+                              <button
+                                key={u.handle}
+                                type="button"
+                                className="search-user-item"
+                                onClick={() => {
+                                  setSelectedProfileHandle(isOwn ? null : u.handle)
+                                  setActiveView('profile')
+                                  setSearchOpen(false)
+                                }}
+                              >
+                                <div className="search-user-left">
+                                  <div className="search-user-avatar">
+                                    {u.avatar ? (
+                                      <img src={u.avatar} alt={u.name} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
+                                    ) : (
+                                      <User aria-hidden="true" />
+                                    )}
+                                  </div>
+                                  <div className="search-user-info">
+                                    <span className="search-user-name">
+                                      {u.name}
+                                      {u.isPrivate && <Lock size={12} style={{ marginLeft: 5, verticalAlign: 'middle', color: 'var(--secondary)' }} />}
+                                    </span>
+                                    <span className="search-user-handle">@{u.handle} &bull; {u.reviews} reviews</span>
+                                  </div>
+                                </div>
+                                <span className="search-user-action">{isOwn ? 'My Profile' : 'View Profile'}</span>
+                              </button>
+                            )
+                          })
+                        )
+                      ) : (
+                        <>
+                          {query.trim().length === 0 ? (
+                            <div className="search-no-results">
+                              Start typing to search media.
+                            </div>
+                          ) : mediaSearchResults.length === 0 ? (
+                            <div className="search-no-results">
+                              {headerMediaSearchLoading ? 'Searching' : `No media profiles matching "${query}"`}
+                            </div>
+                          ) : (
+                            <>
+                              {mediaSearchResults.slice(0, searchLimit).map((entity) => (
+                                <EntitySearchItem
+                                  key={entity.id}
+                                  entity={entity}
+                                  onSelect={() => handleOpenSearchEntity(entity)}
+                                />
+                              ))}
+                              {mediaSearchResults.length > searchLimit && (
+                                <div className="search-load-more-container">
+                                  <button
+                                    type="button"
+                                    className="search-load-more-btn"
+                                    onClick={() => setSearchLimit((prev) => prev + 8)}
+                                  >
+                                    <span>Load more</span>
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {renderNotificationsGroup()}
 
@@ -2293,7 +1989,8 @@ function AppContent() {
                           type="button"
                           className="menu-view-profile-link"
                           onClick={() => {
-                            handleOpenUserProfile(userProfile.handle)
+                            setSelectedProfileHandle(null)
+                            setActiveView('profile')
                             setProfileMenuOpen(false)
                           }}
                         >
@@ -2305,7 +2002,10 @@ function AppContent() {
                     <button
                       type="button"
                       className="menu-item"
-                      onClick={handleOpenSettings}
+                      onClick={() => {
+                        setActiveView('settings')
+                        setProfileMenuOpen(false)
+                      }}
                     >
                       <Settings aria-hidden="true" />
                       <span>Settings</span>
@@ -2613,8 +2313,6 @@ function AppContent() {
         {composerOpen ? (
           <EntryComposer
             entry={editingEntry}
-            initialDraft={composerInitialDraft}
-            initialLyrics={composerInitialLyrics}
             onClose={closeComposer}
             onSave={handleSave}
             commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
@@ -2628,11 +2326,9 @@ function AppContent() {
 
 function App() {
   return (
-    <BrowserRouter>
-      <ExpansionProvider>
-        <AppContent />
-      </ExpansionProvider>
-    </BrowserRouter>
+    <ExpansionProvider>
+      <AppContent />
+    </ExpansionProvider>
   )
 }
 
@@ -2666,15 +2362,11 @@ function TypeIconBar({
 
 function EntryComposer({
   entry,
-  initialDraft: initialDraftSeed,
-  initialLyrics = '',
   onClose,
   onSave,
   commentsDisabled = false,
 }: {
   entry: Entry | null
-  initialDraft?: EntryDraft | null
-  initialLyrics?: string
   onClose: () => void
   onSave: (draft: EntryDraft, disableComments?: boolean) => void
   commentsDisabled?: boolean
@@ -2697,10 +2389,9 @@ function EntryComposer({
         enableDropCap: entry.enableDropCap ?? false,
         coverUrl: entry.coverUrl,
         summary: entry.summary,
-        explicit: entry.explicit,
         coverTone: entry.coverTone,
       }
-    : initialDraftSeed || emptyDraft
+    : emptyDraft
   const [draft, setDraft] = useState<EntryDraft>(
     initialDraft,
   )
@@ -2710,24 +2401,18 @@ function EntryComposer({
     'idle' | 'searching' | 'ready' | 'error'
   >('idle')
   const [statusMessage, setStatusMessage] = useState('')
-  const [selectedLyricIndexes, setSelectedLyricIndexes] = useState<number[]>(() =>
-    initialLyrics && initialDraft.favoritePassage
-      ? getMatchingLyricIndexes(initialLyrics, initialDraft.favoritePassage)
-      : [],
-  )
-  const [showPassage, setShowPassage] = useState(() => Boolean(initialDraft.favoritePassage?.trim()))
+  const [selectedLyricIndexes, setSelectedLyricIndexes] = useState<number[]>([])
+  const [showPassage, setShowPassage] = useState(() => Boolean(entry?.favoritePassage?.trim()))
   const [lyricsStatus, setLyricsStatus] = useState<
     'idle' | 'loading' | 'ready' | 'not-found'
-  >(initialLyrics || initialDraftSeed?.favoritePassage ? 'ready' : 'idle')
+  >(entry ? 'idle' : 'idle') // on edit, we skip auto-fetch; set to 'loaded-skip' sentinel
   const isEditMode = Boolean(entry)
-  const [lyrics, setLyrics] = useState(initialLyrics)
+  const [lyrics, setLyrics] = useState('')
   const [showUnratedConfirm, setShowUnratedConfirm] = useState(false)
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false)
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const [pendingDraft, setPendingDraft] = useState<EntryDraft | null>(null)
   const lyricsFetchId = useRef(0)
-  const lyricsBoxRef = useRef<HTMLDivElement>(null)
-  const hasAutoScrolledLyricsRef = useRef(false)
   const reflectionRef = useRef<HTMLDivElement>(null)
   const passageRef = useRef<HTMLDivElement>(null)
   const [activeTarget, setActiveTarget] = useState<'reflection' | 'favoritePassage'>('reflection')
@@ -2745,31 +2430,12 @@ function EntryComposer({
   }
 
   const isMusicEntry = draft.type === 'song' || draft.type === 'album'
-  const lyricSourceText = lyrics || (draft.type === 'song' ? draft.favoritePassage : '')
-  const lyricLines = lyricSourceText
+  const lyricLines = lyrics
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
 
   useEffect(() => {
-    if (hasAutoScrolledLyricsRef.current) return
-    if (lyricsStatus !== 'ready') return
-    if (selectedLyricIndexes.length === 0) return
-
-    const firstSelectedIndex = selectedLyricIndexes[0]
-    const frameId = window.requestAnimationFrame(() => {
-      const selectedLine = lyricsBoxRef.current?.querySelector<HTMLElement>(
-        `[data-lyric-index="${firstSelectedIndex}"]`,
-      )
-      selectedLine?.scrollIntoView({ block: 'center' })
-      hasAutoScrolledLyricsRef.current = true
-    })
-
-    return () => window.cancelAnimationFrame(frameId)
-  }, [lyricsStatus, selectedLyricIndexes])
-
-  useEffect(() => {
-    if (initialLyrics || initialDraftSeed?.favoritePassage) return
     if (draft.type !== 'song' || !draft.title || !draft.creator) return
     if (lyricsStatus !== 'idle') return
 
@@ -3058,12 +2724,7 @@ function EntryComposer({
                             )}
                           </span>
                           <span className="metadata-option-copy">
-                            <strong className="metadata-option-title">
-                              <span>{result.title}</span>
-                              {result.explicit && (
-                                <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>
-                              )}
-                            </strong>
+                            <strong>{result.title}</strong>
                             <span className="metadata-type-line">
                               <span>{[result.creator, result.provider || result.genre].filter(Boolean).join(' • ')}</span>
                             </span>
@@ -3092,10 +2753,7 @@ function EntryComposer({
                   )}
                 </div>
                 <div className="selected-metadata-info">
-                  <h3>
-                    <span>{draft.title}</span>
-                    {draft.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-                  </h3>
+                  <h3>{draft.title}</h3>
                   {draft.type === 'book' && (
                     <>
                       {draft.creator && <p>Author: {draft.creator}</p>}
@@ -3167,7 +2825,7 @@ function EntryComposer({
                 <div className="passage-header">
                   <span>Favorite lyrics</span>
                 </div>
-                <div className="lyrics-box" ref={lyricsBoxRef}>
+                <div className="lyrics-box">
                   {lyricsStatus === 'idle' && (
                     <div className="lyrics-placeholder">
                       <Music4 aria-hidden="true" />
@@ -3195,7 +2853,6 @@ function EntryComposer({
                               : 'lyric-line'
                           }
                           key={`${line}-${index}`}
-                          data-lyric-index={index}
                           type="button"
                           onClick={() => toggleLyricLine(index)}
                         >

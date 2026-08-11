@@ -5,15 +5,21 @@ const PROXIED_IMAGE_HOSTS = [
   /^media\.rawg\.io$/i,
 ]
 
-const DEV_IMAGE_PROXY_HOSTS: Array<{ pattern: RegExp; prefix: string }> = [
-  { pattern: /^cdn\.cloudflare\.steamstatic\.com$/i, prefix: '/steam-images' },
-  { pattern: /^www\.ireddead\.com$/i, prefix: '/ireddead-images' },
-  { pattern: /^image\.api\.playstation\.com$/i, prefix: '/playstation-store-images' },
-  { pattern: /^gmedia\.playstation\.com$/i, prefix: '/playstation-media-images' },
-  { pattern: /^media\.valorant-api\.com$/i, prefix: '/valorant-images' },
-  { pattern: /^ddragon\.leagueoflegends\.com$/i, prefix: '/league-images' },
-  { pattern: /^media\.rawg\.io$/i, prefix: '/rawg-images' },
-]
+function escapeSvgText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function hashText(value: string) {
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) % 360
+  }
+  return hash
+}
 
 export function isBlockedArtworkUrl(url?: string | null) {
   if (!url || url.startsWith('data:') || url.startsWith('/')) return false
@@ -26,61 +32,33 @@ export function isBlockedArtworkUrl(url?: string | null) {
   }
 }
 
-function placeholderIcon(label: string) {
-  const normalized = label.toLowerCase()
-  if (/(song|track|music|single)/.test(normalized)) {
-    return `
-      <path d="M9 18V5l10-2v13"/>
-      <circle cx="6" cy="18" r="3"/>
-      <circle cx="16" cy="16" r="3"/>
-    `
-  }
-  if (/(album|ep|disc|record)/.test(normalized)) {
-    return `
-      <circle cx="12" cy="12" r="8.5"/>
-      <circle cx="12" cy="12" r="2.3"/>
-      <path d="M12 3.5v3"/>
-    `
-  }
-  if (/(film|movie|director|actor)/.test(normalized)) {
-    return `
-      <rect x="4" y="4" width="16" height="16" rx="2"/>
-      <path d="M8 4v16M16 4v16M4 8h4M4 16h4M16 8h4M16 16h4"/>
-    `
-  }
-  if (/(tv|show|series)/.test(normalized)) {
-    return `
-      <rect x="4" y="5" width="16" height="12" rx="2"/>
-      <path d="M9 21h6M12 17v4"/>
-    `
-  }
-  if (/(game|studio)/.test(normalized)) {
-    return `
-      <path d="M7 15h-.6A3.4 3.4 0 0 1 3 11.6v-.2A3.4 3.4 0 0 1 6.4 8h11.2A3.4 3.4 0 0 1 21 11.4v.2a3.4 3.4 0 0 1-3.4 3.4H17l-2-2H9l-2 2z"/>
-      <path d="M8 10v4M6 12h4M16 11h.01M18 13h.01"/>
-    `
-  }
-  if (/(artist|author|user|person|people)/.test(normalized)) {
-    return `
-      <circle cx="12" cy="8" r="3.5"/>
-      <path d="M5 20a7 7 0 0 1 14 0"/>
-    `
-  }
-  return `
-    <path d="M6 4h8l4 4v12H6z"/>
-    <path d="M14 4v4h4"/>
-  `
-}
-
 export function createArtworkPlaceholder(title = 'Artwork', label = 'Album') {
+  const cleanTitle = title.trim() || 'Artwork'
   const cleanLabel = label.trim() || 'Album'
-  void title
+  const hue = hashText(`${cleanTitle}:${cleanLabel}`)
+  const initials = cleanTitle
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase())
+    .join('')
+    .slice(0, 3) || 'A'
+  const titleLine = cleanTitle.length > 34 ? `${cleanTitle.slice(0, 31)}...` : cleanTitle
+  const labelLine = cleanLabel.length > 28 ? `${cleanLabel.slice(0, 25)}...` : cleanLabel
   const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="0 0 800 800">
-  <rect width="800" height="800" fill="#100d09"/>
-  <svg x="300" y="300" width="200" height="200" viewBox="0 0 24 24" fill="none" stroke="#d6ae73" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">
-    ${placeholderIcon(cleanLabel)}
-  </svg>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="hsl(${hue}, 48%, 28%)"/>
+      <stop offset="1" stop-color="hsl(${(hue + 52) % 360}, 42%, 13%)"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="800" fill="url(#g)"/>
+  <rect x="58" y="58" width="684" height="684" rx="46" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
+  <circle cx="400" cy="328" r="138" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.22)" stroke-width="2"/>
+  <text x="400" y="358" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="92" font-weight="800" fill="#fff">${escapeSvgText(initials)}</text>
+  <text x="400" y="548" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="38" font-weight="700" fill="#fff">${escapeSvgText(titleLine)}</text>
+  <text x="400" y="604" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="26" font-weight="600" fill="rgba(255,255,255,0.76)">${escapeSvgText(labelLine)}</text>
 </svg>`.trim()
 
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
@@ -88,16 +66,6 @@ export function createArtworkPlaceholder(title = 'Artwork', label = 'Album') {
 
 export function resolveArtworkUrl(url?: string | null, _title?: string, _label?: string) {
   if (!url) return ''
-
-  if (import.meta.env.DEV && !url.startsWith('data:') && !url.startsWith('/')) {
-    try {
-      const parsed = new URL(url)
-      const proxy = DEV_IMAGE_PROXY_HOSTS.find((host) => host.pattern.test(parsed.hostname))
-      if (proxy) return `${proxy.prefix}${parsed.pathname}${parsed.search}`
-    } catch {
-      return url
-    }
-  }
-
+  // Return the direct URL. Direct CDN loading from Apple, TMDB, RAWG, and Unsplash works instantly.
   return url
 }

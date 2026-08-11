@@ -18,7 +18,6 @@ import {
   Sparkles,
   BarChart2,
   Loader2,
-  Plus,
   User,
   Music4,
   Quote,
@@ -40,10 +39,8 @@ import {
   fetchItunesAlbumDetails,
   fetchRelatedAlbums,
   fetchItunesSongDetails,
-  fetchItunesSongAppearances,
   fetchItunesSongArtwork,
   entityImageCacheMap,
-  albumEntityMap,
   type MetadataType,
 } from '../metadata'
 import type { MetadataChip, CollectionItem, TopContentItem } from '../types/mediaEntity'
@@ -62,14 +59,7 @@ interface UniversalMediaProfilePageProps {
   communityEntries: CardEntry[]
   onSelectEntry?: (entry: CardEntry) => void
   onOpenUserProfile?: (handle: string) => void
-  onNavigateToEntity?: (entityId: string, entityType?: MediaEntityType) => void
-  onQuickAddEntry?: (payload: {
-    entity: UniversalMediaEntity
-    favoritePassage: string
-    lyrics: string
-    artworkUrl: string
-    metadataChips: MetadataChip[]
-  }) => void
+  onNavigateToEntity?: (entityId: string) => void
   likedEntryIds?: string[]
   savedEntryIds?: string[]
   disabledCommentEntryIds?: string[]
@@ -147,120 +137,23 @@ function getEntityImageCacheKey(entity: UniversalMediaEntity) {
   return `${entity.type}:${entity.id || entity.name}`.toLowerCase()
 }
 
-function normalizeReviewSubjectText(value?: string) {
-  return (value || '')
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[â€™â€˜]/g, "'")
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ')
-}
-
-function normalizeMusicEditionTitle(value?: string) {
-  return normalizeReviewSubjectText(value)
-    .replace(/\b(clean|edited|censored|explicit|non explicit|radio edit|clean version|explicit version|edited version)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function getChipValue(chips: MetadataChip[] | undefined, pattern: RegExp) {
-  return chips?.find((chip) => pattern.test(chip.label))?.value || ''
-}
-
-function entryTypeForEntity(type: MediaEntityType): CardEntry['type'] | null {
-  if (type === 'movie') return 'film'
-  if (type === 'album' || type === 'song' || type === 'book' || type === 'tv' || type === 'game') return type
-  return null
-}
-
-function reviewMatchesEntity(entry: CardEntry, entity: UniversalMediaEntity, chips: MetadataChip[]) {
-  const entityName = normalizeReviewSubjectText(entity.name)
-  const entryTitle = normalizeReviewSubjectText(entry.title)
-  const entityType = entryTypeForEntity(entity.type)
-
-  if (entity.type === 'artist' || entity.type === 'author' || entity.type === 'director' || entity.type === 'game_studio') {
-    return normalizeReviewSubjectText(entry.creator) === entityName
-  }
-
-  if (entity.type === 'actor') {
-    return false
-  }
-
-  if (!entityType || entry.type !== entityType) return false
-
-  if (entity.type === 'album' || entity.type === 'song') {
-    const entityArtist = normalizeReviewSubjectText(getChipValue(chips, /artist|creator/i))
-    const entryArtist = normalizeReviewSubjectText(entry.creator)
-    const sameTitle = normalizeMusicEditionTitle(entry.title) === normalizeMusicEditionTitle(entity.name)
-    const sameArtist = !entityArtist || !entryArtist || entityArtist === entryArtist
-    return sameTitle && sameArtist
-  }
-
-  return entryTitle === entityName
-}
-
 function getExpectedTrackCount(entity: UniversalMediaEntity) {
   const trackCountChip = entity.metadataChips.find((chip) => chip.label.toLowerCase() === 'track count')
   const count = Number.parseInt(trackCountChip?.value || '', 10)
   return Number.isFinite(count) && count > 0 ? count : undefined
 }
 
-function songEntityIdFromTopItem(item: TopContentItem | (CollectionItem & { rank?: number })) {
-  if (/^song-\d+$/i.test(item.id)) return item.id
-  const slug = item.title
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return `song-${slug || item.id}`
-}
-
-function scoreSongMetadataMatch(
-  resultTitle: string,
-  resultArtist: string,
-  resultAlbum: string,
-  item: TopContentItem | (CollectionItem & { rank?: number }),
-  artistName?: string,
-) {
-  const targetTitle = normalizeMusicEditionTitle(item.title)
-  const candidateTitle = normalizeMusicEditionTitle(resultTitle)
-  const targetArtist = normalizeReviewSubjectText(artistName)
-  const candidateArtist = normalizeReviewSubjectText(resultArtist)
-  const targetAlbum = normalizeMusicEditionTitle(item.subtitle)
-  const candidateAlbum = normalizeMusicEditionTitle(resultAlbum)
-
-  let score = 0
-  if (candidateTitle === targetTitle) score += 5000
-  else if (candidateTitle.includes(targetTitle) || targetTitle.includes(candidateTitle)) score += 1200
-
-  if (targetArtist && candidateArtist === targetArtist) score += 3500
-  else if (targetArtist && (candidateArtist.includes(targetArtist) || targetArtist.includes(candidateArtist))) score += 600
-
-  if (targetAlbum && candidateAlbum && (targetAlbum.includes(candidateAlbum) || candidateAlbum.includes(targetAlbum))) {
-    score += 1800
-  }
-
-  return score
-}
-
 const TrackRow: React.FC<{
-  item: TopContentItem | (CollectionItem & { rank?: number })
+  item: CollectionItem
   artistName?: string
   parentArtworkUrl?: string
-  onNavigateToEntity?: (id: string, entityType?: MediaEntityType) => void
-  entityType?: MediaEntityType
-  useParentArtwork?: boolean
-}> = ({ item, artistName, parentArtworkUrl, onNavigateToEntity, entityType, useParentArtwork = false }) => {
+  onNavigateToEntity?: (id: string) => void
+}> = ({ item, artistName, parentArtworkUrl, onNavigateToEntity }) => {
   const fallbackUrl = parentArtworkUrl || createArtworkPlaceholder(item.title, item.subtitle)
   const initialArtworkUrl = item.artworkUrl ? resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle) : (parentArtworkUrl || '')
   const [artworkUrl, setArtworkUrl] = useState(
     initialArtworkUrl || fallbackUrl,
   )
-  const [isResolvingTarget, setIsResolvingTarget] = useState(false)
 
   useEffect(() => {
     const nextArtworkUrl = item.artworkUrl ? resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle) : (parentArtworkUrl || '')
@@ -268,7 +161,7 @@ const TrackRow: React.FC<{
   }, [fallbackUrl, item.artworkUrl, item.subtitle, item.title, parentArtworkUrl])
 
   useEffect(() => {
-    if (!artistName || useParentArtwork) return
+    if (!artistName) return
 
     const abortController = new AbortController()
     fetchItunesSongArtwork(item.title, artistName, abortController.signal)
@@ -278,75 +171,17 @@ const TrackRow: React.FC<{
       .catch(() => {})
 
     return () => abortController.abort()
-  }, [artistName, item.artworkUrl, item.subtitle, item.title, useParentArtwork])
-
-  const handleActivate = async () => {
-    if (isResolvingTarget) return
-    let targetId = entityType === 'song' ? songEntityIdFromTopItem(item) : item.id
-    let resolvedTitle = item.title
-    let resolvedArtist = artistName || ''
-    let resolvedArtworkUrl = artworkUrl
-    let resolvedYear = item.subtitle?.match(/\b(19|20)\d{2}\b/)?.[0] || ''
-    let resolvedExplicit = item.explicit
-
-    if (entityType === 'song') {
-      if (!/^song-\d+$/i.test(targetId)) {
-        setIsResolvingTarget(true)
-        try {
-          const query = artistName ? `${item.title} ${artistName}` : item.title
-          const results = await searchMetadata('song', query)
-          const best = [...results]
-            .filter((result) => result.providerId)
-            .sort(
-              (a, b) =>
-                scoreSongMetadataMatch(b.title, b.creator, b.provider, item, artistName) -
-                scoreSongMetadataMatch(a.title, a.creator, a.provider, item, artistName),
-            )[0]
-
-          if (best?.providerId) {
-            targetId = `song-${best.providerId}`
-            resolvedTitle = best.title || resolvedTitle
-            resolvedArtist = best.creator || resolvedArtist
-            resolvedArtworkUrl = resolveArtworkUrl(best.coverUrl, best.title, best.type) || resolvedArtworkUrl
-            resolvedYear = best.year || resolvedYear
-            resolvedExplicit = best.explicit ?? resolvedExplicit
-          }
-        } catch {
-          // Keep the local song route fallback if the provider lookup is unavailable.
-        } finally {
-          setIsResolvingTarget(false)
-        }
-      }
-
-      albumEntityMap.set(targetId, {
-        id: targetId,
-        name: resolvedTitle,
-        artist: resolvedArtist,
-        artworkUrl: resolvedArtworkUrl,
-        year: resolvedYear,
-        category: 'single',
-        explicit: resolvedExplicit,
-      })
-    }
-    onNavigateToEntity?.(targetId, entityType)
-  }
+  }, [artistName, item.artworkUrl, item.subtitle, item.title])
 
   return (
     <div
       className="top-content-row"
-      onClick={handleActivate}
-      style={{ cursor: isResolvingTarget ? 'progress' : 'pointer' }}
+      onClick={() => onNavigateToEntity?.(item.id)}
+      style={{ cursor: 'pointer' }}
       role="button"
       tabIndex={0}
-      aria-busy={isResolvingTarget}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          handleActivate()
-        }
-      }}
     >
-      {'rank' in item && item.rank ? <span className="row-rank">#{item.rank}</span> : null}
+      <span className="row-rank">#{item.rank}</span>
       <img
         src={artworkUrl}
         alt={item.title}
@@ -357,10 +192,7 @@ const TrackRow: React.FC<{
         onError={() => setArtworkUrl(fallbackUrl)}
       />
       <div className="row-info">
-        <span className="row-title">
-          <span>{item.title}</span>
-          {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-        </span>
+        <span className="row-title">{item.title}</span>
         <span className="row-subtitle">{item.subtitle}</span>
       </div>
       {item.rating && (
@@ -391,7 +223,12 @@ const CollectionItemThumb: React.FC<{ title: string; defaultUrl: string }> = ({ 
       decoding="async"
       onError={() => {
         if (src === fallbackSrc) return
-        setSrc(fallbackSrc)
+        searchMetadata('album', title)
+          .then((res) => {
+            if (res && res[0]?.coverUrl) setSrc(resolveArtworkUrl(res[0].coverUrl, title, 'Album'))
+            else setSrc(fallbackSrc)
+          })
+          .catch(() => setSrc(fallbackSrc))
       }}
     />
   )
@@ -419,7 +256,7 @@ const CommunityReviewCard: React.FC<{
   onToggleSave,
 }) => {
   const displayHandle = (entry.authorHandle || 'jimboii').replace(/^@/, '')
-  const reviewedSubjectType = getReviewSubjectTypeLabel(entry.type)
+  const reviewedSubject = `${entry.title} - ${getReviewSubjectTypeLabel(entry.type)}`
 
   return (
     <article className={`community-review-card tone-${entry.coverTone}`}>
@@ -462,11 +299,7 @@ const CommunityReviewCard: React.FC<{
 
       {showReviewedSubject && (
         <button type="button" className="community-review-subject" onClick={onOpen}>
-          <span>{entry.title}</span>
-          {(entry.type === 'song' || entry.type === 'album') && entry.explicit && (
-            <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>
-          )}
-          <span>- {reviewedSubjectType}</span>
+          {reviewedSubject}
         </button>
       )}
 
@@ -614,21 +447,18 @@ const SimilarArtistPortraitItem: React.FC<{
 
 const RelatedAlbumTile: React.FC<{
   item: CollectionItem
-  onNavigate?: (entityId: string, entityType?: MediaEntityType) => void
+  onNavigate?: (entityId: string) => void
 }> = ({ item, onNavigate }) => (
   <button
     type="button"
     className="related-album-tile"
-    onClick={() => onNavigate?.(item.id, 'album')}
+    onClick={() => onNavigate?.(item.id)}
     aria-label={`Open ${item.title}`}
   >
     <span className="related-album-art-frame">
       <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
     </span>
-    <span className="related-album-title">
-      <span>{item.title}</span>
-      {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-    </span>
+    <span className="related-album-title">{item.title}</span>
     <span className="related-album-subtitle">{item.subtitle}</span>
   </button>
 )
@@ -742,7 +572,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   onSelectEntry,
   onOpenUserProfile,
   onNavigateToEntity,
-  onQuickAddEntry,
   likedEntryIds = [],
   savedEntryIds = [],
   disabledCommentEntryIds = [],
@@ -759,7 +588,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const [showAllAlbums, setShowAllAlbums] = useState(false)
   const [showAllEps, setShowAllEps] = useState(false)
   const [showAllSingles, setShowAllSingles] = useState(false)
-  const [selectedLyricIndexes, setSelectedLyricIndexes] = useState<number[]>([])
 
   useEffect(() => {
     setActiveTab('overview')
@@ -768,7 +596,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     setShowAllAlbums(false)
     setShowAllEps(false)
     setShowAllSingles(false)
-    setSelectedLyricIndexes([])
   }, [entity.id])
 
   // Live API Fetch for artwork, discography & tracklist details
@@ -776,6 +603,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const imageCacheKey = getEntityImageCacheKey(entity)
   const cachedInitial =
     entityImageCacheMap.get(imageCacheKey) ||
+    (!isPortraitProfile ? entityImageCacheMap.get(entity.name) : null) ||
     null
   const [apiCoverUrl, setApiCoverUrl] = useState<string | null>(cachedInitial)
   const [apiSummary, setApiSummary] = useState<string | null>(null)
@@ -786,7 +614,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const [liveTrackItems, setLiveTrackItems] = useState<TopContentItem[] | null>(null)
   const [liveAlbumChips, setLiveAlbumChips] = useState<MetadataChip[] | null>(null)
   const [liveRelatedAlbums, setLiveRelatedAlbums] = useState<CollectionItem[] | null>(null)
-  const [liveSongAppearances, setLiveSongAppearances] = useState<CollectionItem[] | null>(null)
   const [liveArtistDiscographies, setLiveArtistDiscographies] = useState<Record<string, CollectionItem[]>>({})
   const [liveSongLyrics, setLiveSongLyrics] = useState<string | null>(null)
 
@@ -794,12 +621,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     let isMounted = true
     setFailedHeroArtworkUrl(null)
     setLiveRelatedAlbums(null)
-    setLiveSongAppearances(null)
     setLiveArtistDiscographies({})
     setApiSummary(null)
 
     const cachedForEntity =
       entityImageCacheMap.get(imageCacheKey) ||
+      (!isPortraitProfile ? entityImageCacheMap.get(entity.name) : null) ||
       null
     setApiCoverUrl(cachedForEntity)
 
@@ -840,6 +667,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             if (details.coverUrl) {
               const safeCoverUrl = resolveArtworkUrl(details.coverUrl, entity.name, entity.categoryLabel)
               entityImageCacheMap.set(imageCacheKey, safeCoverUrl)
+              entityImageCacheMap.set(entity.name, safeCoverUrl)
               setApiCoverUrl(safeCoverUrl)
             }
             if (details.tracks && details.tracks.length > 0) {
@@ -850,9 +678,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               { label: 'Release Year', value: details.year || '2023' },
               { label: 'Genre', value: details.genre || 'Pop' },
               { label: 'Track Count', value: `${details.trackCount} Tracks` },
-              ...(details.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
             ])
-            fetchRelatedAlbums(entity.name, details.artist || artistChip, details.genre, entity.id, undefined, details.explicit)
+            fetchRelatedAlbums(entity.name, details.artist || artistChip, details.genre, entity.id)
               .then((items) => {
                 if (!isMounted) return
                 setLiveRelatedAlbums(items.length > 0 ? items : null)
@@ -865,13 +692,14 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
     if (entity.type === 'song') {
       const artistChip = entity?.metadataChips?.find((c) => c.label === 'Artist')?.value
-      fetchItunesSongDetails(entity.name, artistChip, entity.providerId)
+      fetchItunesSongDetails(entity.name, artistChip)
         .then((details) => {
           if (!isMounted) return
           if (details) {
             if (details.artworkUrl) {
               const safeArtworkUrl = resolveArtworkUrl(details.artworkUrl, entity.name, entity.categoryLabel)
               entityImageCacheMap.set(imageCacheKey, safeArtworkUrl)
+              entityImageCacheMap.set(entity.name, safeArtworkUrl)
               setApiCoverUrl(safeArtworkUrl)
             }
             if (details.lyrics) setLiveSongLyrics(details.lyrics)
@@ -881,23 +709,15 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               { label: 'Duration', value: details.duration },
               { label: 'Track #', value: `#${details.trackNumber}` },
               { label: 'Release Year', value: details.year },
-              ...(details.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
             ])
           }
-        })
-        .catch(() => {})
-
-      fetchItunesSongAppearances(entity.name, artistChip, entity.providerId)
-        .then((items) => {
-          if (!isMounted) return
-          setLiveSongAppearances(items.length > 0 ? items : null)
         })
         .catch(() => {})
     }
 
     const existingCache =
       entityImageCacheMap.get(imageCacheKey) ||
-      null
+      (!isPortraitProfile ? entityImageCacheMap.get(entity.name) : null)
 
     if (existingCache) {
       setApiCoverUrl(resolveArtworkUrl(existingCache, entity.name, entity.categoryLabel))
@@ -924,12 +744,11 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         .then((results) => {
           if (!isMounted) return
           if (results && results.length > 0) {
-            const match = entity.type === 'game'
-              ? results.find((result) => result.title.localeCompare(entity.name, undefined, { sensitivity: 'base' }) === 0) || results[0]
-              : results[0]
+            const match = results[0]
             if (match.coverUrl) {
               const safeCoverUrl = resolveArtworkUrl(match.coverUrl, entity.name, entity.categoryLabel)
               entityImageCacheMap.set(imageCacheKey, safeCoverUrl)
+              entityImageCacheMap.set(entity.name, safeCoverUrl)
               setApiCoverUrl(safeCoverUrl)
             }
             if (match.summary) setApiSummary(match.summary)
@@ -953,8 +772,13 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
   // Community Reviews Matching
   const matchingReviews = useMemo(() => {
-    return communityEntries.filter((entry) => reviewMatchesEntity(entry, entity, liveAlbumChips || entity.metadataChips))
-  }, [communityEntries, entity, liveAlbumChips])
+    return communityEntries.filter(
+      (e) =>
+        e.title.toLowerCase().includes(entity.name.toLowerCase()) ||
+        e.creator.toLowerCase().includes(entity.name.toLowerCase()) ||
+        entity.name.toLowerCase().includes(e.title.toLowerCase())
+    )
+  }, [communityEntries, entity.name])
 
   const topCommunityReviews = useMemo(() => {
     const scoreReview = (entry: CardEntry) => {
@@ -1032,33 +856,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   }, [entity.type, matchingReviews])
 
   const topItems = liveTrackItems || entity.primaryCollection?.items || []
-  const lyricLines = useMemo(
-    () =>
-      (liveSongLyrics || '')
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean),
-    [liveSongLyrics],
-  )
-  useEffect(() => {
-    setSelectedLyricIndexes([])
-  }, [liveSongLyrics])
-  const selectedLyricsText = useMemo(
-    () => selectedLyricIndexes.map((index) => lyricLines[index]).filter(Boolean).join('\n'),
-    [lyricLines, selectedLyricIndexes],
-  )
-  const topContentEntityType: MediaEntityType | undefined =
-    entity.type === 'artist' || entity.type === 'album'
-      ? 'song'
-      : entity.type === 'author'
-        ? 'book'
-        : entity.type === 'director'
-          ? 'movie'
-          : entity.type === 'movie' || entity.type === 'tv'
-            ? 'actor'
-            : entity.type === 'game_studio'
-              ? 'game'
-              : undefined
   const reviewItemsToDisplay = activeTab === 'overview' ? topCommunityReviews : matchingReviews
   const reviewGridRef = useRef<HTMLDivElement | null>(null)
   const reviewLayoutSignal = useMemo(
@@ -1130,14 +927,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
   const chipsToDisplay = (liveAlbumChips || entity?.metadataChips || []).filter((chip) => {
     const label = chip.label.toLowerCase()
-    return label !== 'monthly listeners' && label !== 'albums released' && label !== 'explicit'
+    return label !== 'monthly listeners' && label !== 'albums released'
   })
-  const isExplicitProfile =
-    (entity.type === 'album' || entity.type === 'song') &&
-    (Boolean(entity.explicit) ||
-      Boolean((liveAlbumChips || entity.metadataChips).some((chip) =>
-        chip.label.toLowerCase() === 'explicit' && chip.value.toLowerCase() === 'yes',
-      )))
 
   const ratingAverage = entity.communityRating?.average ?? 4.8
   const ratingCount = entity.communityRating?.count ?? 1200
@@ -1181,14 +972,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const shouldShowRelatedSection =
     activeTab === 'related' &&
     (entity.type === 'artist' || (entity.type !== 'album' && relatedItemsToDisplay.length > 0))
-
-  const toggleLyricLine = (index: number) => {
-    setSelectedLyricIndexes((current) =>
-      current.includes(index)
-        ? current.filter((item) => item !== index)
-        : [...current, index].sort((a, b) => a - b),
-    )
-  }
 
   return (
     <motion.div
@@ -1258,10 +1041,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         <div className="media-hero-right">
           <div className="media-hero-meta-header">
             <span className="media-category-pill">{entity.categoryLabel}</span>
-            <div className="media-title-row">
-              <h1 className="media-hero-title">{entity.name}</h1>
-              {isExplicitProfile && <span className="explicit-badge" aria-label="Explicit">E</span>}
-            </div>
+            <h1 className="media-hero-title">{entity.name}</h1>
           </div>
 
           <p className="media-hero-description">{displayDescription}</p>
@@ -1343,50 +1123,17 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       {/* ── Tab Content Sections ── */}
 
       {/* Song Lyrics Section (For Song Profiles) */}
-      {entity.type === 'song' && activeTab === 'lyrics' && (
+      {entity.type === 'song' && (activeTab === 'overview' || activeTab === 'lyrics') && (
         <section className="media-section song-lyrics-section">
           <div className="media-section-header">
             <div className="media-section-title-group">
               <Music4 size={16} className="title-icon" />
               <h2>Lyrics</h2>
             </div>
-            {selectedLyricsText && (
-              <button
-                type="button"
-                className="lyrics-quick-add-btn"
-                onClick={() => {
-                  onQuickAddEntry?.({
-                    entity,
-                    favoritePassage: selectedLyricsText,
-                    lyrics: liveSongLyrics || selectedLyricsText,
-                    artworkUrl: displayArtwork,
-                    metadataChips: liveAlbumChips || entity.metadataChips,
-                  })
-                }}
-              >
-                <Plus size={14} aria-hidden="true" />
-                <span>Add Entry</span>
-              </button>
-            )}
           </div>
           <div className="lyrics-card">
-            {lyricLines.length > 0 ? (
-              <div className="lyrics-select-list" aria-label={`Lyrics for ${entity.name}`}>
-                {lyricLines.map((line, index) => {
-                  const isSelected = selectedLyricIndexes.includes(index)
-                  return (
-                    <button
-                      key={`${line}-${index}`}
-                      type="button"
-                      className={`lyrics-select-line ${isSelected ? 'selected' : ''}`}
-                      onClick={() => toggleLyricLine(index)}
-                      aria-pressed={isSelected}
-                    >
-                      <span>{line}</span>
-                    </button>
-                  )
-                })}
-              </div>
+            {liveSongLyrics ? (
+              <pre className="lyrics-text">{liveSongLyrics}</pre>
             ) : (
               <p className="lyrics-empty">Official lyrics for {entity.name} are archived in community reflections.</p>
             )}
@@ -1462,10 +1209,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   key={item.id}
                   item={item}
                   artistName={effectiveArtistName}
-                  parentArtworkUrl={entity.type === 'album' ? displayArtwork : entity.artworkUrl}
+                  parentArtworkUrl={entity.artworkUrl}
                   onNavigateToEntity={onNavigateToEntity}
-                  entityType={topContentEntityType}
-                  useParentArtwork={entity.type === 'album'}
                 />
               )
             })}
@@ -1498,7 +1243,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <div
                     key={item.id}
                     className="collection-card"
-                    onClick={() => onNavigateToEntity?.(item.id, 'album')}
+                    onClick={() => onNavigateToEntity?.(item.id)}
                     style={{ cursor: 'pointer' }}
                     role="button"
                     tabIndex={0}
@@ -1507,10 +1252,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                       <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
                     </div>
                     <div className="collection-info">
-                      <span className="collection-title">
-                        <span>{item.title}</span>
-                        {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-                      </span>
+                      <span className="collection-title">{item.title}</span>
                       <span className="collection-subtitle">{item.subtitle}</span>
                     </div>
                     {item.rating && (
@@ -1547,7 +1289,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <div
                     key={item.id}
                     className="collection-card"
-                    onClick={() => onNavigateToEntity?.(item.id, 'album')}
+                    onClick={() => onNavigateToEntity?.(item.id)}
                     style={{ cursor: 'pointer' }}
                     role="button"
                     tabIndex={0}
@@ -1556,10 +1298,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                       <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
                     </div>
                     <div className="collection-info">
-                      <span className="collection-title">
-                        <span>{item.title}</span>
-                        {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-                      </span>
+                      <span className="collection-title">{item.title}</span>
                       <span className="collection-subtitle">{item.subtitle}</span>
                     </div>
                     {item.rating && (
@@ -1596,7 +1335,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <div
                     key={item.id}
                     className="collection-card"
-                    onClick={() => onNavigateToEntity?.(item.id, 'album')}
+                    onClick={() => onNavigateToEntity?.(item.id)}
                     style={{ cursor: 'pointer' }}
                     role="button"
                     tabIndex={0}
@@ -1605,10 +1344,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                       <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
                     </div>
                     <div className="collection-info">
-                      <span className="collection-title">
-                        <span>{item.title}</span>
-                        {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-                      </span>
+                      <span className="collection-title">{item.title}</span>
                       <span className="collection-subtitle">{item.subtitle}</span>
                     </div>
                     {item.rating && (
@@ -1640,7 +1376,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               <div
                 key={item.id}
                 className="collection-card"
-                onClick={() => onNavigateToEntity?.(item.id, topContentEntityType)}
+                onClick={() => onNavigateToEntity?.(item.id)}
                 style={{ cursor: 'pointer' }}
                 role="button"
                 tabIndex={0}
@@ -1649,10 +1385,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
                 </div>
                 <div className="collection-info">
-                  <span className="collection-title">
-                    <span>{item.title}</span>
-                    {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-                  </span>
+                  <span className="collection-title">{item.title}</span>
                   <span className="collection-subtitle">{item.subtitle}</span>
                 </div>
                 {item.rating && (
@@ -1771,31 +1504,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         </section>
       )}
 
-      {/* 4b. Song Appearance Albums */}
-      {activeTab === 'related' && entity.type === 'song' && (
-        <section className="media-section related-albums-section">
-          <div className="media-section-header">
-            <div className="media-section-title-group">
-              <Disc3 size={16} className="title-icon" />
-              <h2>Appears In</h2>
-            </div>
-          </div>
-
-          {liveSongAppearances && liveSongAppearances.length > 0 ? (
-            <div className="related-album-tile-grid">
-              {liveSongAppearances.slice(0, 4).map((item) => (
-                <RelatedAlbumTile key={item.id} item={item} onNavigate={onNavigateToEntity} />
-              ))}
-            </div>
-          ) : (
-            <div className="media-empty-reviews">
-              <Disc3 size={32} opacity={0.3} />
-              <p>No album appearances found for {entity.name} yet.</p>
-            </div>
-          )}
-        </section>
-      )}
-
       {/* 5. Related Media Section */}
       {shouldShowRelatedSection && (
         <section className={`media-section related-entities-section ${entity.type === 'artist' ? 'similar-artists-section' : ''}`}>
@@ -1819,7 +1527,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                     key={rel.id}
                     artist={rel}
                     isActive={rel.id === entity.id}
-                    onNavigate={(entityId) => onNavigateToEntity?.(entityId, rel.type)}
+                    onNavigate={onNavigateToEntity}
                   />
                 ))}
               </div>
@@ -1830,7 +1538,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                 <div
                   key={rel.id}
                   className="related-media-card"
-                  onClick={() => onNavigateToEntity?.(rel.id, rel.type)}
+                  onClick={() => onNavigateToEntity?.(rel.id)}
                   role="button"
                   tabIndex={0}
                 >

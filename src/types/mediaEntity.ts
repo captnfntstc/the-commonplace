@@ -23,7 +23,6 @@ export interface TopContentItem {
   subtitle: string
   artworkUrl?: string
   rating?: number
-  explicit?: boolean
 }
 
 export interface CollectionItem {
@@ -35,7 +34,6 @@ export interface CollectionItem {
   rating?: number
   genre?: string
   category?: 'album' | 'ep' | 'single'
-  explicit?: boolean
 }
 
 export interface RelatedEntityItem {
@@ -53,8 +51,6 @@ export interface UniversalMediaEntity {
   categoryLabel: string // e.g. "Artist", "Movie", "Game Studio", "Author", etc.
   artworkUrl: string
   description: string // 2-5 sentence warm editorial description
-  providerId?: string // provider track/album id so exact metadata can be refetched
-  explicit?: boolean
   metadataChips: MetadataChip[]
   communityRating: {
     average: number
@@ -81,7 +77,7 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Top Songs' },
-        { id: 'collection', label: 'Discography' },
+        { id: 'collection', label: 'Albums' },
         { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Similar Artists' },
       ]
@@ -95,7 +91,6 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
     case 'song':
       return [
         { id: 'overview', label: 'Overview' },
-        { id: 'lyrics', label: 'Lyrics' },
         { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Appears In' },
       ]

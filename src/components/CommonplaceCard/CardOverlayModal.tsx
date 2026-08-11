@@ -41,7 +41,6 @@ export interface OverlayEntry {
   year?: string
   coverUrl?: string
   summary?: string
-  explicit?: boolean
   createdAt: string
   updatedAt: string
   coverTone: string
@@ -367,12 +366,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
             </div>
 
             <div className="overlay-card-details">
-              <h2 className="overlay-title">
-                <span>{entry.title}</span>
-                {(entry.type === 'song' || entry.type === 'album') && entry.explicit && (
-                  <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>
-                )}
-              </h2>
+              <h2 className="overlay-title">{entry.title}</h2>
               {entry.creator && <p className="overlay-creator">{entry.creator}</p>}
               {entry.genre && <span className="overlay-genre-pill">{entry.genre}</span>}
               {entry.provider && entry.provider !== 'Manual' && (

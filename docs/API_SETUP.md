@@ -39,17 +39,37 @@ VITE_APP_CONTACT=your_email@example.com
 
 Lyrics are fetched only for songs after a song result is selected. Albums use a freeform passage field for now.
 
-## RAWG Games
+## IGDB Games
 
-Current app status: game metadata and artwork use RAWG directly.
+Current app status: needs a backend proxy.
 
-1. Create a RAWG API account and key.
-2. Add the key to `.env.local`:
+Do not put IGDB/Twitch secrets in Vite browser env variables. The frontend expects a proxy endpoint:
 
 ```env
-VITE_RAWG_API_KEY=your_rawg_api_key
+VITE_METADATA_PROXY_URL=http://localhost:8787
 ```
 
-Game search uses RAWG's `background_image`, then its first screenshot. When RAWG
-does not return artwork, the app uses a generated local placeholder instead of
-calling another image API.
+The proxy should expose:
+
+```txt
+GET /search?type=game&q=zelda
+```
+
+And return:
+
+```json
+{
+  "results": [
+    {
+      "id": "igdb:7346",
+      "type": "game",
+      "title": "The Legend of Zelda: Breath of the Wild",
+      "creator": "Nintendo",
+      "provider": "2017",
+      "providerId": "7346",
+      "coverUrl": "https://...",
+      "year": "2017"
+    }
+  ]
+}
+```
