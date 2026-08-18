@@ -64,16 +64,19 @@ export function buildSongBiography(input: SongBiographyInput): string {
     year,
   } = input
   const releaseKind = getSongReleaseKind(input)
+  const possessiveArtist = /s$/i.test(artistName.trim())
+    ? `${artistName.trim()}'`
+    : `${artistName.trim()}'s`
 
   if (releaseKind === 'album' && albumName) {
     const albumOrdinal = studioAlbumNumber ? `${ordinalize(studioAlbumNumber)} ` : ''
-    return `${songName} is the ${ordinalize(trackNumber)} track of ${artistName}'s ${albumOrdinal}studio album ${albumName}.`
+    return `${songName} is the ${ordinalize(trackNumber)} track on ${possessiveArtist} ${albumOrdinal}studio album, ${albumName}.`
   }
 
   if (releaseKind === 'ep' && albumName) {
-    return `${songName} is the ${ordinalize(trackNumber)} track of ${artistName}'s EP ${albumName}.`
+    return `${songName} is the ${ordinalize(trackNumber)} track on ${possessiveArtist} EP, ${albumName}.`
   }
 
   const releaseYear = year ? `, released in ${year}` : ''
-  return `${songName} is a standalone song by ${artistName}${releaseYear}.`
+  return `${songName} is a single by ${artistName}${releaseYear}.`
 }

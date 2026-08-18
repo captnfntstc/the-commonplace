@@ -17,7 +17,7 @@ describe('song biographies', () => {
       trackCount: 18,
       studioAlbumNumber: 7,
       year: '2019',
-    })).toBe("Cruel Summer is the 2nd track of Taylor Swift's 7th studio album Lover.")
+    })).toBe("Cruel Summer is the 2nd track on Taylor Swift's 7th studio album, Lover.")
   })
 
   it('does not infer album membership for a one-track release', () => {
@@ -32,8 +32,18 @@ describe('song biographies', () => {
 
     expect(getSongReleaseKind(input)).toBe('standalone')
     expect(buildSongBiography(input)).toBe(
-      'All Of The Girls You Loved Before is a standalone song by Taylor Swift, released in 2023.',
+      'All Of The Girls You Loved Before is a single by Taylor Swift, released in 2023.',
     )
+  })
+
+  it('uses the release title and correct possessive grammar for an EP track', () => {
+    expect(buildSongBiography({
+      songName: "There's a Place",
+      artistName: 'The Beatles',
+      albumName: 'Twist and Shout',
+      trackNumber: 2,
+      trackCount: 4,
+    })).toBe("There's a Place is the 2nd track on The Beatles' EP, Twist and Shout.")
   })
 
   it('does not treat a bonus edition as the standard studio-album lineup', () => {

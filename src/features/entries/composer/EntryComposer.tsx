@@ -228,7 +228,10 @@ export function EntryComposer({
     setLyricsStatus('loading')
     const abortController = new AbortController()
 
-    fetchLyrics(draft.creator, draft.title, abortController.signal)
+    fetchLyrics(draft.creator, draft.title, abortController.signal, {
+      explicit: draft.explicit,
+      albumName: draft.provider,
+    })
       .then((fetched) => {
         if (lyricsFetchId.current !== fetchId) return
         if (fetched) {
@@ -379,7 +382,10 @@ export function EntryComposer({
       setLyrics('')
       const abortController = new AbortController()
       try {
-        const fetched = await fetchLyrics(result.creator, result.title, abortController.signal)
+        const fetched = await fetchLyrics(result.creator, result.title, abortController.signal, {
+          explicit: result.explicit,
+          albumName: result.provider,
+        })
         if (lyricsFetchId.current !== fetchId) return // stale — user picked another item
         if (fetched) {
           setLyrics(fetched)

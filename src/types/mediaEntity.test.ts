@@ -13,4 +13,14 @@ describe('related-profile tab labels', () => {
     })
     expect(getEntityTabs('song').find((tab) => tab.id === 'related')?.label).toBe('Appears In')
   })
+
+  it('places album versions immediately before Similar', () => {
+    expect(getEntityTabs('album').map((tab) => tab.id)).toEqual([
+      'overview',
+      'top_content',
+      'reviews',
+      'versions',
+      'related',
+    ])
+  })
 })

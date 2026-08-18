@@ -81,6 +81,7 @@ export interface CollectionItem {
   title: string
   subtitle: string
   artworkUrl: string
+  artist?: string
   year?: string
   rating?: number
   genre?: string
@@ -255,6 +256,7 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Tracks' },
         { id: 'reviews', label: 'Community Reviews' },
+        { id: 'versions', label: 'Other Versions' },
         { id: 'related', label: 'Similar' },
       ]
     case 'song':

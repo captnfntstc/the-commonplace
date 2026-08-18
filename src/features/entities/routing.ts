@@ -119,12 +119,17 @@ export function metadataResultToUniversalEntity(entity: { id: string; metadataRe
     metadataChips: [
       { label: creatorLabelForMetadata(result.type), value: result.creator || 'Unknown' },
       { label: 'Category', value: categoryLabel },
+      ...(result.type === 'song' && result.provider
+        ? [{ label: 'Album', value: result.provider }]
+        : []),
       ...(result.genres?.length || result.genre
         ? [{ label: 'Genre', value: (result.genres?.length ? result.genres : [result.genre]).filter(Boolean).join(', ') }]
         : []),
       ...(result.language ? [{ label: 'Language', value: result.language.toUpperCase() }] : []),
-      ...(detail ? [{ label: result.year && detail === result.year ? 'Year' : 'Detail', value: detail }] : []),
-      ...(result.year && detail !== result.year ? [{ label: 'Year', value: result.year }] : []),
+      ...(detail && !(result.type === 'song' && detail === result.provider)
+        ? [{ label: result.year && detail === result.year ? 'Release Year' : 'Detail', value: detail }]
+        : []),
+      ...(result.year && detail !== result.year ? [{ label: 'Release Year', value: result.year }] : []),
       ...(result.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
     ],
     communityRating: {

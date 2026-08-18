@@ -18,10 +18,12 @@ import {
   Loader2,
   Plus,
   User,
+  Users,
   Music4,
   Quote,
 } from 'lucide-react'
 import type { Entry as CardEntry } from '../features/entries/model'
+import { buildCommunityQuoteRanking } from '../features/quotes/communityQuotes'
 import { buildMostQuotedWorks, type MostQuotedWork } from '../features/quotes/quotedWorks'
 import { StarRating } from '../components/CommonplaceCard/CardHeader'
 import { FormattedText } from '../components/CommonplaceCard/FormattedText'
@@ -43,6 +45,7 @@ import {
   warmSimilarArtistPortraits,
   fetchItunesDiscography,
   fetchItunesAlbumDetails,
+  fetchItunesAlbumVersionFamily,
   fetchRelatedAlbums,
   fetchItunesSongDetails,
   fetchItunesSongAppearances,
@@ -53,6 +56,7 @@ import {
   fetchGameDetails,
   type MetadataType,
   type MetadataResult,
+  type AlbumVersionFamily,
 } from '../metadata'
 import type { MetadataChip, CollectionItem, TopContentItem } from '../types/mediaEntity'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
@@ -78,7 +82,11 @@ interface UniversalMediaProfilePageProps {
   communityEntries: CardEntry[]
   onSelectEntry?: (entry: CardEntry) => void
   onOpenUserProfile?: (handle: string) => void
-  onNavigateToEntity?: (entityId: string, entityType?: MediaEntityType) => void
+  onNavigateToEntity?: (
+    entityId: string,
+    entityType?: MediaEntityType,
+    resolvedEntity?: UniversalMediaEntity,
+  ) => void
   onCanonicalHumanResolved?: (
     sourceEntity: UniversalMediaEntity,
     humanProfile: HumanProfileMetadata,
@@ -141,6 +149,12 @@ function mapToMetaType(type: MediaEntityType): MetadataType {
   }
 }
 
+function sentenceCaseLyricLine(line: string) {
+  const firstLetterIndex = line.search(/[a-z]/i)
+  if (firstLetterIndex < 0) return line
+  return `${line.slice(0, firstLetterIndex)}${line[firstLetterIndex].toUpperCase()}${line.slice(firstLetterIndex + 1)}`
+}
+
 function buildChipsFromMetadataResult(
   result: MetadataResult,
   type: MediaEntityType,
@@ -189,6 +203,20 @@ function getReviewSubjectTypeLabel(type: CardEntry['type']) {
 }
 
 function getEntityImageCacheKey(entity: UniversalMediaEntity) {
+  if (entity.type === 'album' || entity.type === 'song') {
+    const artist = entity.metadataChips.find((chip) => /^artist$/i.test(chip.label))?.value || ''
+    const release = entity.metadataChips.find((chip) => /^(?:album|detail)$/i.test(chip.label))?.value || ''
+    const year = entity.metadataChips.find((chip) => /year|release/i.test(chip.label))?.value || ''
+    return [
+      'contextual-artwork-v2',
+      entity.type,
+      entity.providerId || entity.id,
+      entity.name,
+      artist,
+      release,
+      year,
+    ].map((value) => normalizeReviewSubjectText(value)).join(':')
+  }
   return `${entity.type}:${entity.id || entity.name}`.toLowerCase()
 }
 
@@ -503,6 +531,35 @@ const MostQuotedSongCard: React.FC<{
   )
 }
 
+function collectionItemToAlbumEntity(item: CollectionItem, fallbackArtist = ''): UniversalMediaEntity {
+  const artist = item.artist?.trim() || fallbackArtist.trim()
+  const providerId = item.id.match(/^album-(\d+)$/i)?.[1]
+  const categoryLabel = item.category === 'single' ? 'Single' : item.category === 'ep' ? 'EP' : 'Album'
+
+  return {
+    id: item.id,
+    name: item.title,
+    type: 'album',
+    categoryLabel,
+    artworkUrl: resolveArtworkUrl(item.artworkUrl, item.title, [artist, item.year].filter(Boolean).join(' ')),
+    providerId,
+    explicit: item.explicit,
+    description: `${categoryLabel} by ${artist || 'Unknown artist'}${item.year ? `, released in ${item.year}` : ''}.`,
+    metadataChips: [
+      ...(artist ? [{ label: 'Artist', value: artist }] : []),
+      { label: 'Category', value: categoryLabel },
+      ...(item.year ? [{ label: 'Release Year', value: item.year }] : []),
+      ...(item.genre ? [{ label: 'Genre', value: item.genre }] : []),
+      ...(item.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
+    ],
+    communityRating: {
+      average: item.rating || 0,
+      count: 0,
+      distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+    },
+  }
+}
+
 const CommunityReviewCard: React.FC<{
   entry: CardEntry
   isLiked: boolean
@@ -765,12 +822,16 @@ const SimilarArtistPortraitItem: React.FC<{
 
 const RelatedAlbumTile: React.FC<{
   item: CollectionItem
-  onNavigate?: (entityId: string, entityType?: MediaEntityType) => void
+  onNavigate?: (
+    entityId: string,
+    entityType?: MediaEntityType,
+    resolvedEntity?: UniversalMediaEntity,
+  ) => void
 }> = ({ item, onNavigate }) => (
   <button
     type="button"
     className="related-album-tile"
-    onClick={() => onNavigate?.(item.id, 'album')}
+    onClick={() => onNavigate?.(item.id, 'album', collectionItemToAlbumEntity(item))}
     aria-label={`Open ${item.title}`}
   >
     <span className="related-album-art-frame">
@@ -950,7 +1011,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   onToggleSave,
 }) => {
   const IconComponent = getMediaIcon(entity.type)
-  const tabs = useMemo(() => getEntityTabs(entity.type), [entity.type])
+  const [liveAlbumVersionFamily, setLiveAlbumVersionFamily] = useState<AlbumVersionFamily | null>(null)
+  const tabs = useMemo(
+    () => getEntityTabs(entity.type).filter((tab) =>
+      tab.id !== 'versions' || Boolean(liveAlbumVersionFamily?.editions.length)),
+    [entity.type, liveAlbumVersionFamily],
+  )
   const [activeTab, setActiveTab] = useState<string>(tabs[0]?.id || 'overview')
 
   const [showAllTopContent, setShowAllTopContent] = useState(false)
@@ -995,11 +1061,13 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
   useEffect(() => {
     let isMounted = true
+    const albumController = new AbortController()
     setFailedHeroArtworkUrl(null)
     setLiveCollectionItems(null)
     setLiveTrackItems(null)
     setLiveAlbumChips(null)
     setLiveRelatedAlbums(null)
+    setLiveAlbumVersionFamily(null)
     setLiveSongAppearances(null)
     setLiveArtistDiscographies({})
     setLiveSongLyrics(null)
@@ -1086,12 +1154,14 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
     if (entity.type === 'album') {
       const artistChip = entity?.metadataChips?.find((c) => c.label === 'Artist')?.value
+      const releaseYearChip = entity.metadataChips.find((chip) => /year|release/i.test(chip.label))?.value
       fetchItunesAlbumDetails(
         entity.name,
         artistChip,
-        undefined,
+        albumController.signal,
         getExpectedTrackCount(entity),
         entity.providerId || entity.id,
+        releaseYearChip,
       )
         .then((details) => {
           if (!isMounted) return
@@ -1111,10 +1181,39 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               { label: 'Track Count', value: `${details.trackCount} Tracks` },
               ...(details.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
             ])
-            fetchRelatedAlbums(entity.name, details.artist || artistChip, details.genre, entity.id, undefined, details.explicit)
+            const familyPromise = fetchItunesAlbumVersionFamily({
+              albumName: details.title,
+              artistName: details.artist || artistChip || '',
+              year: details.year,
+              collectionId: details.collectionId,
+              trackCount: details.trackCount,
+            }, albumController.signal).catch(() => null)
+
+            familyPromise.then((family) => {
+              if (!isMounted || albumController.signal.aborted) return
+              setLiveAlbumVersionFamily(family)
+            })
+
+            fetchRelatedAlbums(
+              details.title,
+              details.artist || artistChip,
+              details.genre,
+              `album-${details.collectionId}`,
+              albumController.signal,
+              details.explicit,
+              details.year,
+            )
               .then((items) => {
-                if (!isMounted) return
-                setLiveRelatedAlbums(items.length > 0 ? items : null)
+                return familyPromise.then((family) => ({ items, family }))
+              })
+              .then(({ items, family }) => {
+                if (!isMounted || albumController.signal.aborted) return
+                const familyIds = new Set(family?.collectionIds || [])
+                const filtered = items.filter((item) => {
+                  const collectionId = item.id.match(/^album-(\d+)$/i)?.[1]
+                  return !collectionId || !familyIds.has(collectionId)
+                })
+                setLiveRelatedAlbums(filtered.length > 0 ? filtered : null)
               })
               .catch(() => {})
           }
@@ -1124,9 +1223,19 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
     if (entity.type === 'song') {
       const artistChip = entity?.metadataChips?.find((c) => c.label === 'Artist')?.value
-      fetchItunesSongDetails(entity.name, artistChip, entity.providerId)
-        .then((details) => {
-          if (!isMounted) return
+      const albumChip = entity.metadataChips.find((chip) => chip.label.toLowerCase() === 'album')?.value ||
+        entity.metadataChips.find((chip) => chip.label.toLowerCase() === 'detail')?.value
+      const releaseYearChip = entity.metadataChips.find((chip) => /year|release/i.test(chip.label))?.value
+      fetchItunesSongDetails(
+        entity.name,
+        artistChip,
+        entity.providerId,
+        albumController.signal,
+        albumChip,
+        releaseYearChip,
+      )
+        .then(async (details) => {
+          if (!isMounted || albumController.signal.aborted) return
           if (details) {
             if (details.artworkUrl) {
               const safeArtworkUrl = resolveArtworkUrl(details.artworkUrl, entity.name, entity.categoryLabel)
@@ -1134,6 +1243,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               setApiCoverUrl(safeArtworkUrl)
             }
             if (details.lyrics) setLiveSongLyrics(details.lyrics)
+            if (details.summary) setApiSummary(details.summary)
             setLiveAlbumChips([
               { label: 'Artist', value: details.artist || artistChip || 'Artist' },
               { label: 'Album', value: details.album || 'Single' },
@@ -1143,12 +1253,15 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               ...(details.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
             ])
           }
-        })
-        .catch(() => {})
 
-      fetchItunesSongAppearances(entity.name, artistChip, entity.providerId)
-        .then((items) => {
-          if (!isMounted) return
+          const items = await fetchItunesSongAppearances(
+            details?.name || entity.name,
+            details?.artist || artistChip,
+            entity.providerId,
+            albumController.signal,
+            details?.explicit ?? entity.explicit,
+          )
+          if (!isMounted || albumController.signal.aborted) return
           setLiveSongAppearances(items.length > 0 ? items : null)
         })
         .catch(() => {})
@@ -1178,45 +1291,51 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         })
     }
 
-    setIsLoadingApi(true)
-    const metaType = mapToMetaType(entity.type)
-    searchMetadata(metaType, entity.name)
-      .then((results) => {
-        if (!isMounted) return
-        if (results && results.length > 0) {
-          const match = entity.type === 'game'
-            ? [...results]
-                .map((result) => ({ result, score: scoreGameTitleMatch(result.title, entity.name) }))
-                .sort((a, b) => b.score - a.score)
-                .find((item) => item.score > 1000)?.result || results[0]
-            : results[0]
+    // Albums and songs have dedicated resolvers above that use their complete
+    // catalog identity. A second title-only search can race and overwrite the
+    // correct release artwork with an unrelated same-title result.
+    if (entity.type !== 'album' && entity.type !== 'song') {
+      setIsLoadingApi(true)
+      const metaType = mapToMetaType(entity.type)
+      searchMetadata(metaType, entity.name)
+        .then((results) => {
+          if (!isMounted) return
+          if (results && results.length > 0) {
+            const match = entity.type === 'game'
+              ? [...results]
+                  .map((result) => ({ result, score: scoreGameTitleMatch(result.title, entity.name) }))
+                  .sort((a, b) => b.score - a.score)
+                  .find((item) => item.score > 1000)?.result || results[0]
+              : results[0]
 
-          if (match?.coverUrl) {
-            const safeCoverUrl = resolveArtworkUrl(match.coverUrl, entity.name, entity.categoryLabel)
-            entityImageCacheMap.set(imageCacheKey, safeCoverUrl)
-            setApiCoverUrl(safeCoverUrl)
-          }
-          if (match?.summary) {
-            setApiSummary(match.summary)
-          }
-          if (match?.gameMetadata) {
-            setLiveGameMetadata(match.gameMetadata)
-          }
+            if (match?.coverUrl) {
+              const safeCoverUrl = resolveArtworkUrl(match.coverUrl, entity.name, entity.categoryLabel)
+              entityImageCacheMap.set(imageCacheKey, safeCoverUrl)
+              setApiCoverUrl(safeCoverUrl)
+            }
+            if (match?.summary) {
+              setApiSummary(match.summary)
+            }
+            if (match?.gameMetadata) {
+              setLiveGameMetadata(match.gameMetadata)
+            }
 
-          const newChips = buildChipsFromMetadataResult(match, entity.type)
-          const acceptsCatalogChips = ['album', 'song', 'book', 'movie', 'tv', 'game'].includes(entity.type)
-          if (acceptsCatalogChips && newChips.length > 0) {
-            setLiveAlbumChips((prev) => prev || newChips)
+            const newChips = buildChipsFromMetadataResult(match, entity.type)
+            const acceptsCatalogChips = ['book', 'movie', 'tv', 'game'].includes(entity.type)
+            if (acceptsCatalogChips && newChips.length > 0) {
+              setLiveAlbumChips((prev) => prev || newChips)
+            }
           }
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (isMounted) setIsLoadingApi(false)
-      })
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (isMounted) setIsLoadingApi(false)
+        })
+    }
 
     return () => {
       isMounted = false
+      albumController.abort()
       warmAbortRef.current?.abort()
     }
   }, [entity.id, entity.name, entity.type, imageCacheKey, isPortraitProfile])
@@ -1291,29 +1410,35 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
   const songQuotes = useMemo(() => {
     if (entity.type !== 'song') return []
-    const extracted = matchingReviews
+    const contributions = matchingReviews
       .filter((r) => r.favoritePassage || r.reflection)
       .map((r) => ({
         id: r.id,
-        text: r.favoritePassage ? `“${r.favoritePassage}”` : `“${r.reflection.slice(0, 150)}${r.reflection.length > 150 ? '…' : ''}”`,
-        author: r.authorName || 'Community Member',
-        authorHandle: r.authorHandle || '@reflector',
+        text: r.favoritePassage || `${r.reflection.slice(0, 150)}${r.reflection.length > 150 ? '…' : ''}`,
+        contributorName: r.authorName,
+        contributorHandle: r.authorHandle,
+        createdAt: r.createdAt,
       }))
 
-    if (extracted.length > 0) return extracted
+    const rankedLines = buildCommunityQuoteRanking(contributions, 1).allGroups
+    if (rankedLines.length > 0) {
+      return rankedLines.map((line) => ({
+        id: line.id,
+        text: line.text.replace(/^["“”]+|["“”]+$/g, '').trim(),
+        entryCount: line.submissionCount,
+      }))
+    }
 
     return [
       {
         id: 'sq-1',
-        text: `“Cause baby, now we've got bad blood / You know it used to be mad love…”`,
-        author: 'Community Reflection',
-        authorHandle: '@taylorswift_archive',
+        text: "Cause baby, now we've got bad blood / You know it used to be mad love…",
+        entryCount: 1,
       },
       {
         id: 'sq-2',
-        text: `“Say you'll remember me standing in a nice dress, staring at the sunset, babe…”`,
-        author: 'Music Journal',
-        authorHandle: '@wildest_notes',
+        text: "Say you'll remember me standing in a nice dress, staring at the sunset, babe…",
+        entryCount: 1,
       },
     ]
   }, [entity.type, matchingReviews])
@@ -1324,7 +1449,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       (liveSongLyrics || '')
         .split(/\r?\n/)
         .map((line) => line.trim())
-        .filter(Boolean),
+        .filter(Boolean)
+        .map(sentenceCaseLyricLine),
     [liveSongLyrics],
   )
   useEffect(() => {
@@ -1462,12 +1588,15 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     const label = chip.label.toLowerCase()
     return label !== 'monthly listeners' && label !== 'albums released' && label !== 'explicit'
   })
+  const explicitFromProfile = Boolean(entity.explicit) ||
+    Boolean((liveAlbumChips || entity.metadataChips).some((chip) =>
+      chip.label.toLowerCase() === 'explicit' && chip.value.toLowerCase() === 'yes',
+    ))
   const isExplicitProfile =
     (entity.type === 'album' || entity.type === 'song') &&
-    (Boolean(entity.explicit) ||
-      Boolean((liveAlbumChips || entity.metadataChips).some((chip) =>
-        chip.label.toLowerCase() === 'explicit' && chip.value.toLowerCase() === 'yes',
-      )))
+    (entity.type === 'album' && liveAlbumVersionFamily
+      ? liveAlbumVersionFamily.currentExplicit
+      : explicitFromProfile)
 
   const gameMetadata = useMemo(
     () => normalizeGameMetadata(
@@ -1701,25 +1830,25 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         </section>
       )}
 
-      {/* Most Quoted Lines Section (For Songs Only) */}
+      {/* Lines That Stuck (For Songs Only) */}
       {entity.type === 'song' && (activeTab === 'overview' || activeTab === 'top_content') && (
         <section className="media-section song-quotes-section">
           <div className="media-section-header">
             <div className="media-section-title-group">
               <Quote size={16} className="title-icon" />
-              <h2>Most Quoted Lines ({songQuotes.length})</h2>
+              <h2>Lines That Stuck ({songQuotes.length})</h2>
             </div>
           </div>
           <div className="song-quotes-grid">
             {songQuotes.map((q) => (
-              <div key={q.id} className="song-quote-card">
-                <Quote size={20} className="quote-watermark" />
-                <p className="song-quote-text">{q.text}</p>
-                <div className="song-quote-meta">
-                  <span className="song-quote-author">{q.author}</span>
-                  <span className="song-quote-handle">{q.authorHandle}</span>
-                </div>
-              </div>
+              <article key={q.id} className="song-quote-card">
+                <span className="song-quote-mark" aria-hidden="true">“</span>
+                <blockquote className="song-quote-text">“{q.text}”</blockquote>
+                <footer className="song-quote-meta">
+                  <Users size={16} aria-hidden="true" />
+                  <span>Quoted in {q.entryCount} {q.entryCount === 1 ? 'entry' : 'entries'}</span>
+                </footer>
+              </article>
             ))}
           </div>
         </section>
@@ -1837,7 +1966,11 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <div
                     key={item.id}
                     className="collection-card"
-                    onClick={() => onNavigateToEntity?.(item.id, 'album')}
+                    onClick={() => onNavigateToEntity?.(
+                      item.id,
+                      'album',
+                      collectionItemToAlbumEntity(item, entity.name),
+                    )}
                     style={{ cursor: 'pointer' }}
                     role="button"
                     tabIndex={0}
@@ -1886,7 +2019,11 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <div
                     key={item.id}
                     className="collection-card"
-                    onClick={() => onNavigateToEntity?.(item.id, 'album')}
+                    onClick={() => onNavigateToEntity?.(
+                      item.id,
+                      'album',
+                      collectionItemToAlbumEntity(item, entity.name),
+                    )}
                     style={{ cursor: 'pointer' }}
                     role="button"
                     tabIndex={0}
@@ -1935,7 +2072,11 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <div
                     key={item.id}
                     className="collection-card"
-                    onClick={() => onNavigateToEntity?.(item.id, 'album')}
+                    onClick={() => onNavigateToEntity?.(
+                      item.id,
+                      'album',
+                      collectionItemToAlbumEntity(item, entity.name),
+                    )}
                     style={{ cursor: 'pointer' }}
                     role="button"
                     tabIndex={0}
@@ -2096,13 +2237,30 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         </section>
       )}
 
-      {/* 4. Related Albums Grid */}
+      {activeTab === 'versions' && entity.type === 'album' && liveAlbumVersionFamily && liveAlbumVersionFamily.editions.length > 0 && (
+        <section className="media-section related-albums-section">
+          <div className="media-section-header">
+            <div className="media-section-title-group">
+              <Layers size={16} className="title-icon" />
+              <h2>Other Versions</h2>
+            </div>
+          </div>
+
+          <div className="related-album-tile-grid">
+            {liveAlbumVersionFamily.editions.map((item) => (
+              <RelatedAlbumTile key={item.collectionId} item={item} onNavigate={onNavigateToEntity} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* 4. Similar Albums Grid */}
       {activeTab === 'related' && entity.type === 'album' && liveRelatedAlbums && liveRelatedAlbums.length > 0 && (
         <section className="media-section related-albums-section">
           <div className="media-section-header">
             <div className="media-section-title-group">
               <Sparkles size={16} className="title-icon" />
-              <h2>Related Albums</h2>
+              <h2>Similar Albums</h2>
             </div>
           </div>
 
@@ -2126,7 +2284,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
           {liveSongAppearances && liveSongAppearances.length > 0 ? (
             <div className="related-album-tile-grid">
-              {liveSongAppearances.slice(0, 4).map((item) => (
+              {liveSongAppearances.map((item) => (
                 <RelatedAlbumTile key={item.id} item={item} onNavigate={onNavigateToEntity} />
               ))}
             </div>

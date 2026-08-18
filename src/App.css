@@ -9882,7 +9882,7 @@ code.detail-value {
    ───────────────────────────────────────────────────────────────────────────── */
 .universal-media-profile-page {
   min-height: 100vh;
-  background: #15120f;
+  background: var(--bg);
   color: var(--text);
   padding-top: 64px;
   padding-bottom: 80px;
@@ -11648,72 +11648,209 @@ code.detail-value {
   transform: translateY(0);
 }
 
-/* ── Community-derived quote ranking ── */
-.community-quotes-section {
+/* ── Community-derived quote cards ──
+   Song profiles predate the shared community ranking feature and still use
+   their song-* class names. Keep both entry points on the same visual system. */
+.community-quotes-section,
+.song-quotes-section {
   margin-bottom: 40px;
 }
 
-.community-quotes-grid {
+.community-quotes-grid,
+.song-quotes-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
 }
 
-.community-quote-card {
+.community-quote-card,
+.song-quote-card {
   position: relative;
+  isolation: isolate;
+  overflow: hidden;
   margin: 0;
-  padding: 20px 22px;
-  background: var(--card);
+  padding: 22px 24px 20px;
+  background:
+    radial-gradient(circle at 28px 22px, rgba(214, 174, 115, 0.11), transparent 92px),
+    var(--card);
   border: 1px solid rgba(214, 174, 115, 0.18);
   border-radius: 16px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   gap: 12px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  min-height: 178px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
-.community-quote-card:hover {
+.community-quote-card::before,
+.song-quote-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent, var(--accent), transparent);
+  opacity: 0.55;
+}
+
+.community-quote-card:hover,
+.song-quote-card:hover {
   transform: translateY(-2px);
-  border-color: var(--accent);
+  border-color: rgba(214, 174, 115, 0.48);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.3);
 }
 
 .quote-watermark {
+  flex: 0 0 auto;
   color: var(--accent);
-  opacity: 0.4;
+  opacity: 0.48;
   margin-bottom: 2px;
 }
 
-.community-quote-text {
+.community-quote-text,
+.song-quote-text {
   font-family: var(--display), EB Garamond, Georgia, serif;
-  font-size: 16px;
-  line-height: 1.6;
+  font-size: 17px;
+  line-height: 1.55;
   color: #f4ece1;
   font-style: italic;
   white-space: pre-line;
   margin: 0;
 }
 
-.community-quote-meta {
+.community-quote-meta,
+.song-quote-meta {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid rgba(214, 174, 115, 0.12);
   font-family: Inter, system-ui, sans-serif;
   font-size: 12px;
   color: var(--secondary);
 }
 
-.community-quote-meta > span + span::before {
+.community-quote-meta > span + span::before,
+.song-quote-meta > span + span::before {
   content: '·';
   margin-right: 8px;
   opacity: 0.55;
 }
 
-.community-quote-count {
+.community-quote-count,
+.song-quote-author {
   font-weight: 600;
   color: var(--accent);
+}
+
+.song-quote-handle {
+  color: var(--secondary);
+  opacity: 0.78;
+}
+
+/* Lines That Stuck — compact editorial cards, capped at three columns. */
+.song-quotes-section .media-section-header {
+  margin-bottom: 20px;
+}
+
+.song-quotes-section .media-section-title-group {
+  gap: 8px;
+}
+
+.song-quotes-section .media-section-title-group h2 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: normal;
+}
+
+.song-quotes-section .title-icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+}
+
+.song-quotes-grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.song-quote-card {
+  min-height: 0;
+  padding: 20px 22px;
+  gap: 12px;
+  background:
+    radial-gradient(circle at 16% 12%, rgba(194, 148, 104, 0.09), transparent 42%),
+    linear-gradient(145deg, rgba(28, 24, 18, 0.96), rgba(19, 17, 13, 0.98));
+  border-color: rgba(194, 148, 104, 0.42);
+  border-radius: 16px;
+  box-shadow:
+    inset 0 1px 0 rgba(242, 211, 169, 0.025),
+    0 16px 42px rgba(0, 0, 0, 0.25);
+}
+
+.song-quote-card::before {
+  display: none;
+}
+
+.song-quote-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(214, 174, 115, 0.65);
+  box-shadow:
+    inset 0 1px 0 rgba(242, 211, 169, 0.04),
+    0 20px 48px rgba(0, 0, 0, 0.34);
+}
+
+.song-quote-mark {
+  display: block;
+  height: 24px;
+  color: rgba(214, 174, 115, 0.74);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 0.8;
+}
+
+.song-quote-text {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  font-size: 16px;
+  line-height: 1.6;
+  letter-spacing: normal;
+  color: #f0e6d8;
+}
+
+.song-quote-meta {
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-top: 0;
+  padding-top: 12px;
+  border-top-color: rgba(194, 148, 104, 0.28);
+  color: rgba(214, 174, 115, 0.8);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.song-quote-meta svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+}
+
+@media (max-width: 620px) {
+  .song-quotes-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .song-quote-card {
+    padding: 18px 20px;
+  }
 }
 
 .community-quotes-empty {
