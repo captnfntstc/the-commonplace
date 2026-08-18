@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { fetchIgdbGames, groupIgdbGames, rankIgdbSearchResults } from './igdb.mjs'
+import {
+  fetchIgdbGames,
+  groupIgdbGames,
+  isCostumeOnlyGameContent,
+  rankIgdbSearchResults,
+} from './igdb.mjs'
 
 test('fails clearly when server-only IGDB credentials are missing', async () => {
   await assert.rejects(
@@ -122,3 +127,89 @@ test('supports prefix token matching on aliases when primary title is localized'
   assert.deepEqual(rankIgdbSearchResults(games, 'resident evil req').map((game) => game.id), [10])
 })
 
+test('returns sequels, expansions, and DLC while excluding costume content', () => {
+  const grouped = groupIgdbGames([{
+    id: 100,
+    name: 'Example Game',
+    first_release_date: 1577836800,
+    game_type: { type: 'Main Game' },
+    collections: [{
+      name: 'Example Series',
+      games: [
+        { id: 100, name: 'Example Game', first_release_date: 1577836800, game_type: { type: 'Main Game' } },
+        { id: 101, name: 'Example Game 2', first_release_date: 1735689600, game_type: { type: 'Main Game' } },
+        { id: 106, name: 'Example Game Stories', first_release_date: 1704067200, game_type: { type: 'Main Game' } },
+        { id: 99, name: 'Example Origins', first_release_date: 1420070400, game_type: { type: 'Main Game' } },
+      ],
+    }],
+    expansions: [{ id: 102, name: 'Example Game: New Lands', first_release_date: 1609459200 }],
+    standalone_expansions: [{ id: 103, name: 'Example Game: Aftermath', first_release_date: 1640995200 }],
+    dlcs: [
+      { id: 104, name: 'Example Game: Story Pack', first_release_date: 1672531200 },
+      { id: 105, name: 'Example Game: Summer Costume Pack', first_release_date: 1672531200 },
+    ],
+  }])
+
+  assert.deepEqual(
+    grouped[0].relatedContent.map(({ name, kind }) => ({ name, kind })),
+    [
+      { name: 'Example Game: New Lands', kind: 'expansion' },
+      { name: 'Example Game: Aftermath', kind: 'expansion' },
+      { name: 'Example Game: Story Pack', kind: 'dlc' },
+      { name: 'Example Game 2', kind: 'sequel' },
+    ],
+  )
+  assert.equal(isCostumeOnlyGameContent({ name: 'Formal Outfit DLC' }), true)
+  assert.equal(isCostumeOnlyGameContent({ name: 'The Adventure Pack' }), false)
+})
+
+test('preserves the exact Steam app identity linked by IGDB', () => {
+  const grouped = groupIgdbGames([{
+    id: 200,
+    name: 'Example PC Game',
+    websites: [
+      { url: 'https://example.com/game' },
+      { url: 'https://store.steampowered.com/app/123456/Example_PC_Game/' },
+    ],
+  }])
+
+  assert.equal(grouped[0].steamAppId, '123456')
+})
+
+test('keeps only IGDB similar games that share genre and gameplay tags', () => {
+  const grouped = groupIgdbGames([{
+    id: 300,
+    name: 'Example Role-Playing Game',
+    genres: [{ name: 'Role-playing (RPG)' }, { name: 'Adventure' }],
+    game_modes: [{ name: 'Single player' }],
+    dlcs: [{ id: 303, name: 'Example Story DLC', genres: [{ name: 'Role-playing (RPG)' }] }],
+    similar_games: [
+      {
+        id: 301,
+        name: 'Another RPG',
+        genres: [{ name: 'Role-playing (RPG)' }, { name: 'Strategy' }],
+        game_modes: [{ name: 'Single player' }],
+      },
+      {
+        id: 304,
+        name: 'Online RPG',
+        genres: [{ name: 'Role-playing (RPG)' }],
+        game_modes: [{ name: 'Massively Multiplayer Online (MMO)' }],
+      },
+      {
+        id: 302,
+        name: 'Unrelated Racer',
+        genres: [{ name: 'Racing' }],
+      },
+      {
+        id: 303,
+        name: 'Example Story DLC',
+        genres: [{ name: 'Role-playing (RPG)' }],
+      },
+    ],
+  }])
+
+  assert.deepEqual(grouped[0].similarGames.map((game) => game.name), ['Another RPG'])
+  assert.deepEqual(grouped[0].similarGames[0].genres, ['Role-playing (RPG)', 'Strategy'])
+  assert.deepEqual(grouped[0].similarGames[0].gameplayTags, ['Single player'])
+})

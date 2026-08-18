@@ -19,4 +19,16 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/main.tsx', 'src/App.tsx', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['**/App', '**/App.tsx', '**/app/AppController', '**/app/AppController.tsx'],
+          message: 'Import shared behavior directly from its owning feature module.',
+        }],
+      }],
+    },
+  },
 ])

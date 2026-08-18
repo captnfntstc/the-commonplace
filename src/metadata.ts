@@ -10,7 +10,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { logApiCall, type ApiProvider } from './services/apiTracker'
 import { resolveArtworkUrl } from './utils/artwork'
-import type { GameMetadata, GameSystemRequirementSet } from './types/mediaEntity'
+import { getSongReleaseKind } from './utils/songBio'
+import type { GameMetadata, GameSystemRequirementSet, HumanScreenCredit, TopContentItem } from './types/mediaEntity'
 import {
   clearBrowserCacheNamespace,
   deleteBrowserCacheValue,
@@ -29,6 +30,8 @@ export type MetadataResult = {
   provider: string
   providerId: string
   genre?: string
+  genres?: string[]
+  language?: string
   coverUrl?: string
   year?: string
   summary?: string
@@ -41,6 +44,14 @@ export type MetadataResult = {
   gameMetadata?: GameMetadata
   /** Only populated by fetchLyrics — not present in search results */
   lyrics?: string
+}
+
+export function getMetadataProviderQuery(query: string, currentYear = new Date().getUTCFullYear()) {
+  const trimmed = query.trim()
+  const match = trimmed.match(/^(.+?)\s+((?:18|19|20)\d{2})$/)
+  if (!match) return trimmed
+  const year = Number(match[2])
+  return year <= currentYear + 2 ? match[1].trim() : trimmed
 }
 
 // ─── Raw API shape types ──────────────────────────────────────────────────────
@@ -62,6 +73,7 @@ type GoogleBooksVolume = {
       smallThumbnail?: string
     }
     categories?: string[]
+    language?: string
   }
 }
 
@@ -74,6 +86,28 @@ type TmdbItem = {
   overview?: string
   poster_path?: string
   genre_ids?: number[]
+  original_language?: string
+}
+
+export type TmdbTvSeason = {
+  id: number
+  name: string
+  seasonNumber: number
+  episodeCount: number
+  overview?: string
+  airDate?: string
+  posterUrl?: string
+}
+
+export type TmdbTvEpisode = {
+  id: number
+  name: string
+  seasonNumber: number
+  episodeNumber: number
+  overview?: string
+  airDate?: string
+  runtime?: number
+  stillUrl?: string
 }
 
 const tmdbGenreMap: Record<number, string> = {
@@ -161,102 +195,272 @@ export function preloadImage(url: string) {
   img.src = url
 }
 
-export async function fetchWikipediaPortrait(name: string, signal?: AbortSignal): Promise<string> {
+/**
+ * Preloads an array of image URLs concurrently, skipping any already in cache.
+ */
+export function preloadImages(urls: string[]) {
+  for (const url of urls) preloadImage(url)
+}
+
+/**
+ * Staggered portrait pre-warm for similar artists.
+ * Fires portrait fetches with a 80ms jitter between each artist so they all
+ * begin resolving before the user scrolls to the section, without hammering
+ * external APIs in a simultaneous burst.
+ */
+export function warmSimilarArtistPortraits(
+  artists: Array<{ id: string; name: string; type?: string }>,
+  signal?: AbortSignal,
+) {
+  artists.forEach((artist, i) => {
+    const delay = i * 80
+    const timer = window.setTimeout(async () => {
+      if (signal?.aborted) return
+      const cacheKey = `fanart-v2:${artist.name.toLowerCase().trim()}`
+      const wikiKey = `wiki-portrait-v5:${artist.name.toLowerCase().trim()}`
+      if (entityImageCacheMap.has(cacheKey) || entityImageCacheMap.has(wikiKey)) return
+      try {
+        const personType = artist.type === 'author' ? 'author' : 'artist'
+        const url = personType === 'artist'
+          ? await fetchArtistPortrait(artist.name, signal)
+          : await fetchWikipediaPortrait(artist.name, signal, personType as WikipediaPersonType)
+        if (url) preloadImage(url)
+      } catch {
+        // Ignore — this is a best-effort pre-warm
+      }
+    }, delay)
+    signal?.addEventListener('abort', () => clearTimeout(timer), { once: true })
+  })
+}
+
+export type WikipediaPersonType = 'artist' | 'author' | 'director' | 'creator' | 'actor'
+
+export interface WikipediaProfile {
+  title?: string
+  portraitUrl: string
+  description: string
+  pageUrl: string
+  pageId?: string
+  wikidataId?: string
+}
+
+function wikipediaRoleHint(type?: WikipediaPersonType) {
+  if (type === 'artist') return '(singer OR musician OR rapper OR band OR songwriter)'
+  if (type === 'author') return '(author OR writer)'
+  if (type === 'director') return 'film director'
+  if (type === 'creator') return 'television creator'
+  if (type === 'actor') return 'actor actress'
+  return 'person'
+}
+
+function normalizeWikipediaTitle(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+export function wikipediaIdentityMatches(name: string, title: string, extract = '') {
+  const requestedName = normalizeWikipediaTitle(name)
+  const pageTitle = normalizeWikipediaTitle(title)
+  if (!requestedName || !pageTitle) return false
+  if (requestedName === pageTitle) return true
+
+  const normalizedExtract = ` ${normalizeWikipediaTitle(extract)} `
+  const aliasPhrases = [
+    ` known professionally as ${requestedName} `,
+    ` better known as ${requestedName} `,
+    ` known as ${requestedName} `,
+    ` stage name ${requestedName} `,
+    ` stylized as ${requestedName} `,
+  ]
+  return requestedName.length >= 3 && aliasPhrases.some((phrase) => normalizedExtract.includes(phrase))
+}
+
+export function isWikipediaDisambiguationPage(page: {
+  title?: string
+  extract?: string
+  pageprops?: Record<string, unknown>
+}) {
+  const pageProps = page.pageprops || {}
+  return (
+    Object.prototype.hasOwnProperty.call(pageProps, 'disambiguation') ||
+    /\(disambiguation\)\s*$/i.test(page.title || '') ||
+    /\bmay (?:also )?refer to\b/i.test((page.extract || '').slice(0, 500))
+  )
+}
+
+export async function fetchWikipediaProfile(
+  name: string,
+  type?: WikipediaPersonType,
+  signal?: AbortSignal,
+): Promise<WikipediaProfile> {
   const cleanName = name.trim().toLowerCase()
-  const cacheKey = `wiki-portrait:${cleanName}`
+  let queryName = name.trim()
+  const wikidataMatch = queryName.match(/^(?:human:)?(Q\d+)$/i)
+  if (wikidataMatch) {
+    try {
+      const wikidataUrl = new URL('https://www.wikidata.org/w/api.php')
+      wikidataUrl.searchParams.set('action', 'wbgetentities')
+      wikidataUrl.searchParams.set('ids', wikidataMatch[1].toUpperCase())
+      wikidataUrl.searchParams.set('props', 'sitelinks')
+      wikidataUrl.searchParams.set('sitefilter', 'enwiki')
+      wikidataUrl.searchParams.set('format', 'json')
+      wikidataUrl.searchParams.set('origin', '*')
+      const response = await fetch(wikidataUrl, { signal })
+      if (response.ok) {
+        const data = await response.json() as {
+          entities?: Record<string, { sitelinks?: { enwiki?: { title?: string } } }>
+        }
+        queryName = data.entities?.[wikidataMatch[1].toUpperCase()]?.sitelinks?.enwiki?.title || queryName
+      }
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') throw error
+    }
+  }
+  const role = type || 'person'
+  const profileCacheKey = `wiki-profile-v5:${role}:${cleanName}`
+  const portraitCacheKey = `wiki-portrait-v5:${cleanName}`
+  const legacyPortraitCacheKey = `wiki-portrait:${cleanName}`
 
-  // Memory cache check first
-  const existing =
-    entityImageCacheMap.get(cacheKey) ||
-    entityImageCacheMap.get(cleanName) ||
-    entityImageCacheMap.get(`artist:${cleanName}`)
-  if (existing) return existing
-
-  const result = await cachedApiRequest(cacheKey, signal, async () => {
+  const profile = await cachedApiRequest(profileCacheKey, signal, async () => {
     try {
       const url = new URL('https://en.wikipedia.org/w/api.php')
       url.searchParams.set('action', 'query')
-      url.searchParams.set('titles', name)
-      url.searchParams.set('prop', 'pageimages')
+      url.searchParams.set('generator', 'search')
+      url.searchParams.set('gsrsearch', `intitle:"${queryName}" ${wikipediaRoleHint(type)}`)
+      url.searchParams.set('gsrnamespace', '0')
+      url.searchParams.set('gsrlimit', '10')
+      url.searchParams.set('prop', 'pageimages|extracts|info|pageprops')
       url.searchParams.set('piprop', 'thumbnail|original')
       url.searchParams.set('pithumbsize', '800')
+      url.searchParams.set('pilimit', '10')
+      url.searchParams.set('exintro', '1')
+      url.searchParams.set('explaintext', '1')
+      url.searchParams.set('exlimit', '10')
+      url.searchParams.set('inprop', 'url')
       url.searchParams.set('redirects', '1')
       url.searchParams.set('format', 'json')
       url.searchParams.set('origin', '*')
 
-      const res = await fetch(url, { signal })
-      if (res.ok) {
-        const data = (await res.json()) as any
-        const pages = data.query?.pages
-        if (pages) {
-          const page = Object.values(pages)[0] as any
-          const wikiUrl = page?.thumbnail?.source || page?.original?.source
-          if (wikiUrl) {
-            preloadImage(wikiUrl)
-            entityImageCacheMap.set(cacheKey, wikiUrl)
-            entityImageCacheMap.set(cleanName, wikiUrl)
-            entityImageCacheMap.set(`artist:${cleanName}`, wikiUrl)
-            return wikiUrl
-          }
-        }
+      const response = await fetch(url, { signal })
+      if (!response.ok) return { portraitUrl: '', description: '', pageUrl: '' }
+
+      const data = (await response.json()) as any
+      const pages = Object.values(data.query?.pages || {}) as any[]
+      const candidates = pages
+        .filter((page) => !isWikipediaDisambiguationPage(page))
+        .sort((left, right) => Number(left?.index || 999) - Number(right?.index || 999))
+      const requestedTitle = normalizeWikipediaTitle(queryName)
+      const page = candidates.find((candidate) =>
+        normalizeWikipediaTitle(candidate?.title || '') === requestedTitle,
+      ) || candidates.find((candidate) =>
+        wikipediaIdentityMatches(queryName, candidate?.title || '', candidate?.extract || ''),
+      )
+      if (!page) return { portraitUrl: '', description: '', pageUrl: '' }
+
+      return {
+        title: page.title || queryName,
+        portraitUrl: page.thumbnail?.source || page.original?.source || '',
+        description: String(page.extract || '').trim(),
+        pageUrl: page.canonicalurl || page.fullurl || '',
+        pageId: page.pageid ? String(page.pageid) : undefined,
+        wikidataId: typeof page.pageprops?.wikibase_item === 'string'
+          ? page.pageprops.wikibase_item
+          : undefined,
       }
     } catch {
-      // Ignore and try REST summary fallback.
+      return { portraitUrl: '', description: '', pageUrl: '' }
     }
-
-    try {
-      const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(name)}`
-      const res = await fetch(summaryUrl, { signal })
-      if (res.ok) {
-        const data = (await res.json()) as any
-        const wikiUrl = data?.originalimage?.source || data?.thumbnail?.source
-        if (wikiUrl) {
-          preloadImage(wikiUrl)
-          entityImageCacheMap.set(cacheKey, wikiUrl)
-          entityImageCacheMap.set(cleanName, wikiUrl)
-          entityImageCacheMap.set(`artist:${cleanName}`, wikiUrl)
-          return wikiUrl
-        }
-      }
-    } catch {
-      // Ignore and fallback to iTunes search.
-    }
-
-    try {
-      const itunesUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(name)}&entity=album&limit=5`
-      const res = await fetch(itunesUrl, { signal })
-      if (res.ok) {
-        const data = (await res.json()) as any
-        const first = data?.results?.[0]
-        if (first?.artworkUrl100) {
-          const fallbackCover = resolveArtworkUrl(
-            first.artworkUrl100.replace('100x100bb', '600x600bb'),
-            name,
-            'Apple Music',
-          )
-          entityImageCacheMap.set(cacheKey, fallbackCover)
-          entityImageCacheMap.set(cleanName, fallbackCover)
-          entityImageCacheMap.set(`artist:${cleanName}`, fallbackCover)
-          return fallbackCover
-        }
-      }
-    } catch {
-      // Fallback failed
-    }
-
-    return ''
   })
 
-  if (!result) {
-    apiResponseCache.delete(cacheKey)
-  } else {
-    preloadImage(result)
-    entityImageCacheMap.set(cacheKey, result)
-    entityImageCacheMap.set(cleanName, result)
-    entityImageCacheMap.set(`artist:${cleanName}`, result)
+  if (!profile.portraitUrl && !profile.description) {
+    apiResponseCache.delete(profileCacheKey)
+    void deleteBrowserCacheValue(API_CACHE_NAMESPACE, profileCacheKey)
+    return profile
   }
 
-  return result
+  if (profile.portraitUrl) {
+    preloadImage(profile.portraitUrl)
+    entityImageCacheMap.set(portraitCacheKey, profile.portraitUrl)
+    entityImageCacheMap.set(legacyPortraitCacheKey, profile.portraitUrl)
+    entityImageCacheMap.set(cleanName, profile.portraitUrl)
+  }
+
+  return profile
+}
+
+export async function fetchWikipediaPortrait(
+  name: string,
+  signal?: AbortSignal,
+  type?: WikipediaPersonType,
+): Promise<string> {
+  const cleanName = name.trim().toLowerCase()
+  const existing = entityImageCacheMap.get(`wiki-portrait-v5:${cleanName}`)
+  if (existing) return existing
+  const profile = await fetchWikipediaProfile(name, type, signal)
+  return profile.portraitUrl
+}
+
+type ArtistPortraitResponse = {
+  artistType?: string
+  imageUrl?: string
+  musicBrainzId?: string
+}
+
+export function getArtistPortraitCacheKey(name: string) {
+  return `fanart-artist-portrait-v1:${name.trim().toLowerCase()}`
+}
+
+/**
+ * Uses Fanart.tv only when MusicBrainz identifies the artist as a Group.
+ * Person/unknown results and missing band artwork fall back to Wikipedia.
+ */
+export async function fetchArtistPortrait(
+  name: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const cacheKey = getArtistPortraitCacheKey(name)
+  const existing = entityImageCacheMap.get(cacheKey)
+  if (existing) return existing
+
+  try {
+    // Keep this session-cached rather than in the 30-day metadata cache so a
+    // newer Fanart.tv upload can be picked up on the user's next visit.
+    const result = await sessionCachedApiRequest<ArtistPortraitResponse>(cacheKey, signal, async () => {
+      const startTime = performance.now()
+      const requestUrl = `/api/fanart/artist?name=${encodeURIComponent(name.trim())}`
+      const response = await fetch(requestUrl, { signal })
+      const latencyMs = Math.round(performance.now() - startTime)
+      const payload = await response.json().catch(() => ({})) as ArtistPortraitResponse & { error?: string }
+
+      logApiCall({
+        provider: 'Fanart.tv',
+        queryOrUrl: name,
+        status: response.status,
+        latencyMs,
+        resultCount: payload.imageUrl ? 1 : 0,
+        cacheStatus: 'MISS',
+        error: response.ok ? undefined : payload.error || `Fanart.tv proxy HTTP ${response.status}`,
+      })
+
+      if (!response.ok) throw new Error(payload.error || 'Fanart.tv portrait request failed.')
+      return payload
+    })
+
+    if (result.imageUrl) {
+      entityImageCacheMap.set(cacheKey, result.imageUrl)
+      preloadImage(result.imageUrl)
+      return result.imageUrl
+    }
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') throw error
+  }
+
+  return fetchWikipediaPortrait(name, signal, 'artist')
 }
 
 export interface DiscographyItem {
@@ -264,9 +468,11 @@ export interface DiscographyItem {
   title: string
   subtitle: string
   artworkUrl: string
-  rating: number
+  rating?: number
   year: string
   genre?: string
+  language?: string
+  artist?: string
   category: 'album' | 'ep' | 'single'
   explicit?: boolean
 }
@@ -372,7 +578,7 @@ function scoreCatalogTitleMatch(candidateName: string, requestedName: string): n
 }
 
 function collectionIdFromAlbumEntityId(id: string): string | undefined {
-  const match = id.match(/^album-(\d+)$/i)
+  const match = id.match(/^(?:(?:itunes:)?album[-:]?)?(\d+)$/i)
   return match?.[1]
 }
 
@@ -509,39 +715,6 @@ function mapItunesAlbumResult(item: ITunesSearchResult): MetadataResult {
   }
 }
 
-const knownAlbumArtistBoosts: Record<string, number> = {
-  'taylor swift': 520,
-  'noah kahan': 470,
-  'olivia rodrigo': 440,
-  radiohead: 420,
-  beyonce: 410,
-  drake: 400,
-  'billie eilish': 400,
-  'lana del rey': 390,
-  'the beatles': 380,
-  'fleetwood mac': 360,
-  'frank ocean': 350,
-  'kendrick lamar': 350,
-  'sabrina carpenter': 340,
-  'ariana grande': 330,
-  'chappell roan': 320,
-  'hollow coves': 260,
-}
-
-export function knownArtistBoost(artistName?: string): number {
-  const normalizedArtist = normalizeAlbumTitleForMatch(artistName || '')
-  if (!normalizedArtist) return 0
-  if (knownAlbumArtistBoosts[normalizedArtist] !== undefined) {
-    return knownAlbumArtistBoosts[normalizedArtist]
-  }
-  for (const [known, boost] of Object.entries(knownAlbumArtistBoosts)) {
-    if (normalizedArtist.includes(known) || known.includes(normalizedArtist)) {
-      return Math.round(boost * 0.8)
-    }
-  }
-  return 0
-}
-
 async function fetchItunesExactArtistId(artistName: string, signal?: AbortSignal): Promise<number | null> {
   const requestedArtist = normalizeAlbumTitleForMatch(artistName)
   if (!requestedArtist) return null
@@ -617,121 +790,207 @@ function preferExplicitAlbumEditions(items: DiscographyItem[]): DiscographyItem[
   return order.map((key) => byEdition.get(key)).filter(Boolean) as DiscographyItem[]
 }
 
+export function classifyItunesDiscographyRelease(
+  title: string,
+  trackCount?: number,
+): DiscographyItem['category'] {
+  const normalizedTitle = normalizeAlbumTitleForMatch(title)
+  const count = Number(trackCount || 0)
+
+  // Explicit catalog labels take precedence over track-count heuristics.
+  if (/\bep\b/i.test(normalizedTitle)) return 'ep'
+  if (/\b(?:single|maxi single)\b/i.test(normalizedTitle)) return 'single'
+
+  // iTunes frequently exposes multi-version single bundles as four-track
+  // "albums". Short unlabelled releases belong with singles, not studio LPs.
+  if (count > 0 && count <= 4) return 'single'
+  if (count >= 5 && count <= 7) return 'ep'
+  return 'album'
+}
+
+
 export async function fetchItunesDiscography(artistName: string, signal?: AbortSignal): Promise<DiscographyItem[]> {
-  const cacheKey = `itunes-discography-v2:${normalizeAlbumTitleForMatch(artistName)}`
+  const cacheKey = `itunes-discography-v3:${normalizeAlbumTitleForMatch(artistName)}`
   return cachedApiRequest(cacheKey, signal, async () => {
     try {
-    const artistId = await fetchItunesExactArtistId(artistName, signal)
-    const url = artistId
-      ? `https://itunes.apple.com/lookup?id=${encodeURIComponent(String(artistId))}&entity=album&limit=200`
-      : `https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=album&attribute=artistTerm&limit=200`
-    const res = await fetch(url, { signal })
-    if (!res.ok) return []
-    const data = (await res.json()) as any
-    let results = (data.results || []).filter((album: ITunesSearchResult) => album.wrapperType !== 'artist')
+      const artistId = await fetchItunesExactArtistId(artistName, signal)
+      const url = artistId
+        ? `https://itunes.apple.com/lookup?id=${encodeURIComponent(String(artistId))}&entity=album&limit=200`
+        : `https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=album&attribute=artistTerm&limit=200`
+      const res = await fetch(url, { signal })
+      if (!res.ok) return []
+      const data = (await res.json()) as any
+      let results = (data.results || []).filter((album: ITunesSearchResult) => album.wrapperType !== 'artist')
 
-    // 1. Strict Primary Artist Filter: album.artistName must strictly match target artist
-    results = results.filter((album: ITunesSearchResult) => {
-      const albumArtist = (album.artistName || '').toLowerCase().trim()
-      const title = (album.collectionName || '').toLowerCase().trim()
-      if (!title) return false
-
-      if (!isStrictDiscographyArtistMatch(album, artistName, artistId)) return false
-
-      // Reject non-official titles / tributes / covers / instrumental / lullaby / commentary / karaoke / remix collections
-      const junkKeywords = [
-        'tribute',
-        'karaoke',
-        'instrumental',
-        'lullaby',
-        'string quartet',
-        'piano cover',
-        'piano tribute',
-        'relaxing',
-        'sleep music',
-        'workout mix',
-        'soundalike',
-        'various artists',
-        'party mix',
-        'ringtone',
-        'commentary',
-        'audiobook',
-        'podcasts',
-        'guided meditation',
-      ]
-      if (junkKeywords.some((kw) => title.includes(kw) || albumArtist.includes(kw))) {
-        return false
-      }
-
-      return true
-    })
-
-    // Sort by releaseDate descending (newest first)
-    results.sort((a: any, b: any) => {
-      const dateA = a.releaseDate ? new Date(a.releaseDate).getTime() : 0
-      const dateB = b.releaseDate ? new Date(b.releaseDate).getTime() : 0
-      return dateB - dateA
-    })
-
-    const seen = new Set<string>()
-    const items = results
-      .filter((album: ITunesSearchResult) => {
-        const cleanTitle = normalizeAlbumTitleForMatch(album.collectionName || '')
-        const cleanArtist = normalizeAlbumTitleForMatch(album.artistName || artistName)
-        const explicit = isExplicitItunesItem(album)
-        const cleanYear = yearFrom(album.releaseDate) || ''
-        const key = `${cleanTitle}:${cleanArtist}:${cleanYear}:${explicit ? 'explicit' : 'clean'}`
-        if (seen.has(key)) return false
-        seen.add(key)
+      results = results.filter((album: ITunesSearchResult) => {
+        const albumArtist = (album.artistName || '').toLowerCase().trim()
+        const title = (album.collectionName || '').toLowerCase().trim()
+        if (!title) return false
+        if (!isStrictDiscographyArtistMatch(album, artistName, artistId)) return false
+        const junkKeywords = [
+          'tribute',
+          'karaoke',
+          'instrumental',
+          'lullaby',
+          'string quartet',
+          'piano cover',
+          'piano tribute',
+          'relaxing',
+          'sleep music',
+          'workout mix',
+          'soundalike',
+          'various artists',
+          'party mix',
+          'ringtone',
+          'commentary',
+          'audiobook',
+          'podcasts',
+          'guided meditation',
+        ]
+        if (junkKeywords.some((kw) => title.includes(kw) || albumArtist.includes(kw))) {
+          return false
+        }
         return true
       })
-      .map((album: ITunesSearchResult) => {
-        const title = album.collectionName || 'Untitled'
-        const cover = formatITunesArt(album.artworkUrl100, title) || ''
-        const year = album.releaseDate ? album.releaseDate.slice(0, 4) : ''
-        const tc = album.trackCount || 10
-        const lowerName = title.toLowerCase()
-        let category: 'album' | 'ep' | 'single' = 'album'
-        if (/\bsingle\b/i.test(lowerName) || tc <= 3) category = 'single'
-        else if (/\bep\b/i.test(lowerName)) category = 'ep'
 
-        const id = `album-${album.collectionId || lowerName.replace(/[^a-z0-9]+/g, '-')}`
-        const explicit = isExplicitItunesItem(album)
-        
-        albumEntityMap.set(id, {
-          id,
-          name: title,
-          artist: album.artistName || artistName,
-          artworkUrl: cover,
-          year,
-          category,
-          collectionId: album.collectionId ? String(album.collectionId) : undefined,
-          explicit,
-        })
-        albumEntityMap.set(lowerName, {
-          id,
-          name: title,
-          artist: album.artistName || artistName,
-          artworkUrl: cover,
-          year,
-          category,
-          collectionId: album.collectionId ? String(album.collectionId) : undefined,
-          explicit,
-        })
-        return {
-          id,
-          title,
-          subtitle: `${category.toUpperCase()} · ${year}`,
-          artworkUrl: cover,
-          rating: 4.9,
-          year,
-          genre: album.primaryGenreName || undefined,
-          category,
-          explicit,
-        }
+      results.sort((a: any, b: any) => {
+        const dateA = a.releaseDate ? new Date(a.releaseDate).getTime() : 0
+        const dateB = b.releaseDate ? new Date(b.releaseDate).getTime() : 0
+        return dateB - dateA
       })
 
-    return preferExplicitAlbumEditions(items)
+      const seen = new Set<string>()
+      const items = results
+        .filter((album: ITunesSearchResult) => {
+          const cleanTitle = normalizeAlbumTitleForMatch(album.collectionName || '')
+          const cleanArtist = normalizeAlbumTitleForMatch(album.artistName || artistName)
+          const explicit = isExplicitItunesItem(album)
+          const cleanYear = yearFrom(album.releaseDate) || ''
+          const key = `${cleanTitle}:${cleanArtist}:${cleanYear}:${explicit ? 'explicit' : 'clean'}`
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+        .map((album: ITunesSearchResult) => {
+          const title = album.collectionName || 'Untitled'
+          const cover = formatITunesArt(album.artworkUrl100, title) || ''
+          const year = album.releaseDate ? album.releaseDate.slice(0, 4) : ''
+          const lowerName = title.toLowerCase()
+          const category = classifyItunesDiscographyRelease(title, album.trackCount)
+
+          const id = `album-${album.collectionId || lowerName.replace(/[^a-z0-9]+/g, '-')}`
+          const explicit = isExplicitItunesItem(album)
+
+          albumEntityMap.set(id, {
+            id,
+            name: title,
+            artist: album.artistName || artistName,
+            artworkUrl: cover,
+            year,
+            category,
+            collectionId: album.collectionId ? String(album.collectionId) : undefined,
+            explicit,
+          })
+          return {
+            id,
+            title,
+            subtitle: `${category.toUpperCase()} · ${year}`,
+            artworkUrl: cover,
+            rating: 4.9,
+            year,
+            genre: album.primaryGenreName || undefined,
+            category,
+            explicit,
+          }
+        })
+
+      return preferExplicitAlbumEditions(items)
+    } catch {
+      return []
+    }
+  })
+}
+
+export async function fetchItunesTopSongs(artistName: string, signal?: AbortSignal): Promise<TopContentItem[]> {
+  const normalizedArtist = normalizeAlbumTitleForMatch(artistName)
+  const cacheKey = `itunes-top-songs-v3:${normalizedArtist}`
+  return cachedApiRequest(cacheKey, signal, async () => {
+    try {
+      // ── Step 1: Try the iTunes Charts RSS feed (top 200 most popular songs globally) ──
+      // Filter to songs by this artist — gives us genuinely most-streamed results.
+      const chartsUrl = `https://itunes.apple.com/us/rss/topsongs/limit=200/json`
+      const chartsRes = await fetch(chartsUrl, { signal })
+      if (chartsRes.ok) {
+        const chartsData = (await chartsRes.json()) as any
+        const chartEntries: any[] = chartsData?.feed?.entry || []
+        const artistMatches = chartEntries.filter((entry: any) => {
+          const artist = normalizeAlbumTitleForMatch(
+            entry?.['im:artist']?.label || entry?.['im:name']?.label || ''
+          )
+          return artist === normalizedArtist || artist.includes(normalizedArtist) || normalizedArtist.includes(artist)
+        })
+        if (artistMatches.length >= 3) {
+          const seen = new Set<string>()
+          const mapped = artistMatches
+            .filter((entry: any) => {
+              const name = normalizeAlbumTitleForMatch(entry?.['im:name']?.label || '')
+              if (!name || seen.has(name)) return false
+              seen.add(name)
+              return true
+            })
+            .slice(0, 10)
+            .map((entry: any, idx: number) => {
+              const trackId = entry?.id?.attributes?.['im:id'] || ''
+              const rawArt = entry?.['im:image']?.[2]?.label || entry?.['im:image']?.[0]?.label || ''
+              const art = rawArt ? rawArt.replace(/\/\d+x\d+bb\./, '/600x600bb.') : ''
+              return {
+                id: `song-chart-${trackId || idx}`,
+                rank: idx + 1,
+                title: entry?.['im:name']?.label || '',
+                subtitle: entry?.['im:collection']?.['im:name']?.label || artistName,
+                artworkUrl: art,
+                explicit: (entry?.category?.attributes?.label || '').toLowerCase().includes('explicit'),
+              }
+            })
+          if (mapped.length > 0) return mapped
+        }
+      }
+
+      // ── Step 2: Fallback — use artistId lookup, sorted by popularity (iTunes default) ──
+      const artistId = await fetchItunesExactArtistId(artistName, signal)
+      const lookupUrl = artistId
+        ? `https://itunes.apple.com/lookup?id=${encodeURIComponent(String(artistId))}&entity=song&limit=50`
+        : `https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=song&attribute=artistTerm&limit=50`
+      const res = await fetch(lookupUrl, { signal })
+      if (!res.ok) return []
+      const data = (await res.json()) as any
+
+      // Strictly filter to this artist only
+      const tracks = (data.results || [])
+        .filter((item: any) => {
+          if (item.wrapperType !== 'track' || item.kind !== 'song') return false
+          const trackArtist = normalizeAlbumTitleForMatch(item.artistName || '')
+          if (artistId && Number(item.artistId) === artistId) return true
+          return trackArtist === normalizedArtist
+        })
+
+      const seen = new Set<string>()
+      return tracks
+        .filter((track: any) => {
+          const name = normalizeAlbumTitleForMatch(track.trackName || '')
+          if (!name || seen.has(name)) return false
+          seen.add(name)
+          return true
+        })
+        .slice(0, 10)
+        .map((track: any, idx: number) => ({
+          id: `song-itunes-${track.trackId}`,
+          rank: idx + 1,
+          title: track.trackName || '',
+          subtitle: track.collectionName || artistName,
+          artworkUrl: formatITunesArt(track.artworkUrl100, track.trackName),
+          explicit: isExplicitItunesItem(track),
+        }))
     } catch {
       return []
     }
@@ -818,7 +1077,7 @@ export async function fetchItunesAlbumDetails(
 
     const first = tracksToUse[0]
     const year = first.releaseDate ? first.releaseDate.slice(0, 4) : ''
-    const genre = first.primaryGenreName || 'Pop'
+    const genre = first.primaryGenreName || ''
     const artist = first.artistName || artistName || ''
     const collectionName = collectionItem?.collectionName || first.collectionName || resolvedAlbum?.name || cleanAlbum
     const cover = albumCover || formatITunesArt(first.artworkUrl100, collectionName) || ''
@@ -865,7 +1124,7 @@ export async function fetchItunesAlbumDetails(
   })
 }
 
-function mapItunesRelatedAlbum(item: ITunesSearchResult): DiscographyItem {
+function mapItunesRelatedAlbum(item: ITunesSearchResult, language?: string): DiscographyItem {
   const title = item.collectionName ?? 'Untitled'
   const collectionId = String(item.collectionId || '')
   const cover = formatITunesArt(item.artworkUrl100, title) || ''
@@ -898,11 +1157,66 @@ function mapItunesRelatedAlbum(item: ITunesSearchResult): DiscographyItem {
     title,
     subtitle: `${item.primaryGenreName || 'Album'}${year ? ` · ${year}` : ''}`,
     artworkUrl: cover,
-    rating: 4.8,
     year,
+    genre: item.primaryGenreName,
+    language,
+    artist: item.artistName || item.collectionArtistName || '',
     category: 'album',
     explicit,
   }
+}
+
+type MusicBrainzReleaseLanguage = {
+  title?: string
+  'artist-credit'?: MBArtistCredit
+  'text-representation'?: { language?: string }
+}
+
+async function fetchAlbumLanguageMap(
+  albums: Array<{ title: string; artist?: string }>,
+  signal?: AbortSignal,
+) {
+  const uniqueAlbums = Array.from(new Map(
+    albums
+      .filter((album) => album.title.trim())
+      .map((album) => [
+        `${normalizeAlbumTitleForMatch(album.title)}:${normalizeAlbumTitleForMatch(album.artist || '')}`,
+        album,
+      ]),
+  ).values()).slice(0, 8)
+  if (uniqueAlbums.length === 0) return new Map<string, string>()
+
+  const cacheKey = `musicbrainz-album-languages-v1:${uniqueAlbums
+    .map((album) => `${normalizeAlbumTitleForMatch(album.title)}:${normalizeAlbumTitleForMatch(album.artist || '')}`)
+    .join('|')}`
+  return cachedApiRequest(cacheKey, signal, async () => {
+    try {
+      const query = uniqueAlbums.map((album) => {
+        const release = `release:"${escapeMusicBrainzSearchValue(album.title)}"`
+        const artist = album.artist?.trim()
+          ? ` AND artist:"${escapeMusicBrainzSearchValue(album.artist)}"`
+          : ''
+        return `(${release}${artist})`
+      }).join(' OR ')
+      const data = await mbGet<{ releases?: MusicBrainzReleaseLanguage[] }>(
+        'release',
+        { query, limit: '100' },
+        signal,
+      )
+      const languages = new Map<string, string>()
+      ;(data.releases || []).forEach((release) => {
+        const language = release['text-representation']?.language?.trim().toLowerCase()
+        if (!language || !release.title) return
+        const artist = artistsFrom(release['artist-credit'])
+        const key = `${normalizeAlbumTitleForMatch(release.title)}:${normalizeAlbumTitleForMatch(artist)}`
+        if (!languages.has(key)) languages.set(key, language)
+      })
+      return languages
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') throw error
+      return new Map<string, string>()
+    }
+  })
 }
 
 export async function fetchRelatedAlbums(
@@ -912,14 +1226,16 @@ export async function fetchRelatedAlbums(
   albumKey?: string,
   signal?: AbortSignal,
   selectedExplicit?: boolean,
+  selectedYear?: string,
 ): Promise<DiscographyItem[]> {
   const cacheKey = [
-    'itunes-related-albums-v4',
+    'itunes-related-albums-v6',
     normalizeAlbumTitleForMatch(albumName),
     normalizeAlbumTitleForMatch(artistName || ''),
     normalizeAlbumTitleForMatch(genre || ''),
     albumKey || '',
     selectedExplicit === undefined ? 'unknown' : selectedExplicit ? 'explicit' : 'clean',
+    selectedYear || '',
   ].join(':')
 
   return cachedApiRequest(cacheKey, signal, async () => {
@@ -932,9 +1248,8 @@ export async function fetchRelatedAlbums(
           [
             cleanArtist ? `${albumName} ${cleanArtist}` : albumName,
             cleanGenre ? `${cleanGenre} album` : '',
-            cleanGenre ? `${cleanGenre} music` : '',
-            cleanArtist && cleanGenre ? `${cleanGenre} top albums` : '',
-            cleanArtist ? `${cleanArtist}` : '',
+            cleanArtist ? `${cleanArtist} albums` : '',
+            cleanArtist && cleanGenre ? `${cleanArtist} ${cleanGenre}` : '',
           ].filter((term) => term.length >= 2),
         ),
       ).slice(0, 4)
@@ -962,6 +1277,7 @@ export async function fetchRelatedAlbums(
       const selectedTitle = normalizeAlbumTitleForMatch(albumName)
       const selectedGenre = normalizeAlbumTitleForMatch(cleanGenre)
       const selectedArtist = normalizeAlbumTitleForMatch(cleanArtist)
+      const selectedReleaseYear = Number(selectedYear || selectedAlbumEntity?.year || 0)
       const seen = new Set<string>()
       const artistCounts: Record<string, number> = {}
       const cleanAlternate = currentIsExplicit
@@ -1021,15 +1337,18 @@ export async function fetchRelatedAlbums(
 
       const seenAlbumVariants = new Set<string>()
 
-      const related = filtered
+      const rankedRelatedItems = filtered
         .map((item, index) => {
           const resultGenre = normalizeAlbumTitleForMatch(item.primaryGenreName || '')
           const resultArtist = normalizeAlbumTitleForMatch(item.artistName || '')
           const sameGenre =
             selectedGenre.length > 0 &&
             (resultGenre === selectedGenre || resultGenre.includes(selectedGenre) || selectedGenre.includes(resultGenre))
-          const isDifferentArtist = selectedArtist.length > 0 && resultArtist !== selectedArtist
+          const sameArtist = selectedArtist.length > 0 && resultArtist === selectedArtist
           const year = Number(yearFrom(item.releaseDate) || 0)
+          const yearProximity = selectedReleaseYear > 0 && year > 0
+            ? Math.max(0, 80 - Math.abs(selectedReleaseYear - year) * 4)
+            : 0
 
           const artistCount = artistCounts[resultArtist] || 0
           artistCounts[resultArtist] = artistCount + 1
@@ -1037,16 +1356,21 @@ export async function fetchRelatedAlbums(
           return {
             item,
             score:
-              (sameGenre ? 300 : 0) +
-              (isDifferentArtist ? 200 : 40) -
+              (sameGenre ? 320 : 0) +
+              (sameArtist ? 240 : 0) +
+              yearProximity -
               (artistCount * 120) +
-              knownArtistBoost(item.artistName) +
-              Math.max(0, 50 - index) +
+              Math.max(0, 60 - index) +
               (item.artworkUrl100 ? 10 : 0) +
               Math.min(year, 2100) / 1000,
+            relevant: selectedGenre
+              ? sameGenre
+              : selectedArtist
+                ? sameArtist
+                : true,
           }
         })
-        .filter(({ score }) => score > 0)
+        .filter(({ score, relevant }) => relevant && score > 0)
         .sort((a, b) => b.score - a.score)
         .filter(({ item }) => {
           const key = `${albumEditionBaseKey(
@@ -1059,10 +1383,35 @@ export async function fetchRelatedAlbums(
           return true
         })
         .slice(0, cleanAlternate ? 3 : 4)
-        .map(({ item }) => mapItunesRelatedAlbum(item))
+        .map(({ item }) => item)
+
+      const languageLookup = await fetchAlbumLanguageMap([
+        { title: albumName, artist: cleanArtist },
+        ...rankedRelatedItems.map((item) => ({
+          title: item.collectionName || '',
+          artist: item.artistName || item.collectionArtistName,
+        })),
+      ], signal)
+      const albumLanguageKey = (title: string, artist?: string) =>
+        `${normalizeAlbumTitleForMatch(title)}:${normalizeAlbumTitleForMatch(artist || '')}`
+      const sourceLanguage = languageLookup.get(albumLanguageKey(albumName, cleanArtist))
+      const hasCandidateLanguage = rankedRelatedItems.some((item) =>
+        languageLookup.has(albumLanguageKey(item.collectionName || '', item.artistName || item.collectionArtistName)),
+      )
+      const languageMatchedItems = sourceLanguage && hasCandidateLanguage
+        ? rankedRelatedItems.filter((item) =>
+            languageLookup.get(albumLanguageKey(item.collectionName || '', item.artistName || item.collectionArtistName)) === sourceLanguage,
+          )
+        : rankedRelatedItems
+      const related = languageMatchedItems.map((item) =>
+        mapItunesRelatedAlbum(
+          item,
+          languageLookup.get(albumLanguageKey(item.collectionName || '', item.artistName || item.collectionArtistName)),
+        ),
+      )
 
       return cleanAlternate
-        ? [mapItunesRelatedAlbum(cleanAlternate), ...related]
+        ? [mapItunesRelatedAlbum(cleanAlternate, sourceLanguage), ...related]
         : related
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err
@@ -1071,7 +1420,7 @@ export async function fetchRelatedAlbums(
   })
 }
 
-function songSearchScore(item: ITunesSearchResult, songQuery: string, targetArtist?: string): number {
+function songSearchScore(item: ITunesSearchResult, songQuery: string, targetArtist?: string, targetAlbum?: string): number {
   const normTrack = normalizeAlbumTitleForMatch(item.trackName || '')
   const normArtist = normalizeAlbumTitleForMatch(item.artistName || '')
   const normTargetSong = normalizeAlbumTitleForMatch(songQuery)
@@ -1084,8 +1433,12 @@ function songSearchScore(item: ITunesSearchResult, songQuery: string, targetArti
     score += 5000
   }
 
-  const boost = knownArtistBoost(item.artistName)
-  score += boost * 10
+  if (targetAlbum) {
+    const normAlbum = normalizeAlbumTitleForMatch(item.collectionName || '')
+    const normTargetAlbum = normalizeAlbumTitleForMatch(targetAlbum)
+    if (!normAlbum || (!normAlbum.includes(normTargetAlbum) && !normTargetAlbum.includes(normAlbum))) return -50000
+    score += normAlbum === normTargetAlbum ? 3200 : 1800
+  }
 
   score += scoreCatalogTitleMatch(normTrack, normTargetSong)
 
@@ -1129,6 +1482,80 @@ function isOfficialSongAppearanceCollection(item: ITunesSearchResult, normalized
   if (collectionArtist && normalizedArtist && collectionArtist !== normalizedArtist) return false
 
   return true
+}
+
+const studioAlbumOrdinals: Record<string, number> = {
+  debut: 1,
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
+  sixth: 6,
+  seventh: 7,
+  eighth: 8,
+  ninth: 9,
+  tenth: 10,
+  eleventh: 11,
+  twelfth: 12,
+  thirteenth: 13,
+  fourteenth: 14,
+  fifteenth: 15,
+  sixteenth: 16,
+  seventeenth: 17,
+  eighteenth: 18,
+  nineteenth: 19,
+  twentieth: 20,
+}
+
+function studioAlbumNumberFromExtract(extract: string): number | null {
+  const numeric = extract.match(/\b(\d{1,2})(?:st|nd|rd|th) studio album\b/i)
+  if (numeric?.[1]) return Number(numeric[1])
+
+  const word = extract.match(
+    /\b(debut|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth) studio album\b/i,
+  )
+  return word?.[1] ? studioAlbumOrdinals[word[1].toLowerCase()] || null : null
+}
+
+async function fetchWikipediaStudioAlbumNumber(albumName: string, artistName: string, signal?: AbortSignal) {
+  const cacheKey = `wiki-studio-album-number:${normalizeAlbumTitleForMatch(albumName)}:${normalizeAlbumTitleForMatch(artistName)}`
+  return cachedApiRequest(cacheKey, signal, async () => {
+    try {
+      const url = new URL('https://en.wikipedia.org/w/api.php')
+      url.searchParams.set('action', 'query')
+      url.searchParams.set('titles', `${albumName} (${artistName} album)|${albumName} (album)|${albumName}`)
+      url.searchParams.set('prop', 'extracts')
+      url.searchParams.set('exintro', '1')
+      url.searchParams.set('explaintext', '1')
+      url.searchParams.set('redirects', '1')
+      url.searchParams.set('format', 'json')
+      url.searchParams.set('origin', '*')
+
+      const response = await fetch(url, { signal })
+      if (!response.ok) return null
+      const data = (await response.json()) as {
+        query?: { pages?: Record<string, { extract?: string; missing?: string }> }
+      }
+      const normalizedArtist = normalizeAlbumTitleForMatch(artistName)
+      const extracts = Object.values(data.query?.pages || {})
+        .filter((page) => !page.missing && page.extract)
+        .map((page) => page.extract || '')
+        .sort((left, right) => {
+          const mentionsArtist = (text: string) => normalizeAlbumTitleForMatch(text).includes(normalizedArtist)
+          return Number(mentionsArtist(right)) - Number(mentionsArtist(left))
+        })
+
+      for (const extract of extracts) {
+        const albumNumber = studioAlbumNumberFromExtract(extract)
+        if (albumNumber) return albumNumber
+      }
+      return null
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') throw error
+      return null
+    }
+  })
 }
 
 export async function fetchWikipediaArtwork(
@@ -1216,12 +1643,13 @@ async function fetchItunesTrackById(trackId?: string, signal?: AbortSignal): Pro
   })
 }
 
-export async function fetchItunesSongDetails(songName: string, artistName?: string, trackId?: string, signal?: AbortSignal) {
+export async function fetchItunesSongDetails(songName: string, artistName?: string, trackId?: string, signal?: AbortSignal, albumName?: string) {
   const cacheKey = [
-    'itunes-song-details-v2',
+    'itunes-song-details-v3',
     normalizeAlbumTitleForMatch(songName),
     normalizeAlbumTitleForMatch(artistName || ''),
     trackId || '',
+    normalizeAlbumTitleForMatch(albumName || ''),
   ].join(':')
 
   return cachedApiRequest(cacheKey, signal, async () => {
@@ -1231,37 +1659,57 @@ export async function fetchItunesSongDetails(songName: string, artistName?: stri
     let song = exactTrack
 
     if (!song) {
-      const query = artistName ? `${cleanSong} ${artistName}` : cleanSong
+      const query = [cleanSong, artistName, albumName].filter(Boolean).join(' ')
       const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=50`
       const res = await fetch(url, { signal })
       if (!res.ok) return null
       const data = (await res.json()) as { results?: ITunesSearchResult[] }
-      const songs = data.results || []
+      const songs = (data.results || []) as ITunesSearchResult[]
       if (songs.length === 0) return null
-      song = [...songs].sort(
-        (a, b) => songSearchScore(b, cleanSong, artistName) - songSearchScore(a, cleanSong, artistName),
+      const contextualSongs = albumName
+        ? songs.filter((candidate) => songSearchScore(candidate, cleanSong, artistName, albumName) > -50000)
+        : songs
+      if (albumName && contextualSongs.length === 0) return null
+      song = [...contextualSongs].sort(
+        (a, b) => songSearchScore(b, cleanSong, artistName, albumName) - songSearchScore(a, cleanSong, artistName, albumName),
       )[0]
     }
 
     if (!song?.trackName) return null
 
-    const cover = formatITunesArt(song.artworkUrl100, song.trackName) || ''
     const year = song.releaseDate ? song.releaseDate.slice(0, 4) : ''
     const millis = song.trackTimeMillis || 200000
     const mins = Math.floor(millis / 60000)
     const secs = Math.floor((millis % 60000) / 1000).toString().padStart(2, '0')
 
-    const lyricsData = await fetchLyrics(song.artistName || artistName || '', song.trackName, signal).catch(() => null)
+    const resolvedArtist = song.artistName || artistName || 'Unknown artist'
+    const trackCount = Number(song.trackCount || 0)
+    const releaseKind = getSongReleaseKind({
+      songName: song.trackName,
+      albumName: song.collectionName,
+      trackCount,
+    })
+    const [lyricsData, studioAlbumNumber, collectionArtwork] = await Promise.all([
+      fetchLyrics(resolvedArtist, song.trackName, signal).catch(() => null),
+      releaseKind === 'album' && song.collectionName
+        ? fetchWikipediaStudioAlbumNumber(song.collectionName, resolvedArtist, signal)
+        : Promise.resolve(null),
+      fetchItunesCollectionArtwork(song.collectionId, signal),
+    ])
+    const cover = collectionArtwork || formatITunesArt(song.artworkUrl100, song.trackName) || ''
 
     return {
       id: `song-${song.trackId}`,
       name: song.trackName,
-      artist: song.artistName,
+      artist: resolvedArtist,
       album: song.collectionName,
       artworkUrl: cover,
       year,
       duration: `${mins}:${secs}`,
       trackNumber: song.trackNumber || 1,
+      trackCount,
+      releaseKind,
+      studioAlbumNumber,
       genre: song.primaryGenreName || 'Pop',
       explicit: isExplicitItunesItem(song),
       lyrics: typeof lyricsData === 'string' && lyricsData.trim() ? lyricsData : null,
@@ -1387,12 +1835,14 @@ export async function fetchItunesSongArtwork(
   artistName?: string,
   signal?: AbortSignal,
   trackId?: string,
+  albumName?: string,
 ): Promise<string> {
   const cacheKey = [
-    'itunes-song-artwork-v2',
+    'itunes-song-artwork-v3',
     normalizeAlbumTitleForMatch(songName),
     normalizeAlbumTitleForMatch(artistName || ''),
     trackId || '',
+    normalizeAlbumTitleForMatch(albumName || ''),
   ].join(':')
 
   const result = await cachedApiRequest(cacheKey, signal, async () => {
@@ -1401,14 +1851,18 @@ export async function fetchItunesSongArtwork(
       if (exactTrack) return formatITunesArt(exactTrack.artworkUrl100, exactTrack.trackName || songName) || ''
 
       const cleanSong = songName.replace(/^song-\d+/i, '').replace(/^song-/i, '').replace(/-/g, ' ')
-      const query = artistName ? `${cleanSong} ${artistName}` : cleanSong
+      const query = [cleanSong, artistName, albumName].filter(Boolean).join(' ')
       const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=50`
       const res = await fetch(url, { signal })
       if (!res.ok) return ''
       const data = (await res.json()) as any
-      const songs = data.results || []
+      const songs = (data.results || []) as ITunesSearchResult[]
       if (songs.length === 0) return ''
-      const sortedSongs = [...songs].sort((a, b) => songSearchScore(b, cleanSong, artistName) - songSearchScore(a, cleanSong, artistName))
+      const contextualSongs = albumName
+        ? songs.filter((candidate) => songSearchScore(candidate, cleanSong, artistName, albumName) > -50000)
+        : songs
+      if (albumName && contextualSongs.length === 0) return ''
+      const sortedSongs = [...contextualSongs].sort((a, b) => songSearchScore(b, cleanSong, artistName, albumName) - songSearchScore(a, cleanSong, artistName, albumName))
       const song = sortedSongs[0]
       return formatITunesArt(song.artworkUrl100, song.trackName) || ''
     } catch {
@@ -1581,6 +2035,30 @@ async function cachedApiRequest<T>(
   }
 }
 
+async function sessionCachedApiRequest<T>(
+  key: string,
+  signal: AbortSignal | undefined,
+  loader: () => Promise<T>,
+): Promise<T> {
+  if (apiResponseCache.has(key)) return apiResponseCache.get(key) as T
+  if (!signal) {
+    const pending = pendingApiRequestCache.get(key)
+    if (pending) return pending as Promise<T>
+  }
+
+  const request = loader().then((result) => {
+    apiResponseCache.set(key, result)
+    return result
+  })
+  if (!signal) pendingApiRequestCache.set(key, request)
+
+  try {
+    return await request
+  } finally {
+    if (!signal) pendingApiRequestCache.delete(key)
+  }
+}
+
 const providerMap: Record<MetadataType, ApiProvider> = {
   book: 'Google Books',
   film: 'TMDB',
@@ -1700,6 +2178,8 @@ async function searchBooks(
           .join(', '),
         providerId: book.id,
         genre: info.categories?.[0] || 'Book',
+        genres: info.categories || [],
+        language: info.language,
         coverUrl: normalizeHttps(rawCover),
         year: yearFrom(info.publishedDate),
         summary: info.description,
@@ -1789,6 +2269,7 @@ async function searchTmdb(
         const title = (type === 'film' ? item.title : item.name) ?? 'Untitled'
         const creatorStr = await fetchTmdbCreator(type, item.id, title, signal)
         const primaryGenreId = item.genre_ids?.[0]
+        const genres = (item.genre_ids || []).map((genreId) => tmdbGenreMap[genreId]).filter(Boolean)
         const genreName = primaryGenreId
           ? tmdbGenreMap[primaryGenreId] || (type === 'film' ? 'Film' : 'TV Show')
           : type === 'film'
@@ -1803,6 +2284,8 @@ async function searchTmdb(
           provider: yearFrom(date) ?? '',
           providerId: String(item.id),
           genre: genreName,
+          genres,
+          language: item.original_language,
           coverUrl: item.poster_path
             ? resolveArtworkUrl(`https://image.tmdb.org/t/p/w500${item.poster_path}`, title, type)
             : undefined,
@@ -1838,7 +2321,304 @@ async function searchTmdb(
   }
 }
 
+export async function fetchTmdbSimilarTitles(
+  type: 'film' | 'tv',
+  providerId: string,
+  signal?: AbortSignal,
+): Promise<MetadataResult[]> {
+  const cleanId = providerId.trim()
+  if (!tmdbToken || !/^\d+$/.test(cleanId)) return []
+
+  return cachedApiRequest(`tmdb-similar-v1:${type}:${cleanId}`, signal, async () => {
+    const endpoint = type === 'film' ? 'movie' : 'tv'
+    const headers = { Authorization: `Bearer ${tmdbToken}`, accept: 'application/json' }
+    const detailsUrl = new URL(`https://api.themoviedb.org/3/${endpoint}/${cleanId}`)
+    const similarUrl = new URL(`https://api.themoviedb.org/3/${endpoint}/${cleanId}/similar`)
+    detailsUrl.searchParams.set('language', 'en-US')
+    similarUrl.searchParams.set('language', 'en-US')
+    similarUrl.searchParams.set('page', '1')
+
+    const [detailsResponse, similarResponse] = await Promise.all([
+      fetch(detailsUrl, { headers, signal }),
+      fetch(similarUrl, { headers, signal }),
+    ])
+    if (!detailsResponse.ok || !similarResponse.ok) return []
+
+    const details = await detailsResponse.json() as {
+      original_language?: string
+      genres?: Array<{ id?: number; name?: string }>
+    }
+    const data = await similarResponse.json() as { results?: TmdbItem[] }
+    const sourceGenreIds = new Set((details.genres || []).map((genre) => genre.id).filter((id): id is number => Boolean(id)))
+    const sourceLanguage = details.original_language || ''
+
+    return (data.results || [])
+      .map((item) => {
+        const sharedGenreCount = (item.genre_ids || []).filter((genreId) => sourceGenreIds.has(genreId)).length
+        const genres = (item.genre_ids || []).map((genreId) => tmdbGenreMap[genreId]).filter(Boolean)
+        const date = type === 'film' ? item.release_date : item.first_air_date
+        const title = (type === 'film' ? item.title : item.name) || 'Untitled'
+        return {
+          item,
+          sharedGenreCount,
+          result: {
+            id: `tmdb:${type}:${item.id}`,
+            type,
+            title,
+            creator: '',
+            provider: yearFrom(date) || '',
+            providerId: String(item.id),
+            genre: genres[0] || (type === 'film' ? 'Film' : 'TV Show'),
+            genres,
+            language: item.original_language,
+            coverUrl: item.poster_path
+              ? resolveArtworkUrl(`https://image.tmdb.org/t/p/w500${item.poster_path}`, title, type)
+              : undefined,
+            year: yearFrom(date),
+            summary: item.overview,
+          } satisfies MetadataResult,
+        }
+      })
+      .filter(({ item, sharedGenreCount }) =>
+        sharedGenreCount > 0 && (!sourceLanguage || item.original_language === sourceLanguage),
+      )
+      .sort((left, right) => right.sharedGenreCount - left.sharedGenreCount)
+      .slice(0, 8)
+      .map(({ result }) => result)
+  })
+}
+
+export async function fetchTmdbTvSeasons(seriesId: string, signal?: AbortSignal) {
+  const cleanId = seriesId.trim()
+  if (!tmdbToken || !/^\d+$/.test(cleanId)) return []
+  return cachedApiRequest<TmdbTvSeason[]>(`tmdb-tv-seasons-v1:${cleanId}`, signal, async () => {
+    const url = new URL(`https://api.themoviedb.org/3/tv/${cleanId}`)
+    url.searchParams.set('language', 'en-US')
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${tmdbToken}`, accept: 'application/json' },
+      signal,
+    })
+    if (!response.ok) throw new Error(`TMDB series details failed with HTTP ${response.status}.`)
+    const data = await response.json() as {
+      seasons?: Array<{
+        id: number
+        name?: string
+        season_number?: number
+        episode_count?: number
+        overview?: string
+        air_date?: string
+        poster_path?: string
+      }>
+    }
+    return (data.seasons || [])
+      .filter((season) => Number.isFinite(season.season_number) && Number(season.episode_count) > 0)
+      .map((season) => ({
+        id: season.id,
+        name: season.name || (season.season_number === 0 ? 'Specials' : `Season ${season.season_number}`),
+        seasonNumber: Number(season.season_number),
+        episodeCount: Number(season.episode_count) || 0,
+        overview: season.overview?.trim() || undefined,
+        airDate: season.air_date || undefined,
+        posterUrl: season.poster_path
+          ? `https://image.tmdb.org/t/p/w342${season.poster_path}`
+          : undefined,
+      }))
+      .sort((left, right) => left.seasonNumber - right.seasonNumber)
+  })
+}
+
+export async function fetchTmdbTvSeasonEpisodes(
+  seriesId: string,
+  seasonNumber: number,
+  signal?: AbortSignal,
+) {
+  const cleanId = seriesId.trim()
+  if (!tmdbToken || !/^\d+$/.test(cleanId) || !Number.isInteger(seasonNumber) || seasonNumber < 0) return []
+  return cachedApiRequest<TmdbTvEpisode[]>(
+    `tmdb-tv-season-episodes-v1:${cleanId}:${seasonNumber}`,
+    signal,
+    async () => {
+      const url = new URL(`https://api.themoviedb.org/3/tv/${cleanId}/season/${seasonNumber}`)
+      url.searchParams.set('language', 'en-US')
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${tmdbToken}`, accept: 'application/json' },
+        signal,
+      })
+      if (!response.ok) throw new Error(`TMDB season details failed with HTTP ${response.status}.`)
+      const data = await response.json() as {
+        episodes?: Array<{
+          id: number
+          name?: string
+          season_number?: number
+          episode_number?: number
+          overview?: string
+          air_date?: string
+          runtime?: number
+          still_path?: string
+        }>
+      }
+      return (data.episodes || [])
+        .filter((episode) => Number(episode.episode_number) > 0)
+        .map((episode) => ({
+          id: episode.id,
+          name: episode.name || `Episode ${episode.episode_number}`,
+          seasonNumber: Number(episode.season_number ?? seasonNumber),
+          episodeNumber: Number(episode.episode_number),
+          overview: episode.overview?.trim() || undefined,
+          airDate: episode.air_date || undefined,
+          runtime: Number(episode.runtime) || undefined,
+          stillUrl: episode.still_path
+            ? `https://image.tmdb.org/t/p/w500${episode.still_path}`
+            : undefined,
+        }))
+        .sort((left, right) => left.episodeNumber - right.episodeNumber)
+    },
+  )
+}
+
 // ─── MusicBrainz fallback helpers ─────────────────────────────────────────────
+
+type TmdbPersonResult = {
+  id: number
+  name?: string
+  known_for_department?: string
+}
+
+type TmdbPersonCredit = {
+  id: number
+  credit_id?: string
+  media_type?: 'movie' | 'tv'
+  title?: string
+  name?: string
+  release_date?: string
+  first_air_date?: string
+  poster_path?: string
+  genre_ids?: number[]
+  character?: string
+  order?: number
+  job?: string
+  department?: string
+}
+
+export interface HumanScreenCatalog {
+  tmdbPersonId?: string
+  credits: HumanScreenCredit[]
+}
+
+function normalizePersonName(value: string) {
+  return value.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+const excludedSelfAppearancePattern = /\b(?:archive footage|uncredited|interview|guest|award|audience|thanks)\b/i
+const concertPattern = /\b(?:concert|tour|live|stadium|world tour|performance)\b/i
+
+export function classifyHumanScreenCredit(
+  credit: TmdbPersonCredit,
+  personName: string,
+): HumanScreenCredit['category'] | undefined {
+  const title = credit.title || credit.name || ''
+  const role = credit.character || credit.job || ''
+  const genres = new Set(credit.genre_ids || [])
+  const isSelf = /\bself\b/i.test(role)
+  const isMusic = genres.has(10402)
+  const isDocumentary = genres.has(99)
+
+  if (credit.job && /^(?:director|creator|screenplay|writer)$/i.test(credit.job.trim())) return 'directing'
+  if (!credit.character) return undefined
+  if (excludedSelfAppearancePattern.test(role) || excludedSelfAppearancePattern.test(title)) return undefined
+  if (!isSelf) return 'acting'
+
+  const nameTokens = normalizePersonName(personName).split(' ').filter((token) => token.length > 2)
+  const normalizedTitle = normalizePersonName(title)
+  const isSelfLed = (credit.order ?? 999) <= 2 || nameTokens.some((token) => normalizedTitle.includes(token))
+  if (!isSelfLed) return undefined
+  if (isMusic || concertPattern.test(title)) return 'concert'
+  if (isDocumentary) return 'documentary'
+  return undefined
+}
+
+function mapHumanScreenCredit(
+  credit: TmdbPersonCredit,
+  personName: string,
+): HumanScreenCredit | undefined {
+  const mediaType = credit.media_type
+  const title = credit.title || credit.name
+  if (!mediaType || !title) return undefined
+  const category = classifyHumanScreenCredit(credit, personName)
+  if (!category) return undefined
+  const date = credit.release_date || credit.first_air_date
+  return {
+    id: `${mediaType}:${credit.id}:${category}`,
+    providerId: String(credit.id),
+    mediaType,
+    title,
+    year: yearFrom(date),
+    artworkUrl: credit.poster_path
+      ? resolveArtworkUrl(`https://image.tmdb.org/t/p/w500${credit.poster_path}`, title, mediaType)
+      : undefined,
+    role: credit.character || credit.job,
+    category,
+  }
+}
+
+async function resolveTmdbPersonId(name: string, wikidataId?: string, signal?: AbortSignal) {
+  const headers = { Authorization: `Bearer ${tmdbToken}`, accept: 'application/json' }
+  if (wikidataId) {
+    const findUrl = new URL(`https://api.themoviedb.org/3/find/${encodeURIComponent(wikidataId)}`)
+    findUrl.searchParams.set('external_source', 'wikidata_id')
+    const response = await fetch(findUrl, { headers, signal })
+    if (response.ok) {
+      const data = await response.json() as { person_results?: TmdbPersonResult[] }
+      if (data.person_results?.[0]?.id) return data.person_results[0].id
+    }
+  }
+
+  const searchUrl = new URL('https://api.themoviedb.org/3/search/person')
+  searchUrl.searchParams.set('query', name)
+  searchUrl.searchParams.set('include_adult', 'false')
+  searchUrl.searchParams.set('language', 'en-US')
+  searchUrl.searchParams.set('page', '1')
+  const response = await fetch(searchUrl, { headers, signal })
+  if (!response.ok) return undefined
+  const data = await response.json() as { results?: TmdbPersonResult[] }
+  const normalizedName = normalizePersonName(name)
+  return data.results?.find((person) => normalizePersonName(person.name || '') === normalizedName)?.id
+}
+
+export async function fetchHumanScreenCredits(
+  name: string,
+  wikidataId?: string,
+  signal?: AbortSignal,
+): Promise<HumanScreenCatalog> {
+  if (!tmdbToken) return { credits: [] }
+  const cacheKey = `tmdb-human-screen-v1:${wikidataId || normalizePersonName(name)}`
+  return cachedApiRequest(cacheKey, signal, async () => {
+    try {
+      const personId = await resolveTmdbPersonId(name, wikidataId, signal)
+      if (!personId) return { credits: [] }
+      const url = new URL(`https://api.themoviedb.org/3/person/${personId}/combined_credits`)
+      url.searchParams.set('language', 'en-US')
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${tmdbToken}`, accept: 'application/json' },
+        signal,
+      })
+      if (!response.ok) return { tmdbPersonId: String(personId), credits: [] }
+      const data = await response.json() as { cast?: TmdbPersonCredit[]; crew?: TmdbPersonCredit[] }
+      const unique = new Map<string, HumanScreenCredit>()
+      ;[...(data.cast || []), ...(data.crew || [])].forEach((credit) => {
+        const item = mapHumanScreenCredit(credit, name)
+        if (item) unique.set(item.id, item)
+      })
+      const credits = [...unique.values()].sort((left, right) =>
+        (right.year || '').localeCompare(left.year || '') || left.title.localeCompare(right.title),
+      )
+      return { tmdbPersonId: String(personId), credits }
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') throw error
+      return { credits: [] }
+    }
+  })
+}
 
 async function mbGet<T>(
   path: string,
@@ -1914,6 +2694,286 @@ async function mbGet<T>(
     })
     throw err
   }
+}
+
+type MusicBrainzArtistSearchItem = {
+  id: string
+  name: string
+  type?: string
+  country?: string
+  score?: number
+  area?: { id?: string; name?: string }
+  tags?: Array<{ name?: string; count?: number }>
+}
+
+export type SimilarArtistMatch = {
+  id: string
+  name: string
+  genres: string[]
+  location: string
+  score: number
+}
+
+function normalizeMusicBrainzFacet(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function escapeMusicBrainzSearchValue(value: string) {
+  return value.replace(/([+\-&|!(){}\[\]^"~*?:\\/])/g, '\\$1')
+}
+
+function musicBrainzGenreFacets(values: string[]) {
+  return Array.from(new Set(values
+    .flatMap((value) => value.split(/[\/,|·]+/))
+    .map((value) => normalizeMusicBrainzFacet(value))
+    .filter((value) => value && !/^(?:music|album|albums|genre)$/.test(value))))
+}
+
+function waitForMusicBrainzSearch(signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(resolve, 1100)
+    signal?.addEventListener('abort', () => {
+      window.clearTimeout(timer)
+      reject(new DOMException('The request was aborted.', 'AbortError'))
+    }, { once: true })
+  })
+}
+
+type LastFmSimilarArtistsResponse = {
+  source?: string
+  artists?: Array<{
+    name?: string
+    musicBrainzId?: string
+    match?: number
+    url?: string
+  }>
+}
+
+async function fetchLastFmSimilarArtists(artistName: string, signal?: AbortSignal) {
+  const normalizedTarget = normalizeMusicBrainzFacet(artistName)
+  return cachedApiRequest<SimilarArtistMatch[]>(
+    `lastfm-similar-artists-v1:${normalizedTarget}`,
+    signal,
+    async () => {
+      const startTime = performance.now()
+      const url = new URL('/api/lastfm/similar-artists', window.location.origin)
+      url.searchParams.set('artist', artistName)
+      url.searchParams.set('limit', '20')
+
+      try {
+        const response = await fetch(url, { signal })
+        const data = (await response.json().catch(() => ({}))) as LastFmSimilarArtistsResponse & { error?: string }
+        const latencyMs = Math.round(performance.now() - startTime)
+        if (!response.ok) {
+          logApiCall({
+            provider: 'Last.fm',
+            queryOrUrl: artistName,
+            status: response.status,
+            latencyMs,
+            resultCount: 0,
+            cacheStatus: 'MISS',
+            error: data.error || `Last.fm HTTP ${response.status}`,
+          })
+          throw new Error(data.error || 'Last.fm similar artists request failed.')
+        }
+
+        const seen = new Set<string>([normalizedTarget])
+        const matches = (data.artists || [])
+          .map((artist) => {
+            const name = artist.name?.trim() || ''
+            const normalizedName = normalizeMusicBrainzFacet(name)
+            return {
+              id: `artist:${normalizedName.replace(/\s+/g, '-')}`,
+              name,
+              genres: [],
+              location: '',
+              score: Math.max(0, Math.min(1, Number(artist.match || 0))) * 100,
+              normalizedName,
+            }
+          })
+          .filter((artist) => {
+            if (!artist.name || !artist.normalizedName || artist.score <= 0 || seen.has(artist.normalizedName)) {
+              return false
+            }
+            seen.add(artist.normalizedName)
+            return true
+          })
+          .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+          .slice(0, 4)
+          .map(({ normalizedName: _normalizedName, ...artist }) => artist)
+
+        logApiCall({
+          provider: 'Last.fm',
+          queryOrUrl: artistName,
+          status: response.status,
+          latencyMs,
+          resultCount: matches.length,
+          cacheStatus: 'MISS',
+        })
+        if (matches.length === 0) throw new Error('Last.fm returned no similar artists.')
+        return matches
+      } catch (error) {
+        if ((error as Error)?.name === 'AbortError') throw error
+        throw error
+      }
+    },
+  )
+}
+
+export async function fetchSimilarArtistsByGenreAndLocation(
+  artistName: string,
+  genres: string[],
+  signal?: AbortSignal,
+): Promise<SimilarArtistMatch[]> {
+  try {
+    return await fetchLastFmSimilarArtists(artistName, signal)
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') throw error
+    return fetchLegacySimilarArtistsByGenreAndLocation(artistName, genres, signal)
+  }
+}
+
+async function fetchLegacySimilarArtistsByGenreAndLocation(
+  artistName: string,
+  genres: string[],
+  signal?: AbortSignal,
+): Promise<SimilarArtistMatch[]> {
+  const normalizedTarget = normalizeMusicBrainzFacet(artistName)
+  const cacheKey = `similar-artists-v4:${normalizedTarget}:${musicBrainzGenreFacets(genres).join(',')}`
+  return cachedApiRequest(cacheKey, signal, async () => {
+    const results: SimilarArtistMatch[] = []
+    const seenNames = new Set<string>([normalizedTarget])
+
+    // Tier 1: MusicBrainz search (strict + relaxed tag match)
+    try {
+      const exactData = await mbGet<{ artists?: MusicBrainzArtistSearchItem[] }>(
+        'artist',
+        { query: `artist:"${escapeMusicBrainzSearchValue(artistName)}"`, limit: '10' },
+        signal,
+      )
+      const currentArtist = [...(exactData.artists || [])]
+        .filter((artist) => normalizeMusicBrainzFacet(artist.name) === normalizedTarget)
+        .sort((left, right) => Number(right.score || 0) - Number(left.score || 0))[0]
+
+      const requestedGenres = musicBrainzGenreFacets(genres)
+      const sortedArtistTags = [...(currentArtist?.tags || [])]
+        .sort((left, right) => Number(right.count || 0) - Number(left.count || 0))
+      const taggedGenres = sortedArtistTags
+        .map((tag) => normalizeMusicBrainzFacet(tag.name || ''))
+        .filter(Boolean)
+
+      const primaryGenre = taggedGenres[0] || requestedGenres[0] || ''
+      const targetArea = normalizeMusicBrainzFacet(currentArtist?.area?.name || '')
+      const targetCountry = currentArtist?.country || ''
+
+      if (primaryGenre) {
+        await waitForMusicBrainzSearch(signal)
+        const primaryGenreQuery = `tag:"${escapeMusicBrainzSearchValue(primaryGenre)}"`
+        const locationQuery = targetCountry
+          ? ` AND country:${escapeMusicBrainzSearchValue(targetCountry)}`
+          : targetArea
+            ? ` AND area:"${escapeMusicBrainzSearchValue(currentArtist?.area?.name || '')}"`
+            : ''
+
+        const candidateData = await mbGet<{ artists?: MusicBrainzArtistSearchItem[] }>(
+          'artist',
+          { query: `${primaryGenreQuery}${locationQuery}`, limit: '40' },
+          signal,
+        )
+
+        const mbMatches = (candidateData.artists || [])
+          .filter((candidate) => {
+            const candNorm = normalizeMusicBrainzFacet(candidate.name)
+            if (!candNorm || seenNames.has(candNorm) || candNorm.includes(normalizedTarget) || normalizedTarget.includes(candNorm)) {
+              return false
+            }
+            return true
+          })
+          .map((candidate) => {
+            const candNorm = normalizeMusicBrainzFacet(candidate.name)
+            const candGenres = musicBrainzGenreFacets((candidate.tags || []).map((t) => t.name || ''))
+            return {
+              id: `artist:${candNorm.replace(/\s+/g, '-')}`,
+              name: candidate.name,
+              genres: candGenres.length > 0 ? candGenres.slice(0, 3) : [primaryGenre],
+              location: candidate.area?.name || candidate.country || '',
+              score: Number(candidate.score || 100),
+            }
+          })
+          .sort((left, right) => right.score - left.score)
+
+        for (const match of mbMatches) {
+          if (results.length >= 4) break
+          const candNorm = normalizeMusicBrainzFacet(match.name)
+          if (!seenNames.has(candNorm)) {
+            seenNames.add(candNorm)
+            results.push(match)
+          }
+        }
+      }
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') throw error
+    }
+
+    // Tier 2: iTunes musicArtist API Search (if < 4 candidates returned from MusicBrainz)
+    if (results.length < 4) {
+      try {
+        const cleanGenres = musicBrainzGenreFacets(genres)
+        const searchQuery = cleanGenres[0] || artistName
+        const url = new URL('https://itunes.apple.com/search')
+        url.searchParams.set('term', searchQuery)
+        url.searchParams.set('entity', 'musicArtist')
+        url.searchParams.set('limit', '30')
+
+        const res = await fetch(url, { signal })
+        if (res.ok) {
+          const data = (await res.json()) as { results?: ITunesSearchResult[] }
+          const itunesCandidates = (data.results || [])
+            .filter((item) => {
+              if (!item.artistName) return false
+              const candNorm = normalizeMusicBrainzFacet(item.artistName)
+              if (
+                !candNorm ||
+                seenNames.has(candNorm) ||
+                candNorm.includes(normalizedTarget) ||
+                normalizedTarget.includes(candNorm)
+              ) {
+                return false
+              }
+              return true
+            })
+            .map((item) => {
+              const candNorm = normalizeMusicBrainzFacet(item.artistName || '')
+              return {
+                id: `artist:${candNorm.replace(/\s+/g, '-')}`,
+                name: item.artistName || '',
+                genres: [item.primaryGenreName].filter(Boolean) as string[],
+                location: '',
+                score: 80 - results.length * 10,
+              }
+            })
+
+          for (const match of itunesCandidates) {
+            if (results.length >= 4) break
+            const candNorm = normalizeMusicBrainzFacet(match.name)
+            if (!seenNames.has(candNorm)) {
+              seenNames.add(candNorm)
+              results.push(match)
+            }
+          }
+        }
+      } catch (error) {
+        if ((error as Error)?.name === 'AbortError') throw error
+      }
+    }
+
+    return results
+  })
 }
 
 function caaCoverUrl(type: 'release' | 'release-group', mbid: string) {
@@ -2057,16 +3117,11 @@ function albumSearchScore(result: MetadataResult, query: string, rawIndex = 0, t
       artistNorm.includes(topArtistNorm) ||
       topArtistNorm.includes(artistNorm)
     )) ||
-    (artistNorm && (qNorm.includes(artistNorm) || artistNorm.includes(qNorm))) ||
-    knownArtistBoost(result.creator) > 0
-
-  const artistBoost = knownArtistBoost(result.creator)
+    (artistNorm && (qNorm.includes(artistNorm) || artistNorm.includes(qNorm)))
 
   if (isPrimaryArtist) {
     score += 3500
   }
-
-  score += artistBoost * 10
 
   if (titleNorm === qNorm) {
     score += 500
@@ -2109,8 +3164,7 @@ async function searchAlbums(
       for (const item of rawResults) {
         if (!item.artistName) continue
         const normA = extractCoreArtist(item.artistName)
-        const boost = knownArtistBoost(item.artistName)
-        artistScores[normA] = (artistScores[normA] || 0) + 1 + boost
+        artistScores[normA] = (artistScores[normA] || 0) + 1
       }
       let topArtistNorm = ''
       let maxScore = 0
@@ -2383,6 +3437,24 @@ type IgdbGameEdition = {
   coverUrl?: string
 }
 
+type IgdbRelatedContent = {
+  providerId: string
+  name: string
+  kind: 'sequel' | 'expansion' | 'dlc'
+  description?: string
+  releaseDate?: string
+  coverUrl?: string
+}
+
+type IgdbSimilarGame = {
+  providerId: string
+  name: string
+  genres: string[]
+  description?: string
+  releaseDate?: string
+  coverUrl?: string
+}
+
 type IgdbGameItem = {
   id: number
   name: string
@@ -2398,10 +3470,14 @@ type IgdbGameItem = {
   publishers?: string[]
   genres?: string[]
   gameModes?: string[]
+  gameplayTags?: string[]
   franchise?: string
   ageRating?: string
   officialWebsite?: string
+  steamAppId?: string
   editions?: IgdbGameEdition[]
+  relatedContent?: IgdbRelatedContent[]
+  similarGames?: IgdbSimilarGame[]
   relatedRemakes?: Array<{ id: number; name: string; releaseDate?: string; coverUrl?: string }>
 }
 
@@ -2713,12 +3789,7 @@ function igdbPlatformStatus(releaseDate?: string) {
 function igdbGameToMetadataResult(item: IgdbGameItem): MetadataResult {
   const platformNames = item.platforms?.map((release) => release.platform).filter(Boolean)
   const genres = item.genres?.filter(Boolean)
-  const editionCount = item.editions?.length ?? 0
-  const providerLabel = [
-    item.publishers?.join(', '),
-    genres?.join(', ') || 'Video Game',
-    editionCount > 0 ? `${editionCount} ${editionCount === 1 ? 'edition' : 'editions'}` : undefined,
-  ].filter(Boolean).join(' · ')
+  const providerLabel = item.publishers?.join(', ') || 'IGDB'
 
   return {
     id: `igdb:game:${item.id}`,
@@ -2738,6 +3809,7 @@ function igdbGameToMetadataResult(item: IgdbGameItem): MetadataResult {
       publishers: item.publishers,
       genres,
       gameModes: item.gameModes,
+      gameplayTags: item.gameplayTags,
       franchise: item.franchise,
       ageRating: item.ageRating,
       releaseDate: item.firstReleaseDate,
@@ -2753,6 +3825,8 @@ function igdbGameToMetadataResult(item: IgdbGameItem): MetadataResult {
         releaseDate: edition.releaseDate,
         platforms: edition.platforms,
       })),
+      relatedContent: item.relatedContent,
+      similarGames: item.similarGames,
       metadataSource: 'IGDB',
       metadataUpdatedAt: new Date().toISOString(),
     },
@@ -2948,7 +4022,7 @@ export async function fetchGameDetails(
   if (/rawg/i.test(metadataSource)) return undefined
 
   return cachedApiRequest<MetadataResult | undefined>(
-    `igdb-game-details:${cleanProviderId}`,
+    `igdb-game-details:v4:${cleanProviderId}`,
     signal,
     async () => {
       const startTime = performance.now()
@@ -2974,6 +4048,17 @@ export async function fetchGameDetails(
       const details = payload.results?.[0]
       if (!details) return undefined
       const result = igdbGameToMetadataResult(details)
+      if (details.steamAppId) {
+        const steamResult = await fetchSteamGameDetails(details.steamAppId, signal).catch(() => undefined)
+        const titlesMatch = steamResult && normalizeGameTitle(steamResult.title) === normalizeGameTitle(result.title)
+        if (titlesMatch && steamResult.gameMetadata?.pcRequirements) {
+          result.gameMetadata = {
+            ...result.gameMetadata,
+            pcRequirements: steamResult.gameMetadata.pcRequirements,
+            metadataSource: 'IGDB + Steam Store',
+          }
+        }
+      }
       logApiCall({
         provider: 'IGDB',
         queryOrUrl: `Game details ${cleanProviderId}`,
@@ -2996,6 +4081,7 @@ export async function searchMetadata(
 ): Promise<MetadataResult[]> {
   const q = query.trim()
   if (q.length < 2) return []
+  const providerQuery = getMetadataProviderQuery(q)
 
   const cacheKey = `${type}:${q.toLowerCase()}`
   if (searchCache.has(cacheKey)) {
@@ -3030,11 +4116,11 @@ export async function searchMetadata(
   }
 
   let results: MetadataResult[] = []
-  if (type === 'book') results = await searchBooks(q, signal)
-  else if (type === 'film' || type === 'tv') results = await searchTmdb(type, q, signal)
-  else if (type === 'song') results = await searchSongs(q, signal)
-  else if (type === 'album') results = await searchAlbums(q, signal)
-  else if (type === 'game') results = await searchGames(q, signal)
+  if (type === 'book') results = await searchBooks(providerQuery, signal)
+  else if (type === 'film' || type === 'tv') results = await searchTmdb(type, providerQuery, signal)
+  else if (type === 'song') results = await searchSongs(providerQuery, signal)
+  else if (type === 'album') results = await searchAlbums(providerQuery, signal)
+  else if (type === 'game') results = await searchGames(providerQuery, signal)
 
   if (results.length > 0) {
     searchCache.set(cacheKey, results)

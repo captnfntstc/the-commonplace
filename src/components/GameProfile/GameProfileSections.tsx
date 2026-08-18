@@ -14,11 +14,26 @@ import type {
   GameEdition,
   GameMetadata,
   GamePlatformRelease,
+  GameRelatedContentItem,
+  GameRelatedContentKind,
   GameSystemRequirementSet,
 } from '../../types/mediaEntity'
 
 interface GameMetadataProps {
   metadata: GameMetadata
+}
+
+export interface GameProfileNavigationItem {
+  providerId: string
+  name: string
+  description?: string
+  releaseDate?: string
+  coverUrl?: string
+  genres?: string[]
+}
+
+interface GameNavigationProps {
+  onNavigateGame?: (item: GameProfileNavigationItem) => void
 }
 
 function PlatformIcon({ platform }: { platform: string }) {
@@ -111,82 +126,78 @@ function MetadataItem({ label, value }: { label: string; value?: string }) {
   )
 }
 
-function getEffectivePcRequirements(metadata: GameMetadata): {
-  minimum: GameSystemRequirementSet
-  recommended: GameSystemRequirementSet
-} {
-  const customMin = metadata.pcRequirements?.minimum
-  const customRec = metadata.pcRequirements?.recommended
+const relatedContentLabels: Record<GameRelatedContentKind, string> = {
+  sequel: 'Sequels',
+  expansion: 'Expansion Packs',
+  dlc: 'DLC',
+}
 
-  const releaseYear = metadata.releaseDate
-    ? Number.parseInt(metadata.releaseDate.match(/\b\d{4}\b/)?.[0] || '2023', 10)
-    : 2023
+function RelatedContentCard({
+  item,
+  onNavigate,
+}: {
+  item: GameRelatedContentItem
+  onNavigate?: (item: GameProfileNavigationItem) => void
+}) {
+  return (
+    <button
+      type="button"
+      className="game-related-content-card"
+      onClick={() => onNavigate?.(item)}
+      aria-label={`Open ${item.name} game profile`}
+    >
+      <div className="game-related-content-cover">
+        {item.coverUrl
+          ? <img src={item.coverUrl} alt={`${item.name} cover`} loading="lazy" referrerPolicy="no-referrer" />
+          : <Gamepad2 size={22} aria-hidden="true" />}
+      </div>
+      <h3>{item.name}</h3>
+    </button>
+  )
+}
 
-  let defaultMin: GameSystemRequirementSet
-  let defaultRec: GameSystemRequirementSet
+export function GameRelatedContentTab({
+  metadata,
+  onNavigateGame,
+}: GameMetadataProps & GameNavigationProps) {
+  const groups = (['sequel', 'expansion', 'dlc'] as const)
+    .map((kind) => ({
+      kind,
+      items: (metadata.relatedContent || []).filter((item) => item.kind === kind),
+    }))
+    .filter((group) => group.items.length > 0)
+  const itemCount = groups.reduce((count, group) => count + group.items.length, 0)
 
-  if (releaseYear >= 2020) {
-    defaultMin = {
-      os: 'Windows 10 64-bit',
-      processor: 'Intel Core i5-6600K / AMD Ryzen 5 1400',
-      memory: '8 GB RAM',
-      graphics: 'NVIDIA GeForce GTX 1060 (6GB) / AMD Radeon RX 580',
-      directX: 'Version 12',
-      storage: '60 GB available space',
-      network: 'Broadband Internet connection',
-      additionalNotes: 'Requires a 64-bit processor and operating system',
-    }
-    defaultRec = {
-      os: 'Windows 10 / 11 64-bit',
-      processor: 'Intel Core i7-9700K / AMD Ryzen 7 3700X',
-      memory: '16 GB RAM',
-      graphics: 'NVIDIA GeForce RTX 3060 / AMD Radeon RX 6700 XT',
-      directX: 'Version 12',
-      storage: '60 GB SSD available space',
-      network: 'Broadband Internet connection',
-      additionalNotes: 'SSD strongly recommended for fast loading times',
-    }
-  } else if (releaseYear >= 2015) {
-    defaultMin = {
-      os: 'Windows 7 / 10 64-bit',
-      processor: 'Intel Core i5-4460 / AMD FX-8350',
-      memory: '8 GB RAM',
-      graphics: 'NVIDIA GeForce GTX 760 / AMD Radeon R9 280',
-      directX: 'Version 11',
-      storage: '45 GB available space',
-      additionalNotes: '64-bit operating system required',
-    }
-    defaultRec = {
-      os: 'Windows 10 64-bit',
-      processor: 'Intel Core i7-4770K / AMD Ryzen 5 1600',
-      memory: '16 GB RAM',
-      graphics: 'NVIDIA GeForce GTX 1060 / AMD Radeon RX 580',
-      directX: 'Version 11',
-      storage: '45 GB available space',
-    }
-  } else {
-    defaultMin = {
-      os: 'Windows 7 64-bit',
-      processor: 'Intel Core 2 Duo 2.4 GHz / AMD Athlon X2 2.8 GHz',
-      memory: '4 GB RAM',
-      graphics: 'NVIDIA GeForce GTX 460 / AMD Radeon HD 5770',
-      directX: 'Version 9.0c',
-      storage: '20 GB available space',
-    }
-    defaultRec = {
-      os: 'Windows 10 64-bit',
-      processor: 'Intel Core i5-2500K / AMD FX-6300',
-      memory: '8 GB RAM',
-      graphics: 'NVIDIA GeForce GTX 660 / AMD Radeon HD 7870',
-      directX: 'Version 11',
-      storage: '20 GB available space',
-    }
-  }
-
-  return {
-    minimum: { ...defaultMin, ...(customMin || {}) },
-    recommended: { ...defaultRec, ...(customRec || {}) },
-  }
+  return (
+    <section className="media-section game-related-content-section">
+      <div className="media-section-header">
+        <div className="media-section-title-group"><Package size={17} /><h2>More From This Game ({itemCount})</h2></div>
+      </div>
+      {groups.length > 0 ? (
+        <div className="game-related-content-groups">
+          {groups.map((group) => (
+            <div className="game-related-content-group" key={group.kind}>
+              <h3>{relatedContentLabels[group.kind]}</h3>
+              <div className="game-related-content-grid">
+                {group.items.map((item) => (
+                  <RelatedContentCard
+                    key={`${item.kind}:${item.providerId}`}
+                    item={item}
+                    onNavigate={onNavigateGame}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="media-empty-reviews">
+          <Package size={30} opacity={0.3} />
+          <p>No sequels, expansion packs, or DLC are listed for this game.</p>
+        </div>
+      )}
+    </section>
+  )
 }
 
 function RequirementCard({ title, requirements }: { title: string; requirements?: GameSystemRequirementSet }) {
@@ -230,7 +241,12 @@ export function GameInfoTab({ metadata }: GameMetadataProps) {
     metadata.releaseDate,
   ]
   const hasAbout = aboutValues.some(Boolean) || Boolean(metadata.officialWebsite)
-  const pcSpecs = getEffectivePcRequirements(metadata)
+  const pcSpecs = metadata.pcRequirements
+  const hasPcRequirements = Boolean(
+    pcSpecs && [pcSpecs.minimum, pcSpecs.recommended]
+      .some((requirements) => requirements && Object.values(requirements).some(Boolean)),
+  )
+  const isPcGame = metadata.platforms?.some(({ platform }) => /\bpc\b|windows|mac(?:os)?|linux/i.test(platform))
 
   return (
     <>
@@ -257,18 +273,29 @@ export function GameInfoTab({ metadata }: GameMetadataProps) {
         </section>
       )}
 
-      <section className="media-section game-requirements-section">
-        <div className="media-section-header">
-          <div className="media-section-title-group">
-            <HardDrive size={17} />
-            <h2>PC System Requirements (PC Specs)</h2>
+      {(hasPcRequirements || isPcGame) && (
+        <section className="media-section game-requirements-section">
+          <div className="media-section-header">
+            <div className="media-section-title-group">
+              <HardDrive size={17} />
+              <h2>PC System Requirements (PC Specs)</h2>
+            </div>
           </div>
-        </div>
-        <div className="game-requirements-grid">
-          <RequirementCard title="Minimum PC Specs" requirements={pcSpecs.minimum} />
-          <RequirementCard title="Recommended PC Specs" requirements={pcSpecs.recommended} />
-        </div>
-      </section>
+          {hasPcRequirements ? (
+            <>
+              <div className="game-requirements-grid">
+                <RequirementCard title="Minimum PC Specs" requirements={pcSpecs?.minimum} />
+                <RequirementCard title="Recommended PC Specs" requirements={pcSpecs?.recommended} />
+              </div>
+              <p className="game-requirements-source">Source: Steam Store listing for this game.</p>
+            </>
+          ) : (
+            <p className="game-requirements-unavailable">
+              Official PC system requirements are not available from this game&apos;s store listing.
+            </p>
+          )}
+        </section>
+      )}
 
       {metadata.features?.length ? (
         <section className="media-section game-features-section">
@@ -314,7 +341,9 @@ function EditionCard({ edition }: { edition: GameEdition }) {
   )
 }
 
-export function PlatformsReleasesTab({ metadata }: GameMetadataProps) {
+export function PlatformsReleasesTab({
+  metadata,
+}: GameMetadataProps) {
   const platforms = metadata.platforms || []
   const timeline = datedTimeline(platforms)
 

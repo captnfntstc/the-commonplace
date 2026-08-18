@@ -19,6 +19,12 @@ function legacyPlatforms(entity: UniversalMediaEntity): GamePlatformRelease[] {
     .map((platform) => ({ platform, status: 'available' }))
 }
 
+const costumeContentPattern = /\b(costumes?|outfits?|skins?|cosmetics?|wardrobes?|clothing|apparel|fashion|hairstyles?|make-?up|accessor(?:y|ies))\b/i
+
+export function isCostumeOnlyGameContent(title: string) {
+  return costumeContentPattern.test(title)
+}
+
 export function normalizeGameMetadata(entity: UniversalMediaEntity): GameMetadata {
   const metadata = entity.gameMetadata || {}
   const developer = chipValue(entity, /^developers?$/i)
@@ -33,6 +39,7 @@ export function normalizeGameMetadata(entity: UniversalMediaEntity): GameMetadat
     genres: metadata.genres?.length ? metadata.genres : nonEmpty([genre]),
     releaseDate: metadata.releaseDate || releaseDate,
     platforms: metadata.platforms?.length ? metadata.platforms : legacyPlatforms(entity),
+    relatedContent: metadata.relatedContent?.filter((item) => !isCostumeOnlyGameContent(item.name)),
   }
 }
 

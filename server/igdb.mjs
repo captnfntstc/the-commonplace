@@ -25,6 +25,8 @@ const gameFields = [
   'platforms.name',
   'genres.name',
   'game_modes.name',
+  'themes.name',
+  'player_perspectives.name',
   'franchises.name',
   'release_dates.date',
   'release_dates.human',
@@ -35,6 +37,42 @@ const gameFields = [
   'age_ratings.organization.name',
   'age_ratings.rating_category.rating',
   'websites.url',
+  'similar_games.id',
+  'similar_games.name',
+  'similar_games.summary',
+  'similar_games.first_release_date',
+  'similar_games.game_status.status',
+  'similar_games.cover.image_id',
+  'similar_games.genres.name',
+  'similar_games.game_modes.name',
+  'similar_games.themes.name',
+  'similar_games.player_perspectives.name',
+  'dlcs.id',
+  'dlcs.name',
+  'dlcs.summary',
+  'dlcs.first_release_date',
+  'dlcs.game_status.status',
+  'dlcs.cover.image_id',
+  'expansions.id',
+  'expansions.name',
+  'expansions.summary',
+  'expansions.first_release_date',
+  'expansions.game_status.status',
+  'expansions.cover.image_id',
+  'standalone_expansions.id',
+  'standalone_expansions.name',
+  'standalone_expansions.summary',
+  'standalone_expansions.first_release_date',
+  'standalone_expansions.game_status.status',
+  'standalone_expansions.cover.image_id',
+  'collections.name',
+  'collections.games.id',
+  'collections.games.name',
+  'collections.games.summary',
+  'collections.games.first_release_date',
+  'collections.games.game_type.type',
+  'collections.games.game_status.status',
+  'collections.games.cover.image_id',
   'version_parent.id',
   'version_parent.name',
   'version_parent.first_release_date',
@@ -227,6 +265,11 @@ function normalizeBaseGame(raw, relationshipType) {
     return [organization, value].filter(Boolean).join(' ')
   }).find(Boolean)
 
+  const websiteUrls = (raw.websites || []).map((website) => website.url).filter(Boolean)
+  const steamAppId = websiteUrls
+    .map((url) => String(url).match(/store\.steampowered\.com\/app\/(\d+)/i)?.[1])
+    .find(Boolean)
+
   return {
     id: Number(raw.id),
     name: raw.name || 'Untitled Game',
@@ -247,9 +290,15 @@ function normalizeBaseGame(raw, relationshipType) {
     publishers: uniqueStrings(publishers),
     genres: uniqueStrings((raw.genres || []).map((genre) => genre.name)),
     gameModes: uniqueStrings((raw.game_modes || []).map((mode) => mode.name)),
+    gameplayTags: uniqueStrings([
+      ...(raw.game_modes || []).map((mode) => mode.name),
+      ...(raw.themes || []).map((theme) => theme.name),
+      ...(raw.player_perspectives || []).map((perspective) => perspective.name),
+    ]),
     franchises: uniqueStrings((raw.franchises || []).map((franchise) => franchise.name)),
     ageRating,
-    officialWebsite: (raw.websites || []).map((website) => website.url).find((url) => /^https?:\/\//i.test(url || '')),
+    officialWebsite: websiteUrls.find((url) => /^https?:\/\//i.test(url || '')),
+    steamAppId,
     versionTitle: raw.version_title,
     raw,
   }
@@ -275,6 +324,141 @@ function editionFromGame(game) {
 
 function relationGames(raw, key, type) {
   return (raw[key] || []).filter((game) => game?.id).map((game) => normalizeBaseGame(game, type))
+}
+
+const costumeContentPattern = /\b(costumes?|outfits?|skins?|cosmetics?|wardrobes?|clothing|apparel|fashion|hairstyles?|make-?up|accessor(?:y|ies))\b/i
+
+export function isCostumeOnlyGameContent(game) {
+  return costumeContentPattern.test(String(game?.name || ''))
+}
+
+function relatedContentItem(raw, kind) {
+  return {
+    providerId: String(raw.id),
+    name: raw.name,
+    kind,
+    description: raw.summary,
+    releaseDate: isoDate(raw.first_release_date),
+    coverUrl: imageUrl(raw.cover?.image_id),
+  }
+}
+
+function activeRelatedGames(raw, key) {
+  return (raw[key] || []).filter((game) =>
+    game?.id &&
+    game?.name &&
+    !/^cancelled$/i.test(game.game_status?.status || '') &&
+    !isCostumeOnlyGameContent(game),
+  )
+}
+
+function sequelTitleParts(value) {
+  const title = String(value || '').split(':', 1)[0]
+  const tokens = normalizeSearchText(title).split(' ').filter(Boolean)
+  const lastToken = tokens.at(-1)
+  const sequelNumber = /^\d+$/.test(lastToken || '') ? Number(lastToken) : undefined
+  if (sequelNumber === undefined) return { root: tokens, sequelNumber }
+  const withoutNumber = tokens.slice(0, -1)
+  if (/^(part|chapter|episode)$/i.test(withoutNumber.at(-1) || '')) withoutNumber.pop()
+  return { root: withoutNumber, sequelNumber }
+}
+
+function isLikelySequel(canonicalName, candidateName) {
+  const canonical = sequelTitleParts(canonicalName)
+  const candidate = sequelTitleParts(candidateName)
+  if (candidate.sequelNumber === undefined || candidate.root.length !== canonical.root.length) return false
+  if (!candidate.root.every((token, index) => token === canonical.root[index])) return false
+  return canonical.sequelNumber === undefined || candidate.sequelNumber > canonical.sequelNumber
+}
+
+function relatedContentForGame(canonical) {
+  const contentById = new Map()
+  const add = (game, kind) => {
+    const id = Number(game.id)
+    if (id === canonical.id || contentById.has(id)) return
+    contentById.set(id, relatedContentItem(game, kind))
+  }
+
+  // Collections are IGDB's series grouping. A later main game in the same
+  // collection is the closest reliable representation of a sequel.
+  for (const collection of canonical.raw.collections || []) {
+    for (const game of collection.games || []) {
+      const releaseDate = isoDate(game.first_release_date)
+      const isLaterRelease = Boolean(
+        releaseDate && canonical.firstReleaseDate && releaseDate > canonical.firstReleaseDate,
+      )
+      const isMainGame = !game.game_type?.type || /^main game$/i.test(game.game_type.type)
+      if (
+        isLaterRelease &&
+        isMainGame &&
+        isLikelySequel(canonical.name, game.name) &&
+        !/^cancelled$/i.test(game.game_status?.status || '') &&
+        !isCostumeOnlyGameContent(game)
+      ) add(game, 'sequel')
+    }
+  }
+
+  for (const game of activeRelatedGames(canonical.raw, 'expansions')) add(game, 'expansion')
+  for (const game of activeRelatedGames(canonical.raw, 'standalone_expansions')) add(game, 'expansion')
+  for (const game of activeRelatedGames(canonical.raw, 'dlcs')) add(game, 'dlc')
+
+  return Array.from(contentById.values()).sort((left, right) =>
+    (left.releaseDate || '9999').localeCompare(right.releaseDate || '9999') ||
+    left.name.localeCompare(right.name),
+  )
+}
+
+function similarGamesForGame(canonical) {
+  const canonicalGenres = new Set(
+    canonical.genres.map((genre) => normalizeSearchText(genre)).filter(Boolean),
+  )
+  if (canonicalGenres.size === 0) return []
+  const canonicalGameplay = new Set(
+    canonical.gameplayTags.map((tag) => normalizeSearchText(tag)).filter(Boolean),
+  )
+  const relatedContentIds = new Set(
+    relatedContentForGame(canonical).map((item) => String(item.providerId)),
+  )
+
+  return (canonical.raw.similar_games || [])
+    .filter((game) =>
+      game?.id &&
+      game?.name &&
+      !relatedContentIds.has(String(game.id)) &&
+      !/^cancelled$/i.test(game.game_status?.status || ''),
+    )
+    .map((game) => {
+      const genres = uniqueStrings((game.genres || []).map((genre) => genre.name))
+      const gameplayTags = uniqueStrings([
+        ...(game.game_modes || []).map((mode) => mode.name),
+        ...(game.themes || []).map((theme) => theme.name),
+        ...(game.player_perspectives || []).map((perspective) => perspective.name),
+      ])
+      const sharedGenreCount = genres.filter((genre) => canonicalGenres.has(normalizeSearchText(genre))).length
+      const sharedGameplayCount = gameplayTags.filter((tag) => canonicalGameplay.has(normalizeSearchText(tag))).length
+      return {
+        providerId: String(game.id),
+        name: game.name,
+        genres,
+        gameplayTags,
+        description: game.summary,
+        releaseDate: isoDate(game.first_release_date),
+        coverUrl: imageUrl(game.cover?.image_id),
+        sharedGenreCount,
+        sharedGameplayCount,
+      }
+    })
+    .filter((game) =>
+      game.sharedGenreCount > 0 &&
+      (canonicalGameplay.size === 0 || game.sharedGameplayCount > 0),
+    )
+    .sort((left, right) =>
+      right.sharedGameplayCount - left.sharedGameplayCount ||
+      right.sharedGenreCount - left.sharedGenreCount ||
+      (right.releaseDate || '').localeCompare(left.releaseDate || ''),
+    )
+    .slice(0, 4)
+    .map(({ sharedGenreCount: _sharedGenreCount, ...game }) => game)
 }
 
 export function groupIgdbGames(rawGames) {
@@ -343,10 +527,14 @@ export function groupIgdbGames(rawGames) {
       publishers: canonical.publishers,
       genres: canonical.genres,
       gameModes: canonical.gameModes,
+      gameplayTags: canonical.gameplayTags,
       franchise: canonical.franchises[0],
       ageRating: canonical.ageRating,
       officialWebsite: canonical.officialWebsite,
+      steamAppId: canonical.steamAppId,
       editions: uniqueVariants.map(editionFromGame),
+      relatedContent: relatedContentForGame(canonical),
+      similarGames: similarGamesForGame(canonical),
       relatedRemakes: remakes,
     })
   }

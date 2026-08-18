@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowRight,
   BookOpen,
   Clapperboard,
   Disc3,
@@ -14,19 +13,16 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { USER_DIRECTORY } from '../../pages/UserProfilePage'
-import { fetchWikipediaPortrait } from '../../metadata'
+import { USER_DIRECTORY } from '../../data/userDirectory'
+import { fetchArtistPortrait, fetchWikipediaPortrait } from '../../metadata'
 import { createArtworkPlaceholder, resolveArtworkUrl } from '../../utils/artwork'
 import { AdaptiveGameArtwork } from '../GameArtwork/AdaptiveGameArtwork'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Alternate Search — experimental developer feature.
-// A separate archival-style search experience rendered only while the
-// "Alternate search" toggle in Developer Settings is enabled. The default
-// search (src/App.tsx) is untouched while this flag is off.
+// Primary archival-style header search experience.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type AltSearchCategory =
+export type SearchCategory =
   | 'people'
   | 'books'
   | 'albums'
@@ -35,10 +31,12 @@ export type AltSearchCategory =
   | 'shows'
   | 'games'
 
-export type AltSearchType =
+export type SearchResultType =
+  | 'human'
   | 'artist'
   | 'author'
   | 'director'
+  | 'creator'
   | 'actor'
   | 'game_creator'
   | 'book'
@@ -48,39 +46,41 @@ export type AltSearchType =
   | 'show'
   | 'game'
 
-export type AltMediaResult = {
+export type SearchMediaResult = {
   id: string
   name: string
   image: string
-  category: AltSearchCategory
-  type: AltSearchType
+  category: SearchCategory
+  type: SearchResultType
   subtitle: string
   explicit?: boolean
   preferWikipediaArtwork?: boolean
 }
 
-export type AltSearchUser = {
+export type SearchUser = {
   handle: string
   name: string
   avatar: string
   isPrivate?: boolean
 }
 
-interface AlternateSearchProps {
+interface PrimarySearchProps {
   query: string
   onQueryChange: (value: string) => void
   open: boolean
   onOpenChange: (open: boolean) => void
   mode: 'media' | 'users'
   onModeChange: (mode: 'media' | 'users') => void
-  mediaResults: AltMediaResult[]
+  mediaResults: SearchMediaResult[]
   mediaLoading: boolean
-  onOpenEntity: (result: AltMediaResult) => void
+  resultLimit: number
+  onLoadMore: () => void
+  onOpenEntity: (result: SearchMediaResult) => void
   onOpenUser: (handle: string) => void
 }
 
 const FILTERS: Array<{
-  id: AltSearchCategory | 'all'
+  id: SearchCategory | 'all'
   label: string
   plural: string
   Icon: typeof Search
@@ -95,10 +95,14 @@ const FILTERS: Array<{
   { id: 'games', label: 'Games', plural: 'games', Icon: Gamepad2 },
 ]
 
-const TYPE_BADGES: Record<AltSearchType, string> = {
+const MAX_VISIBLE_SEARCH_RESULTS = 40
+
+const TYPE_BADGES: Record<SearchResultType, string> = {
+  human: 'Person',
   artist: 'Artist',
   author: 'Author',
   director: 'Director',
+  creator: 'Creator',
   actor: 'Actor',
   game_creator: 'Game Creator',
   book: 'Book',
@@ -109,10 +113,12 @@ const TYPE_BADGES: Record<AltSearchType, string> = {
   game: 'Game',
 }
 
-const PORTRAIT_TYPES = new Set<AltSearchType>([
+const PORTRAIT_TYPES = new Set<SearchResultType>([
+  'human',
   'artist',
   'author',
   'director',
+  'creator',
   'actor',
   'game_creator',
 ])
@@ -121,41 +127,56 @@ function normalizeSearchText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
-function isSquareThumb(type: AltSearchType) {
+function isSquareThumb(type: SearchResultType) {
   return PORTRAIT_TYPES.has(type) || type === 'album' || type === 'song'
 }
 
-const AltSearchThumb: React.FC<{
+const SearchThumb: React.FC<{
   image: string
   name: string
-  type: AltSearchType
+  type: SearchResultType
   square?: boolean
   preferWikipediaArtwork?: boolean
 }> = ({ image, name, type, square = false, preferWikipediaArtwork = false }) => {
   const isPortrait = PORTRAIT_TYPES.has(type)
-  const [photo, setPhoto] = useState(() => image || createArtworkPlaceholder(name, TYPE_BADGES[type]))
-
-  useEffect(() => {
-    setPhoto(image || createArtworkPlaceholder(name, TYPE_BADGES[type]))
-  }, [image, name, type])
+  const photoKey = `${type}:${name}:${image}`
+  const fallbackPhoto = image || createArtworkPlaceholder(name, TYPE_BADGES[type])
+  const [resolvedPhoto, setResolvedPhoto] = useState<{ key: string; url: string } | null>(null)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const photo = resolvedPhoto?.key === photoKey ? resolvedPhoto.url : fallbackPhoto
 
   useEffect(() => {
     if (!isPortrait) return
     let cancelled = false
-    fetchWikipediaPortrait(name)
-      .then((portraitUrl) => {
-        if (!cancelled && portraitUrl) setPhoto(resolveArtworkUrl(portraitUrl, name, type))
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setPhoto((current) => current || createArtworkPlaceholder(name, TYPE_BADGES[type]))
-        }
-      })
+
+    // Debounce portrait fetches by 120ms — avoids firing on every keystroke
+    // when the user types quickly and components mount/unmount rapidly.
+    debounceRef.current = setTimeout(() => {
+      if (cancelled) return
+      const wikipediaType = type === 'artist' || type === 'author' || type === 'director' || type === 'creator' || type === 'actor'
+        ? type
+        : undefined
+      const portraitRequest = type === 'artist'
+        ? fetchArtistPortrait(name)
+        : fetchWikipediaPortrait(name, undefined, wikipediaType)
+      portraitRequest
+        .then((portraitUrl) => {
+          if (!cancelled && portraitUrl) {
+            setResolvedPhoto({ key: photoKey, url: resolveArtworkUrl(portraitUrl, name, type) })
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setResolvedPhoto({ key: photoKey, url: fallbackPhoto })
+          }
+        })
+    }, 120)
 
     return () => {
       cancelled = true
+      if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }, [name, isPortrait, type])
+  }, [fallbackPhoto, isPortrait, name, photoKey, type])
 
   return (
     <span className={`alt-search-thumb ${square ? 'is-square' : ''}`}>
@@ -177,7 +198,10 @@ const AltSearchThumb: React.FC<{
           referrerPolicy="no-referrer"
           loading="eager"
           decoding="async"
-          onError={() => setPhoto(createArtworkPlaceholder(name, TYPE_BADGES[type]))}
+          onError={() => setResolvedPhoto({
+            key: photoKey,
+            url: createArtworkPlaceholder(name, TYPE_BADGES[type]),
+          })}
         />
       ) : (
         <Search aria-hidden="true" />
@@ -186,7 +210,7 @@ const AltSearchThumb: React.FC<{
   )
 }
 
-const AltSearchSkeleton: React.FC = () => (
+const SearchSkeleton: React.FC = () => (
   <div className="alt-search-skeleton" aria-hidden="true">
     {[0, 1, 2, 3, 4].map((i) => (
       <div key={i} className="alt-search-skeleton-row">
@@ -201,8 +225,8 @@ const AltSearchSkeleton: React.FC = () => (
   </div>
 )
 
-const AltMediaResultRow: React.FC<{
-  result: AltMediaResult
+const MediaResultRow: React.FC<{
+  result: SearchMediaResult
   active: boolean
   onHover: () => void
   onOpen: () => void
@@ -213,7 +237,7 @@ const AltMediaResultRow: React.FC<{
     onMouseEnter={onHover}
     onClick={onOpen}
   >
-    <AltSearchThumb
+    <SearchThumb
       image={result.image}
       name={result.name}
       type={result.type}
@@ -231,8 +255,8 @@ const AltMediaResultRow: React.FC<{
   </button>
 )
 
-const AltUserResultRow: React.FC<{
-  user: AltSearchUser
+const UserResultRow: React.FC<{
+  user: SearchUser
   active: boolean
   onHover: () => void
   onOpen: () => void
@@ -260,7 +284,7 @@ const AltUserResultRow: React.FC<{
   </button>
 )
 
-export const AlternateSearch: React.FC<AlternateSearchProps> = ({
+export const PrimarySearch: React.FC<PrimarySearchProps> = ({
   query,
   onQueryChange,
   open,
@@ -269,10 +293,12 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
   onModeChange,
   mediaResults,
   mediaLoading,
+  resultLimit,
+  onLoadMore,
   onOpenEntity,
   onOpenUser,
 }) => {
-  const [mediaFilter, setMediaFilter] = useState<AltSearchCategory | 'all'>('all')
+  const [mediaFilter, setMediaFilter] = useState<SearchCategory | 'all'>('all')
   const [activeIndex, setActiveIndex] = useState(-1)
   const containerRef = useRef<HTMLDivElement>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -280,7 +306,7 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
 
   const trimmedQuery = query.trim()
 
-  const userResults = useMemo<AltSearchUser[]>(() => {
+  const userResults = useMemo<SearchUser[]>(() => {
     const normalizedQuery = normalizeSearchText(query)
     if (!normalizedQuery) return []
 
@@ -303,6 +329,7 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
   }, [mediaFilter, mediaResults])
 
   const results = mode === 'media' ? mediaResultsFiltered : userResults
+  const visibleResults = useMemo(() => results.slice(0, resultLimit), [resultLimit, results])
 
   // Clicking outside closes the dropdown.
   useEffect(() => {
@@ -316,11 +343,6 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open, onOpenChange])
 
-  // Reset keyboard selection whenever the visible list or open state changes.
-  useEffect(() => {
-    setActiveIndex(-1)
-  }, [open, results])
-
   const scrollActiveIntoView = (index: number) => {
     const node = resultsRef.current?.querySelector<HTMLElement>(`[data-index="${index}"]`)
     node?.scrollIntoView({ block: 'nearest' })
@@ -331,11 +353,12 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
 
     if (event.key === 'Escape') {
       event.preventDefault()
+      setActiveIndex(-1)
       onOpenChange(false)
       return
     }
 
-    if (results.length === 0) return
+    if (visibleResults.length === 0) return
 
     // If a tab/filter/result button is focused, Enter should activate that
     // button natively rather than open the highlighted result.
@@ -343,7 +366,7 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
 
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      const next = activeIndex >= results.length - 1 ? activeIndex : activeIndex + 1
+      const next = activeIndex >= visibleResults.length - 1 ? activeIndex : activeIndex + 1
       setActiveIndex(next)
       scrollActiveIntoView(next)
       return
@@ -358,7 +381,7 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
     }
 
     if (event.key === 'Enter') {
-      if (activeIndex >= 0 && activeIndex < results.length) {
+      if (activeIndex >= 0 && activeIndex < visibleResults.length) {
         event.preventDefault()
         handleOpenResult(activeIndex)
       }
@@ -368,18 +391,20 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
   const handleClear = () => {
     if (trimmedQuery) {
       onQueryChange('')
+      setActiveIndex(-1)
       inputRef.current?.focus()
     } else {
+      setActiveIndex(-1)
       onOpenChange(false)
     }
   }
 
   const handleOpenResult = (index: number) => {
-    const result = results[index]
+    const result = visibleResults[index]
     if (mode === 'media') {
-      onOpenEntity(result as AltMediaResult)
+      onOpenEntity(result as SearchMediaResult)
     } else {
-      onOpenUser((result as AltSearchUser).handle)
+      onOpenUser((result as SearchUser).handle)
     }
   }
 
@@ -402,7 +427,10 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
           type="button"
           aria-label="Search"
           title="Search"
-          onClick={() => onOpenChange(!open)}
+          onClick={() => {
+            setActiveIndex(-1)
+            onOpenChange(!open)
+          }}
         >
           <Search aria-hidden="true" />
         </button>
@@ -418,6 +446,7 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
             if (!open) onOpenChange(true)
           }}
           onChange={(e) => {
+            setActiveIndex(-1)
             onQueryChange(e.target.value)
             if (!open) onOpenChange(true)
           }}
@@ -444,7 +473,10 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
               role="tab"
               aria-selected={mode === 'media'}
               className={`alt-search-tab ${mode === 'media' ? 'active' : ''}`}
-              onClick={() => onModeChange('media')}
+              onClick={() => {
+                setActiveIndex(-1)
+                onModeChange('media')
+              }}
             >
               Media
             </button>
@@ -453,7 +485,10 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
               role="tab"
               aria-selected={mode === 'users'}
               className={`alt-search-tab ${mode === 'users' ? 'active' : ''}`}
-              onClick={() => onModeChange('users')}
+              onClick={() => {
+                setActiveIndex(-1)
+                onModeChange('users')
+              }}
             >
               Users
             </button>
@@ -466,7 +501,10 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
                   key={filter.id}
                   type="button"
                   className={`alt-search-filter ${mediaFilter === filter.id ? 'active' : ''}`}
-                  onClick={() => setMediaFilter(filter.id)}
+                  onClick={() => {
+                    setActiveIndex(-1)
+                    setMediaFilter(filter.id)
+                  }}
                   title={filter.label}
                   aria-label={`Filter by ${filter.label}`}
                   aria-pressed={mediaFilter === filter.id}
@@ -483,24 +521,24 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
                 {mode === 'users' ? 'Start typing to search users.' : 'Start typing to search media.'}
               </div>
             ) : mediaLoading && results.length === 0 ? (
-              <AltSearchSkeleton />
+              <SearchSkeleton />
             ) : results.length === 0 ? (
               <div className="alt-search-empty">{emptyLabel}</div>
             ) : (
-              results.map((result, index) =>
+              visibleResults.map((result, index) =>
                 mode === 'media' ? (
-                  <div key={(result as AltMediaResult).id} data-index={index}>
-                    <AltMediaResultRow
-                      result={result as AltMediaResult}
+                  <div key={(result as SearchMediaResult).id} data-index={index}>
+                    <MediaResultRow
+                      result={result as SearchMediaResult}
                       active={index === activeIndex}
                       onHover={() => setActiveIndex(index)}
                       onOpen={() => handleOpenResult(index)}
                     />
                   </div>
                 ) : (
-                  <div key={(result as AltSearchUser).handle} data-index={index}>
-                    <AltUserResultRow
-                      user={result as AltSearchUser}
+                  <div key={(result as SearchUser).handle} data-index={index}>
+                    <UserResultRow
+                      user={result as SearchUser}
                       active={index === activeIndex}
                       onHover={() => setActiveIndex(index)}
                       onOpen={() => handleOpenResult(index)}
@@ -509,18 +547,18 @@ export const AlternateSearch: React.FC<AlternateSearchProps> = ({
                 ),
               )
             )}
+            {trimmedQuery.length > 0 && resultLimit < Math.min(results.length, MAX_VISIBLE_SEARCH_RESULTS) && (
+              <div className="alt-search-footer">
+                <button type="button" className="alt-search-more-button" onClick={onLoadMore}>
+                  Show More
+                </button>
+              </div>
+            )}
           </div>
-
-          {trimmedQuery.length > 0 && results.length > 0 && (
-            <div className="alt-search-footer">
-              <span>View all results for "{trimmedQuery}"</span>
-              <ArrowRight size={12} aria-hidden="true" />
-            </div>
-          )}
         </div>
       )}
     </div>
   )
 }
 
-export type { AlternateSearchProps }
+export type { PrimarySearchProps }

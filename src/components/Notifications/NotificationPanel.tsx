@@ -10,33 +10,9 @@ import {
   X,
   Zap,
 } from 'lucide-react'
+import type { AppNotification as Notification, NotificationType } from '../../types/notification'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-export type NotificationType =
-  | 'like'
-  | 'like_milestone'
-  | 'comment'
-  | 'follow_request'
-  | 'friend_recommendation'
-  | 'people_you_may_know'
-
-export interface Notification {
-  id: string
-  type: NotificationType
-  read: boolean
-  createdAt: string
-  // Shared fields
-  actorName?: string
-  actorHandle?: string
-  actorAvatarUrl?: string
-  // Like
-  entryTitle?: string
-  // Milestone
-  milestoneCount?: number
-  // Comment
-  commentSnippet?: string
-}
-
 interface NotificationPanelProps {
   notifications: Notification[]
   onMarkAllRead: () => void

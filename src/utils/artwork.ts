@@ -123,3 +123,43 @@ export function resolveArtworkUrl(url?: string | null, _title?: string, _label?:
 
   return url
 }
+
+/**
+ * Generates a `srcset` string for Apple CDN artwork URLs which support arbitrary
+ * dimension substitution in the path. Falls back to empty string for other hosts.
+ *
+ * Usage:  <img src={url} srcSet={buildSrcSet(url)} sizes={getImageSizes('cover')} />
+ */
+export function buildSrcSet(url: string | null | undefined, widths: number[] = [200, 400, 600, 800]): string {
+  if (!url) return ''
+  // Apple CDN pattern: .../NNNxNNNbb.jpg — replace the dimensions segment
+  if (/is\d+-ssl\.mzstatic\.com|mzstatic\.com/.test(url)) {
+    const ext = url.match(/\.(jpg|jpeg|png|webp)$/i)?.[1] ?? 'jpg'
+    return widths
+      .map((w) => `${url.replace(/\/\d+x\d+bb\.(jpg|jpeg|png|webp)$/i, `/${w}x${w}bb.${ext}`)} ${w}w`)
+      .join(', ')
+  }
+  // TMDB pattern: .../w500/ — replace the size segment
+  if (/image\.tmdb\.org/.test(url)) {
+    const tmdbWidths = [185, 342, 500, 780]
+    return tmdbWidths
+      .filter((w) => widths.some((rw) => Math.abs(rw - w) < 150))
+      .map((w) => `${url.replace(/\/w\d+\//, `/w${w}/`)} ${w}w`)
+      .join(', ')
+  }
+  return ''
+}
+
+/**
+ * Returns a `sizes` hint string for the image's expected layout width.
+ */
+export function getImageSizes(slot: 'search-thumb' | 'portrait' | 'cover' | 'hero' | 'album-tile'): string {
+  switch (slot) {
+    case 'search-thumb': return '48px'
+    case 'portrait':     return '(max-width: 640px) 80px, 100px'
+    case 'album-tile':   return '(max-width: 640px) 80px, 120px'
+    case 'cover':        return '(max-width: 640px) 160px, 240px'
+    case 'hero':         return '(max-width: 640px) 100vw, 600px'
+    default:             return '100px'
+  }
+}

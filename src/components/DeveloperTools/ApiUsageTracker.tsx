@@ -28,9 +28,9 @@ import {
   type MetadataType,
   searchMetadata,
 } from '../../metadata'
-import type { Notification, NotificationType } from '../Notifications/NotificationPanel'
+import type { AppNotification as Notification, NotificationType } from '../../types/notification'
 
-type DevToolSection = 'api' | 'search' | 'notifications'
+type DevToolSection = 'api' | 'notifications'
 
 const MOCK_PEOPLE = [
   { name: 'Elena Rostova', handle: 'elena_r', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop' },
@@ -73,15 +73,11 @@ function createMockNotification(type: NotificationType): Notification {
 interface ApiUsageTrackerProps {
   onAddNotification?: (notification: Notification) => void
   initialSection?: DevToolSection
-  alternateSearchEnabled?: boolean
-  onAlternateSearchEnabledChange?: (enabled: boolean) => void
 }
 
 export const ApiUsageTracker: React.FC<ApiUsageTrackerProps> = ({
   onAddNotification,
   initialSection = 'api',
-  alternateSearchEnabled = false,
-  onAlternateSearchEnabledChange,
 }) => {
   const [logs, setLogs] = useState<ApiLogItem[]>(getApiLogs)
   const [stats, setStats] = useState(getApiStats)
@@ -95,10 +91,6 @@ export const ApiUsageTracker: React.FC<ApiUsageTrackerProps> = ({
   const [testType, setTestType] = useState<MetadataType | 'lyrics'>('book')
   const [testQuery, setTestQuery] = useState('')
   const [isTesting, setIsTesting] = useState(false)
-  const [localAlternateSearchEnabled, setLocalAlternateSearchEnabled] = useState(false)
-  const effectiveAlternateSearchEnabled = onAlternateSearchEnabledChange
-    ? alternateSearchEnabled
-    : localAlternateSearchEnabled
 
   useEffect(() => {
     const unsubscribe = subscribeApiTracker(() => {
@@ -157,7 +149,6 @@ export const ApiUsageTracker: React.FC<ApiUsageTrackerProps> = ({
       <div className="dev-tab-bar">
         {([
           ['api', Activity, 'API'],
-          ['search', Search, 'Search'],
           ['notifications', Bell, 'Notifications'],
         ] as Array<[DevToolSection, typeof Activity, string]>).map(([section, Icon, label]) => (
           <button
@@ -391,39 +382,6 @@ export const ApiUsageTracker: React.FC<ApiUsageTrackerProps> = ({
         )}
       </div>
         </>
-      )}
-
-      {activeSection === 'search' && (
-        <div className="dev-search-panel">
-          <div className="dev-section-header">
-            <div>
-              <h3>Search Controls</h3>
-              <p>Toggle the alternate header search. Filter buttons appear in the top search box.</p>
-            </div>
-          </div>
-
-          <div className="dev-toggle-row">
-            <div className="dev-toggle-copy">
-              <strong>Alternate search</strong>
-              <span>{effectiveAlternateSearchEnabled ? 'Top search is using the filter buttons.' : 'Top search uses its default tabs.'}</span>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={effectiveAlternateSearchEnabled}
-              className={`dev-toggle-switch ${effectiveAlternateSearchEnabled ? 'on' : 'off'}`}
-              onClick={() => {
-                if (onAlternateSearchEnabledChange) {
-                  onAlternateSearchEnabledChange(!effectiveAlternateSearchEnabled)
-                } else {
-                  setLocalAlternateSearchEnabled((current) => !current)
-                }
-              }}
-            >
-              <span className="dev-toggle-handle" />
-            </button>
-          </div>
-        </div>
       )}
 
       {activeSection === 'notifications' && (

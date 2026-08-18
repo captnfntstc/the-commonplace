@@ -1,10 +1,9 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import {
   ArrowLeft,
   Home,
   Star,
-  X,
   ChevronRight,
   Heart,
   MessageSquare,
@@ -16,14 +15,14 @@ import {
   Tv,
   Gamepad2,
   Sparkles,
-  BarChart2,
   Loader2,
   Plus,
   User,
   Music4,
   Quote,
 } from 'lucide-react'
-import type { CardEntry } from '../components/CommonplaceCard/Card'
+import type { Entry as CardEntry } from '../features/entries/model'
+import { buildMostQuotedWorks, type MostQuotedWork } from '../features/quotes/quotedWorks'
 import { StarRating } from '../components/CommonplaceCard/CardHeader'
 import { FormattedText } from '../components/CommonplaceCard/FormattedText'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../data/universalMediaEntities'
@@ -32,11 +31,16 @@ import {
   type MediaEntityType,
   type RelatedEntityItem,
   type GameMetadata,
+  type HumanProfileMetadata,
   getEntityTabs,
 } from '../types/mediaEntity'
 import {
   searchMetadata,
   fetchWikipediaPortrait,
+  fetchArtistPortrait,
+  getArtistPortraitCacheKey,
+  fetchSimilarArtistsByGenreAndLocation,
+  warmSimilarArtistPortraits,
   fetchItunesDiscography,
   fetchItunesAlbumDetails,
   fetchRelatedAlbums,
@@ -48,12 +52,13 @@ import {
   scoreGameTitleMatch,
   fetchGameDetails,
   type MetadataType,
+  type MetadataResult,
 } from '../metadata'
 import type { MetadataChip, CollectionItem, TopContentItem } from '../types/mediaEntity'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { formatFullDateTime, formatRelativeTime } from '../utils/dateUtils'
-import { createArtworkPlaceholder, resolveArtworkUrl } from '../utils/artwork'
-import { normalizeGameMetadata, primaryGameCreator } from '../utils/gameMetadata'
+import { createArtworkPlaceholder, resolveArtworkUrl, buildSrcSet, getImageSizes } from '../utils/artwork'
+import { normalizeGameMetadata } from '../utils/gameMetadata'
 import {
   GameAvailableOnPreview,
   GameInfoTab,
@@ -74,6 +79,10 @@ interface UniversalMediaProfilePageProps {
   onSelectEntry?: (entry: CardEntry) => void
   onOpenUserProfile?: (handle: string) => void
   onNavigateToEntity?: (entityId: string, entityType?: MediaEntityType) => void
+  onCanonicalHumanResolved?: (
+    sourceEntity: UniversalMediaEntity,
+    humanProfile: HumanProfileMetadata,
+  ) => void
   onQuickAddEntry?: (payload: {
     entity: UniversalMediaEntity
     favoritePassage: string
@@ -130,6 +139,31 @@ function mapToMetaType(type: MediaEntityType): MetadataType {
     default:
       return 'book'
   }
+}
+
+function buildChipsFromMetadataResult(
+  result: MetadataResult,
+  type: MediaEntityType,
+): MetadataChip[] {
+  const chips: MetadataChip[] = []
+  const creatorLabel = type === 'album' || type === 'song'
+    ? 'Artist'
+    : type === 'game'
+      ? 'Studio'
+      : type === 'book' || type === 'author'
+        ? 'Author'
+        : type === 'movie' || type === 'director'
+          ? 'Director'
+          : 'Creator'
+  const genre = result.genres?.filter(Boolean).join(', ') || result.genre || ''
+
+  if (result.creator) chips.push({ label: creatorLabel, value: result.creator })
+  if (genre) chips.push({ label: 'Genre', value: genre })
+  if (result.year) chips.push({ label: 'Release Year', value: result.year })
+  if (result.language) chips.push({ label: 'Language', value: result.language })
+  if (result.explicit) chips.push({ label: 'Explicit', value: 'Yes' })
+
+  return chips
 }
 
 function isPortraitEntity(type: MediaEntityType) {
@@ -409,6 +443,66 @@ const CollectionItemThumb: React.FC<{ title: string; defaultUrl: string }> = ({ 
   )
 }
 
+const MostQuotedSongCard: React.FC<{
+  item: MostQuotedWork
+  rank: number
+  onNavigate?: (entityId: string, entityType?: MediaEntityType) => void
+}> = ({ item, rank, onNavigate }) => {
+  const fallbackArtwork = useMemo(
+    () => createArtworkPlaceholder(item.title, 'Song'),
+    [item.title],
+  )
+  const [artworkUrl, setArtworkUrl] = useState(
+    () => resolveArtworkUrl(item.coverUrl, item.title, 'Song') || fallbackArtwork,
+  )
+
+  useEffect(() => {
+    setArtworkUrl(resolveArtworkUrl(item.coverUrl, item.title, 'Song') || fallbackArtwork)
+  }, [fallbackArtwork, item.coverUrl, item.title])
+
+  const openSong = () => {
+    const providerId = item.providerId?.trim() || ''
+    const id = /^song-/i.test(providerId)
+      ? providerId
+      : /^\d+$/.test(providerId)
+        ? `song-${providerId}`
+        : songEntityIdFromTopItem({
+            id: item.id,
+            rank,
+            title: item.title,
+            subtitle: item.album || item.creator,
+          })
+    onNavigate?.(id, 'song')
+  }
+
+  return (
+    <button
+      type="button"
+      className="most-quoted-work-card is-song is-clickable"
+      onClick={openSong}
+      aria-label={`Open ${item.title}`}
+    >
+      <span className="most-quoted-work-cover is-square">
+        <img
+          src={artworkUrl}
+          alt={item.title}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setArtworkUrl(fallbackArtwork)}
+        />
+      </span>
+      <span className="most-quoted-work-copy">
+        <span className="most-quoted-work-rank">#{rank} most quoted</span>
+        <h3>{item.title}</h3>
+        <span className="most-quoted-work-release">
+          {[item.album, item.year].filter(Boolean).join(' · ') || item.creator}
+        </span>
+      </span>
+    </button>
+  )
+}
+
 const CommunityReviewCard: React.FC<{
   entry: CardEntry
   isLiked: boolean
@@ -544,17 +638,23 @@ const SimilarArtistPortraitItem: React.FC<{
   isActive: boolean
   onNavigate?: (entityId: string) => void
 }> = ({ artist, isActive, onNavigate }) => {
+  const personType = artist.type === 'author' ? 'author' : 'artist'
+  const personLabel = personType === 'author' ? 'Author' : 'Artist'
   const cleanTitle = artist.title.toLowerCase()
   const fallbackSvg = useMemo(
-    () => createArtworkPlaceholder(artist.title, artist.subtitle || 'Artist'),
-    [artist.title, artist.subtitle],
+    () => createArtworkPlaceholder(artist.title, artist.subtitle || personLabel),
+    [artist.title, artist.subtitle, personLabel],
   )
 
   const initialUrl = useMemo(() => {
-    const cachedWiki = entityImageCacheMap.get(`wiki-portrait:${cleanTitle}`)
+    if (personType === 'artist') {
+      const cachedFanart = entityImageCacheMap.get(getArtistPortraitCacheKey(artist.title))
+      if (cachedFanart) return cachedFanart
+    }
+    const cachedWiki = entityImageCacheMap.get(`wiki-portrait-v5:${cleanTitle}`)
     if (cachedWiki) return cachedWiki
 
-    const cachedArtist = entityImageCacheMap.get(`artist:${artist.id}`) || entityImageCacheMap.get(cleanTitle)
+    const cachedArtist = entityImageCacheMap.get(`${personType}:${artist.id}`) || entityImageCacheMap.get(cleanTitle)
     if (cachedArtist) return cachedArtist
 
     if (artist.artworkUrl && artist.artworkUrl.length > 5) {
@@ -562,29 +662,66 @@ const SimilarArtistPortraitItem: React.FC<{
     }
 
     return fallbackSvg
-  }, [artist.artworkUrl, artist.id, artist.subtitle, artist.title, cleanTitle, fallbackSvg])
+  }, [artist.artworkUrl, artist.id, artist.subtitle, artist.title, cleanTitle, fallbackSvg, personType])
 
   const [portraitUrl, setPortraitUrl] = useState<string>(initialUrl)
   const [imageLoaded, setImageLoaded] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
+  const frameRef = useRef<HTMLSpanElement>(null)
+  const [isVisible, setIsVisible] = useState(() =>
+    // If image is already cached, skip IntersectionObserver and load immediately
+    initialUrl !== fallbackSvg,
+  )
+
+  // Delay portrait fetch until the frame enters the viewport (200px margin)
+  useEffect(() => {
+    if (isVisible) return
+    if (!('IntersectionObserver' in window)) {
+      setIsVisible(true)
+      return
+    }
+    const el = frameRef.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setIsVisible(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '200px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [isVisible])
 
   useEffect(() => {
+    if (!isVisible) return
     let isMounted = true
 
-    const cachedWiki = entityImageCacheMap.get(`wiki-portrait:${cleanTitle}`)
-    if (cachedWiki) {
-      setPortraitUrl(cachedWiki)
-      return () => {
-        isMounted = false
-      }
+    const cachedFanart = personType === 'artist'
+      ? entityImageCacheMap.get(getArtistPortraitCacheKey(artist.title))
+      : null
+    if (cachedFanart) {
+      setPortraitUrl(cachedFanart)
+      return () => { isMounted = false }
     }
 
-    fetchWikipediaPortrait(artist.title)
+    const cachedWiki = entityImageCacheMap.get(`wiki-portrait-v5:${cleanTitle}`)
+    if (cachedWiki && personType !== 'artist') {
+      setPortraitUrl(cachedWiki)
+      return () => { isMounted = false }
+    }
+
+    const portraitRequest = personType === 'artist'
+      ? fetchArtistPortrait(artist.title)
+      : fetchWikipediaPortrait(artist.title, undefined, personType)
+    portraitRequest
       .then((url) => {
         if (!isMounted) return
         if (url) {
           entityImageCacheMap.set(`wiki-portrait:${cleanTitle}`, url)
-          entityImageCacheMap.set(`artist:${artist.id}`, url)
+          entityImageCacheMap.set(`${personType}:${artist.id}`, url)
           setPortraitUrl(url)
           setImageFailed(false)
         }
@@ -594,18 +731,20 @@ const SimilarArtistPortraitItem: React.FC<{
     return () => {
       isMounted = false
     }
-  }, [artist.id, artist.title, cleanTitle])
+  }, [artist.id, artist.title, cleanTitle, isVisible, personType])
 
   const displaySrc = imageFailed ? fallbackSvg : portraitUrl
+  const isLoading = !isVisible || (!imageLoaded && displaySrc === fallbackSvg)
 
   return (
     <button
       type="button"
       className={`similar-artist-portrait-item ${isActive ? 'is-active' : ''}`}
       onClick={() => onNavigate?.(artist.id)}
-      aria-label={`Open ${artist.title} artist profile`}
+      aria-label={`Open ${artist.title} ${personLabel.toLowerCase()} profile`}
     >
-      <span className="similar-artist-portrait-frame">
+      <span className="similar-artist-portrait-frame" ref={frameRef}>
+        {isLoading && <span className="similar-artist-portrait-skeleton" aria-hidden="true" />}
         <img
           src={displaySrc}
           alt={artist.title}
@@ -672,33 +811,6 @@ const SimilarGameTile: React.FC<{
       <span className="related-album-subtitle">{item.subtitle}</span>
     </button>
   )
-}
-
-const CountUpNumber: React.FC<{
-  value: number
-  decimals?: number
-  durationMs?: number
-  format?: (value: number) => string
-}> = ({ value, decimals = 0, durationMs = 760, format }) => {
-  const [displayValue, setDisplayValue] = useState(0)
-
-  useEffect(() => {
-    let frameId = 0
-    const start = performance.now()
-
-    const tick = (now: number) => {
-      const progress = Math.min((now - start) / durationMs, 1)
-      const eased = 1 - Math.pow(1 - progress, 3)
-      setDisplayValue(value * eased)
-      if (progress < 1) frameId = requestAnimationFrame(tick)
-    }
-
-    frameId = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frameId)
-  }, [durationMs, value])
-
-  if (format) return <>{format(displayValue)}</>
-  return <>{displayValue.toFixed(decimals)}</>
 }
 
 function primaryArtistGenre(entity: UniversalMediaEntity | undefined, fallback?: string) {
@@ -841,7 +953,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const tabs = useMemo(() => getEntityTabs(entity.type), [entity.type])
   const [activeTab, setActiveTab] = useState<string>(tabs[0]?.id || 'overview')
 
-  const [showRatingModal, setShowRatingModal] = useState(false)
   const [showAllTopContent, setShowAllTopContent] = useState(false)
   const [showAllCollection, setShowAllCollection] = useState(false)
   const [showAllAlbums, setShowAllAlbums] = useState(false)
@@ -879,6 +990,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const [liveSongLyrics, setLiveSongLyrics] = useState<string | null>(null)
   const [liveGameMetadata, setLiveGameMetadata] = useState<GameMetadata | null>(null)
   const [gameArtworkFallbackActive, setGameArtworkFallbackActive] = useState(false)
+  const [liveRelatedArtists, setLiveRelatedArtists] = useState<ScoredRelatedEntityItem[] | null>(null)
+  const warmAbortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -940,6 +1053,35 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         })
         .catch(() => {})
 
+      // Fetch live similar artists via MusicBrainz/iTunes fallback
+      const warmController = new AbortController()
+      warmAbortRef.current = warmController
+      const artistGenres = entity.metadataChips
+        .filter((chip) => /^genres?$/i.test(chip.label))
+        .flatMap((chip) => chip.value.split(/[,/|]+/))
+        .map((genre) => genre.trim())
+        .filter(Boolean)
+      fetchSimilarArtistsByGenreAndLocation(entity.name, artistGenres, warmController.signal)
+        .then((artists) => {
+          if (!isMounted || warmController.signal.aborted) return
+          if (artists && artists.length > 0) {
+            const scored: ScoredRelatedEntityItem[] = artists.map((a, i) => ({
+              id: a.id,
+              title: a.name,
+              subtitle: a.genres.join(' · ') || a.location || 'Artist',
+              artworkUrl: '',
+              type: 'artist' as const,
+              sortScore: a.score || 100 - i,
+            }))
+            setLiveRelatedArtists(scored)
+            // Staggered portrait pre-warm
+            warmSimilarArtistPortraits(
+              scored.map((s) => ({ id: s.id, name: s.title, type: 'artist' })),
+              warmController.signal,
+            )
+          }
+        })
+        .catch(() => {})
     }
 
     if (entity.type === 'album') {
@@ -1062,7 +1204,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           }
 
           const newChips = buildChipsFromMetadataResult(match, entity.type)
-          if (newChips.length > 0) {
+          const acceptsCatalogChips = ['album', 'song', 'book', 'movie', 'tv', 'game'].includes(entity.type)
+          if (acceptsCatalogChips && newChips.length > 0) {
             setLiveAlbumChips((prev) => prev || newChips)
           }
         }
@@ -1074,6 +1217,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
     return () => {
       isMounted = false
+      warmAbortRef.current?.abort()
     }
   }, [entity.id, entity.name, entity.type, imageCacheKey, isPortraitProfile])
 
@@ -1108,6 +1252,13 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       .sort((a, b) => scoreReview(b) - scoreReview(a))
       .slice(0, 4)
   }, [disabledCommentEntryIds, likedEntryIds, matchingReviews, savedEntryIds])
+
+  const mostQuotedSongs = useMemo(
+    () => entity.type === 'artist'
+      ? buildMostQuotedWorks(matchingReviews.filter((entry) => entry.type === 'song'))
+      : [],
+    [entity.type, matchingReviews],
+  )
 
   const collectionItems = liveCollectionItems || entity.secondaryCollection?.items || []
 
@@ -1252,6 +1403,10 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       return entity.relatedEntities?.items || []
     }
 
+    if (liveRelatedArtists && liveRelatedArtists.length > 0) {
+      return liveRelatedArtists
+    }
+
     const currentGenreProfile = getLatestAlbumGenreProfile(entity, collectionItems)
     const manualRelatedIds = new Set(entity.relatedEntities?.items?.map((item) => item.id) || [])
     const relatedCandidates = Object.values(UNIVERSAL_MEDIA_ENTITIES).filter(
@@ -1293,7 +1448,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       .filter((item) => (item.sortScore || 0) > 0)
       .sort((a, b) => (b.sortScore || 0) - (a.sortScore || 0))
       .slice(0, 8)
-  }, [activeTab, collectionItems, entity, liveArtistDiscographies])
+  }, [activeTab, collectionItems, entity, liveArtistDiscographies, liveRelatedArtists])
 
   const visibleTopItems = useMemo(() => {
     if (entity.type === 'album') {
@@ -1314,9 +1469,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         chip.label.toLowerCase() === 'explicit' && chip.value.toLowerCase() === 'yes',
       )))
 
-  const ratingAverage = entity.communityRating?.average ?? 4.8
-  const ratingCount = entity.communityRating?.count ?? 1200
-  const ratingDistribution = entity.communityRating?.distribution ?? { 5: 85, 4: 11, 3: 3, 2: 1, 1: 0 }
   const gameMetadata = useMemo(
     () => normalizeGameMetadata(
       liveGameMetadata
@@ -1325,34 +1477,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     ),
     [entity, liveGameMetadata],
   )
-
-  const glanceItems = useMemo(() => {
-    const yearChip = chipsToDisplay.find((chip) => /year|since|release/i.test(chip.label))
-    const creatorChip = chipsToDisplay.find((chip) => /artist|author|director|creator|developer/i.test(chip.label))
-    const gameCreator = entity.type === 'game' ? primaryGameCreator(gameMetadata) : undefined
-    const gameCreatorLabel = gameMetadata.developers?.length
-      ? 'Developer'
-      : gameMetadata.publishers?.length
-        ? 'Publisher'
-        : 'Type'
-    return [
-      {
-        label: 'Rating',
-        value: ratingAverage.toFixed(1),
-        detail: `${ratingCount.toLocaleString()} ratings`,
-      },
-      {
-        label: 'Reviews',
-        value: matchingReviews.length.toLocaleString(),
-        detail: entity.type === 'game' ? 'community reviews' : 'community notes',
-      },
-      {
-        label: entity.type === 'game' ? gameCreatorLabel : creatorChip?.label || yearChip?.label || 'Type',
-        value: entity.type === 'game' ? gameCreator || entity.categoryLabel : creatorChip?.value || yearChip?.value || entity.categoryLabel,
-        detail: entity.type === 'game' ? gameCreatorLabel : entity.categoryLabel,
-      },
-    ]
-  }, [chipsToDisplay, entity.categoryLabel, entity.type, gameMetadata, ratingAverage, ratingCount, matchingReviews.length])
 
   const renderCommunityReviewCard = (entry: CardEntry) => (
     <CommunityReviewCard
@@ -1445,6 +1569,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             ) : (
               <img
                 src={heroArtworkSrc}
+                srcSet={buildSrcSet(heroArtworkSrc)}
+                sizes={getImageSizes('hero')}
                 alt={entity.name}
                 className="media-artwork-img"
                 referrerPolicy="no-referrer"
@@ -1484,34 +1610,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             ))}
           </div>
 
-          {/* Interactive Community Rating Block */}
-          <div
-            className="media-community-rating-card"
-            onClick={() => setShowRatingModal(true)}
-            title="Click to view rating breakdown"
-            role="button"
-            tabIndex={0}
-          >
-            <div className="rating-left-stars">
-              <div className="rating-star-icon-row">
-                {Array.from({ length: 5 }, (_, i) => (
-                  <Star
-                    key={i}
-                    size={16}
-                    className={i < Math.floor(ratingAverage) ? 'star-gold' : 'star-muted'}
-                    fill="currentColor"
-                  />
-                ))}
-              </div>
-              <span className="rating-number">{ratingAverage.toFixed(1)}</span>
-            </div>
-            <div className="rating-right-info">
-              <span className="rating-count-text">
-                {ratingCount.toLocaleString()} Community Ratings
-              </span>
-              <span className="rating-subtext">Click for rating distribution & analytics →</span>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -1533,20 +1631,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           ))}
         </div>
       </div>
-
-      {activeTab === 'overview' && (
-        <section className="media-section overview-glance-section">
-          <div className="overview-glance-grid">
-            {glanceItems.map((item) => (
-              <div key={item.label} className="overview-glance-card">
-                <span className="overview-glance-label">{item.label}</span>
-                <strong>{item.value}</strong>
-                <span>{item.detail}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
 
       {entity.type === 'game' && activeTab === 'overview' && (
         <GameAvailableOnPreview
@@ -1641,8 +1725,40 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         </section>
       )}
 
-      {/* 1. Primary Top Content Section (Tracklist for Albums, Top Songs for Artists, Cast for Movies) */}
-      {entity.type !== 'song' && entity.type !== 'game' && (activeTab === 'overview' || activeTab === 'top_content') && topItems.length > 0 && (
+      {/* Community-ranked songs replace catalog popularity for artist profiles. */}
+      {entity.type === 'artist' && activeTab === 'overview' && (
+        <section className="media-section most-quoted-songs-section">
+          <div className="media-section-header">
+            <div className="media-section-title-group">
+              <Quote size={16} className="title-icon" />
+              <h2>Most Quoted Songs ({mostQuotedSongs.length})</h2>
+            </div>
+          </div>
+
+          {mostQuotedSongs.length > 0 ? (
+            <div className="most-quoted-works-grid">
+              {mostQuotedSongs.slice(0, 4).map((item, index) => (
+                <MostQuotedSongCard
+                  key={item.id}
+                  item={item}
+                  rank={index + 1}
+                  onNavigate={onNavigateToEntity}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="community-quotes-empty">
+              <p>No song passages have been quoted for {entity.name} yet.</p>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* 1. Primary Top Content Section (tracklists, books, cast, and other catalog lists). */}
+      {entity.type !== 'song' && entity.type !== 'game' &&
+        (activeTab === 'overview' || activeTab === 'top_content') &&
+        (entity.type !== 'artist' || activeTab === 'top_content') &&
+        topItems.length > 0 && (
         <section className="media-section top-content-section">
           <div className="media-section-header">
             <div className="media-section-title-group">
@@ -2103,83 +2219,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         </section>
       )}
 
-      {/* ── Rating Distribution & Analytics Modal ── */}
-      <AnimatePresence>
-        {showRatingModal && (
-          <div className="modal-backdrop" onClick={() => setShowRatingModal(false)}>
-            <motion.div
-              className="rating-analytics-modal"
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              transition={{ duration: 0.2 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="modal-header-row">
-                <div className="modal-title-group">
-                  <BarChart2 size={18} className="icon-gold" />
-                  <h2>Rating Analytics & Breakdown</h2>
-                </div>
-                <button
-                  type="button"
-                  className="modal-close-btn"
-                  onClick={() => setShowRatingModal(false)}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div className="rating-modal-body">
-                <div className="rating-modal-score-block">
-                  <span className="large-score">
-                    <CountUpNumber value={ratingAverage} decimals={1} />
-                  </span>
-                  <div className="stars-wrapper">
-                    {Array.from({ length: 5 }, (_, i) => (
-                      <Star
-                        key={i}
-                        size={18}
-                        className={i < Math.floor(ratingAverage) ? 'star-gold' : 'star-muted'}
-                        fill="currentColor"
-                      />
-                    ))}
-                  </div>
-                  <span className="total-ratings">
-                    Based on{' '}
-                    <CountUpNumber
-                      value={ratingCount}
-                      format={(value) => Math.round(value).toLocaleString()}
-                    />{' '}
-                    Commonplace ratings
-                  </span>
-                </div>
-
-                <div className="rating-distribution-bars">
-                  {[5, 4, 3, 2, 1].map((stars) => {
-                    const pct = ratingDistribution[stars] || 0
-                    return (
-                      <div key={stars} className="dist-row">
-                        <span className="dist-star-label">{stars} ★</span>
-                        <div className="dist-bar-track">
-                          <motion.div
-                            className="dist-bar-fill"
-                            initial={{ width: 0 }}
-                            animate={{ width: `${pct}%` }}
-                            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: (5 - stars) * 0.05 }}
-                          />
-                        </div>
-                        <span className="dist-pct-text">
-                          <CountUpNumber value={pct} format={(value) => `${Math.round(value)}%`} />
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </motion.div>
   )
 }

@@ -10,3 +10,7 @@ services:
         sync: false
       - key: IGDB_CLIENT_SECRET
         sync: false
+      - key: FANART_TV_API_KEY
+        sync: false
+      - key: LASTFM_API_KEY
+        sync: false

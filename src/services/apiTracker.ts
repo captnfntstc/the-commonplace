@@ -6,6 +6,8 @@ export type ApiProvider =
   | 'LRCLIB'
   | 'IGDB'
   | 'Steam Store'
+  | 'Fanart.tv'
+  | 'Last.fm'
   | 'Wikipedia'
 
 export type CacheStatus = 'HIT' | 'MISS'
@@ -40,6 +42,8 @@ export const ALL_PROVIDERS: ApiProvider[] = [
   'LRCLIB',
   'IGDB',
   'Steam Store',
+  'Fanart.tv',
+  'Last.fm',
   'Wikipedia',
 ]
 
@@ -101,6 +105,8 @@ export function getApiStats(): ApiTrackerStats {
     LRCLIB: 0,
     IGDB: 0,
     'Steam Store': 0,
+    'Fanart.tv': 0,
+    'Last.fm': 0,
     Wikipedia: 0,
   }
 

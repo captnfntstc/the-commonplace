@@ -1,7 +1,7 @@
 import React from 'react'
 import { motion } from 'framer-motion'
 import { User, X, BookOpen, Disc3, Clapperboard, Gamepad2, Music4, Tv, Calendar, Award } from 'lucide-react'
-import type { CardEntry } from './CommonplaceCard/Card'
+import type { Entry as CardEntry } from '../features/entries/model'
 import { StarRating } from './CommonplaceCard/CardHeader'
 
 interface UserProfileModalProps {

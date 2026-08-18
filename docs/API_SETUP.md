@@ -39,6 +39,41 @@ VITE_APP_CONTACT=your_email@example.com
 
 Lyrics are fetched only for songs after a song result is selected. Albums use a freeform passage field for now.
 
+### Similar artists from Last.fm
+
+Artist profiles use Last.fm's listener-based `artist.getSimilar` results as the
+primary Similar Artists source. MusicBrainz genre/location matching and iTunes
+remain automatic fallbacks when Last.fm is unavailable.
+
+1. Create or sign in to a Last.fm account.
+2. Create an API account/key at [Last.fm API](https://www.last.fm/api/account/create).
+3. Add the server-only key to `.env.local`:
+
+```env
+LASTFM_API_KEY=your_lastfm_api_key
+```
+
+Do not prefix this value with `VITE_`; the browser calls the app's server proxy
+and never receives the key. Add the same secret to the deployed service's
+Environment settings. It is declared with `sync: false` in `render.yaml`.
+
+### Band portraits from Fanart.tv
+
+Band portraits use MusicBrainz to confirm that an artist is a `Group`, then use
+the most recently uploaded `artistthumb` from Fanart.tv. Solo artists continue
+to use Wikipedia, which is also the automatic fallback when a band has no
+Fanart.tv image.
+
+1. Create a Fanart.tv account and request a personal API key.
+2. Add the server-only value to `.env.local`:
+
+```env
+FANART_TV_API_KEY=your_fanart_tv_personal_api_key
+```
+
+Do not prefix this value with `VITE_`; it is read only by the app's server-side
+proxy. Add the same secret to the deployed service's Environment settings.
+
 ## IGDB Games
 
 Game metadata and cover artwork come from IGDB through the app's server-side

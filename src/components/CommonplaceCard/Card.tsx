@@ -1,36 +1,13 @@
 import React from 'react'
 import { ChevronDown, ChevronUp, Heart, MessageSquare, Bookmark } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import type { Entry } from '../../features/entries/model'
 import { CardHeader } from './CardHeader'
 import { CardMedia } from './CardMedia'
 import { CardReflection } from './CardReflection'
 import { FormattedText } from './FormattedText'
 
-export type CardEntry = {
-  id: string
-  type: 'book' | 'album' | 'song' | 'film' | 'tv' | 'game'
-  title: string
-  creator: string
-  provider: string
-  providerId: string
-  genre?: string
-  rating: number
-  favoritePassage: string
-  reflection: string
-  reflectionAlign?: 'left' | 'center' | 'right' | 'justify'
-  passageAlign?: 'left' | 'center' | 'right' | 'justify'
-  enableDropCap?: boolean
-  year?: string
-  coverUrl?: string
-  summary?: string
-  explicit?: boolean
-  createdAt: string
-  updatedAt: string
-  coverTone: 'gold' | 'rose' | 'sage' | 'blue' | 'violet' | 'ember'
-  authorHandle?: string
-  authorName?: string
-  authorAvatarUrl?: string
-}
+type CardEntry = Entry
 
 interface CardProps {
   entry: CardEntry

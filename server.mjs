@@ -2,7 +2,9 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { handleFanartApiRequest } from './server/fanart.mjs'
 import { handleIgdbApiRequest } from './server/igdb.mjs'
+import { handleLastFmApiRequest } from './server/lastfm.mjs'
 
 const root = fileURLToPath(new URL('.', import.meta.url))
 const distRoot = join(root, 'dist')
@@ -45,6 +47,18 @@ createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && request.url?.startsWith('/api/igdb/')) {
       const payload = await handleIgdbApiRequest(request.url)
+      if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
+      return sendJson(response, 200, payload)
+    }
+
+    if (request.method === 'GET' && request.url?.startsWith('/api/fanart/')) {
+      const payload = await handleFanartApiRequest(request.url)
+      if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
+      return sendJson(response, 200, payload)
+    }
+
+    if (request.method === 'GET' && request.url?.startsWith('/api/lastfm/')) {
+      const payload = await handleLastFmApiRequest(request.url)
       if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
       return sendJson(response, 200, payload)
     }

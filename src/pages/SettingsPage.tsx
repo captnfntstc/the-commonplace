@@ -21,10 +21,11 @@ import {
 import { SettingsSection } from '../components/Settings/SettingsSection'
 import { SettingsField } from '../components/Settings/SettingsField'
 import { SettingsToggle } from '../components/Settings/SettingsToggle'
+import type { UserProfileState } from '../types/userProfile'
 import { AvatarUploader } from '../components/Settings/AvatarUploader'
 import { CoverUploader } from '../components/Settings/CoverUploader'
 import { ApiUsageTracker } from '../components/DeveloperTools/ApiUsageTracker'
-import type { Notification as AppNotification } from '../components/Notifications/NotificationPanel'
+import type { AppNotification } from '../types/notification'
 
 
 const PROVIDERS: ProviderInfo[] = [
@@ -99,21 +100,6 @@ const PROVIDERS: ProviderInfo[] = [
     ),
   },
 ]
-
-export type UserProfileState = {
-  firstName: string
-  lastName: string
-  showFullName: boolean
-  handle: string
-  email: string
-  bio: string
-  avatarUrl: string
-  coverUrl: string
-  lastUsernameChangeDate?: string
-  showFollowLists?: boolean
-  allowComments?: boolean
-  isPrivate?: boolean
-}
 
 interface SettingsPageProps {
   onBack: () => void

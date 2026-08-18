@@ -1,4 +1,5 @@
 export type MediaEntityType =
+  | 'human'
   | 'artist'
   | 'album'
   | 'song'
@@ -8,8 +9,57 @@ export type MediaEntityType =
   | 'tv'
   | 'actor'
   | 'director'
+  | 'creator'
   | 'game'
   | 'game_studio'
+
+export type HumanProfession = 'artist' | 'actor' | 'director' | 'creator' | 'author'
+
+export type HumanProfileContext = HumanProfession
+
+export interface HumanProviderIds {
+  wikipediaPageId?: string
+  wikidataId?: string
+  musicBrainzId?: string
+  tmdbPersonId?: string
+  itunesArtistId?: string
+  googleBooksAuthorId?: string
+}
+
+export interface HumanCapabilities {
+  topSongs: boolean
+  discography: boolean
+  filmography: boolean
+  publishedWorks: boolean
+  directing: boolean
+  creating: boolean
+}
+
+export type HumanScreenCreditCategory =
+  | 'acting'
+  | 'concert'
+  | 'documentary'
+  | 'directing'
+
+export interface HumanScreenCredit {
+  id: string
+  providerId: string
+  mediaType: 'movie' | 'tv'
+  title: string
+  year?: string
+  artworkUrl?: string
+  role?: string
+  category: HumanScreenCreditCategory
+}
+
+export interface HumanProfileMetadata {
+  canonicalId?: string
+  context: HumanProfileContext
+  professions: HumanProfession[]
+  occupationLabels: string[]
+  providerIds: HumanProviderIds
+  capabilities: HumanCapabilities
+}
 
 export interface MetadataChip {
   label: string
@@ -34,6 +84,7 @@ export interface CollectionItem {
   year?: string
   rating?: number
   genre?: string
+  language?: string
   category?: 'album' | 'ep' | 'single'
   explicit?: boolean
 }
@@ -44,6 +95,8 @@ export interface RelatedEntityItem {
   subtitle: string
   artworkUrl: string
   type: MediaEntityType
+  genres?: string[]
+  language?: string
 }
 
 export type GamePlatformStatus = 'available' | 'upcoming' | 'announced' | 'discontinued'
@@ -76,12 +129,34 @@ export interface GameEdition {
   platforms?: string[]
 }
 
+export type GameRelatedContentKind = 'sequel' | 'expansion' | 'dlc'
+
+export interface GameRelatedContentItem {
+  providerId: string
+  name: string
+  kind: GameRelatedContentKind
+  description?: string
+  releaseDate?: string
+  coverUrl?: string
+}
+
+export interface GameSimilarItem {
+  providerId: string
+  name: string
+  genres: string[]
+  gameplayTags?: string[]
+  description?: string
+  releaseDate?: string
+  coverUrl?: string
+}
+
 export interface GameMetadata {
   developers?: string[]
   publishers?: string[]
   genres?: string[]
   franchise?: string
   gameModes?: string[]
+  gameplayTags?: string[]
   engine?: string
   ageRating?: string
   releaseDate?: string
@@ -93,8 +168,37 @@ export interface GameMetadata {
   }
   features?: string[]
   editions?: GameEdition[]
+  relatedContent?: GameRelatedContentItem[]
+  similarGames?: GameSimilarItem[]
   metadataSource?: string
   metadataUpdatedAt?: string
+}
+
+export interface TvEpisodeMetadata {
+  id: number
+  name: string
+  seasonNumber: number
+  episodeNumber: number
+  overview?: string
+  airDate?: string
+  runtime?: number
+  stillUrl?: string
+}
+
+export interface TvSeasonMetadata {
+  id: number
+  name: string
+  seasonNumber: number
+  episodeCount: number
+  overview?: string
+  airDate?: string
+  posterUrl?: string
+  episodes: TvEpisodeMetadata[]
+}
+
+export interface TvSeriesMetadata {
+  seasons: TvSeasonMetadata[]
+  source: 'design-review-fixture'
 }
 
 export interface UniversalMediaEntity {
@@ -108,6 +212,8 @@ export interface UniversalMediaEntity {
   explicit?: boolean
   preferWikipediaArtwork?: boolean
   gameMetadata?: GameMetadata
+  tvMetadata?: TvSeriesMetadata
+  humanProfile?: HumanProfileMetadata
   metadataChips: MetadataChip[]
   communityRating: {
     average: number
@@ -130,20 +236,26 @@ export interface UniversalMediaEntity {
 
 export function getEntityTabs(type: MediaEntityType): { id: string; label: string }[] {
   switch (type) {
+    case 'human':
+      return [
+        { id: 'overview', label: 'Overview' },
+        { id: 'reviews', label: 'Community Reviews' },
+        { id: 'related', label: 'Similar' },
+      ]
     case 'artist':
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Top Songs' },
         { id: 'collection', label: 'Discography' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Similar Artists' },
+        { id: 'related', label: 'Similar' },
       ]
     case 'album':
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Tracks' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Related Albums' },
+        { id: 'related', label: 'Similar' },
       ]
     case 'song':
       return [
@@ -158,7 +270,7 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'top_content', label: 'Most Reviewed Books' },
         { id: 'collection', label: 'Published Works' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Similar Authors' },
+        { id: 'related', label: 'Similar' },
       ]
     case 'book':
       return [
@@ -166,14 +278,14 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'top_content', label: 'Popular Quotes' },
         { id: 'collection', label: 'Editions' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Related Books' },
+        { id: 'related', label: 'Similar' },
       ]
     case 'movie':
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Cast' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Related Movies' },
+        { id: 'related', label: 'Similar' },
       ]
     case 'tv':
       return [
@@ -181,13 +293,14 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'top_content', label: 'Cast' },
         { id: 'collection', label: 'Seasons' },
         { id: 'reviews', label: 'Community Reviews' },
+        { id: 'related', label: 'Similar' },
       ]
     case 'actor':
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'collection', label: 'Filmography' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Related Actors' },
+        { id: 'related', label: 'Similar' },
       ]
     case 'director':
       return [
@@ -195,7 +308,15 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'top_content', label: 'Best Movies' },
         { id: 'collection', label: 'Directed Works' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Related Directors' },
+        { id: 'related', label: 'Similar' },
+      ]
+    case 'creator':
+      return [
+        { id: 'overview', label: 'Overview' },
+        { id: 'top_content', label: 'Best Series' },
+        { id: 'collection', label: 'Created Works' },
+        { id: 'reviews', label: 'Community Reviews' },
+        { id: 'related', label: 'Similar' },
       ]
     case 'game':
       return [
@@ -203,7 +324,8 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'game_info', label: 'Game Info' },
         { id: 'platforms_releases', label: 'Platforms & Releases' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Similar Games' },
+        { id: 'more_from_game', label: 'More From This Game' },
+        { id: 'related', label: 'Similar' },
       ]
     case 'game_studio':
       return [
@@ -211,13 +333,13 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'top_content', label: 'Top Titles' },
         { id: 'collection', label: 'Published Games' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Similar Studios' },
+        { id: 'related', label: 'Similar' },
       ]
     default:
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Related' },
+        { id: 'related', label: 'Similar' },
       ]
   }
 }

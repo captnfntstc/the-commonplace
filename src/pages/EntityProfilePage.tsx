@@ -14,7 +14,8 @@ import {
   X,
   Loader2,
 } from 'lucide-react'
-import { Card, type CardEntry } from '../components/CommonplaceCard/Card'
+import { Card } from '../components/CommonplaceCard/Card'
+import type { Entry as CardEntry } from '../features/entries/model'
 import { searchMetadata, type MetadataType } from '../metadata'
 import { createArtworkPlaceholder, resolveArtworkUrl } from '../utils/artwork'
 
