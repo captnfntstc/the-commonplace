@@ -10569,15 +10569,19 @@ code.detail-value {
 }
 
 .media-biography-source {
-  display: block;
-  margin-top: 7px;
+  display: inline-block;
+  white-space: nowrap;
+  margin-left: 6px;
   color: var(--secondary);
   font-family: var(--display), EB Garamond, Georgia, serif;
-  font-size: 13px;
+  font-size: 14px;
   font-style: italic;
 }
 
 .media-bio-toggle {
+  display: inline-block;
+  white-space: nowrap;
+  margin-left: 6px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -10764,7 +10768,7 @@ code.detail-value {
 
 .community-review-preview-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -11652,6 +11656,281 @@ code.detail-value {
    Song profiles predate the shared community ranking feature and still use
    their song-* class names. Keep both entry points on the same visual system. */
 .community-quotes-section,
+.song-quotes-section {
+  margin-bottom: 40px;
+}
+
+/* ── Song Track Number Badge (near title) ── */
+.song-track-number-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  padding: 3px 11px;
+  border-radius: 999px;
+  background: rgba(214, 174, 115, 0.12);
+  border: 1px solid rgba(214, 174, 115, 0.3);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Song Stat Grid (Rating / Genre / Duration) ── */
+.song-stat-grid-section {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  max-width: 1080px;
+  margin: 0 auto 8px;
+  padding: 0 24px;
+}
+
+.song-stat-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  background: var(--card);
+  border: 1px solid rgba(214, 174, 115, 0.2);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.song-stat-box:hover:not(.is-empty) {
+  border-color: rgba(214, 174, 115, 0.42);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
+}
+
+.song-stat-box.is-clickable {
+  cursor: pointer;
+}
+
+.song-stat-box.is-clickable:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.song-stat-box.is-empty {
+  opacity: 0.45;
+}
+
+/* ── Rating Analytics Breakdown Modal ── */
+.rating-breakdown-modal {
+  position: relative;
+  width: min(440px, 92vw);
+  background: var(--card);
+  border: 1px solid rgba(214, 174, 115, 0.28);
+  border-radius: 18px;
+  padding: 24px 26px;
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(236, 199, 153, 0.08);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.rating-breakdown-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.rating-breakdown-title {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-strong);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.rating-breakdown-subtitle {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 12px;
+  color: var(--secondary);
+  margin-top: 2px;
+  display: block;
+}
+
+.rating-breakdown-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 20px 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(214, 174, 115, 0.18);
+  border-radius: 16px;
+  margin-bottom: 22px;
+  gap: 4px;
+}
+
+.rating-overall-label {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--secondary);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.rating-score-hero {
+  font-family: var(--display);
+  font-size: 52px;
+  font-weight: 800;
+  color: var(--accent);
+  line-height: 1;
+  margin: 6px 0 4px;
+}
+
+.rating-stars-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 2px 0 6px;
+}
+
+.rating-summary-count {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 12px;
+  color: var(--secondary);
+}
+
+.rating-distribution-header {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--secondary);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+
+.rating-bars-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rating-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 13px;
+}
+
+.rating-bar-star-icons {
+  width: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.rating-bar-track {
+  flex: 1;
+  height: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(214, 174, 115, 0.12);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.rating-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #d6ae73, #f5c518);
+  border-radius: 999px;
+}
+
+.rating-bar-percent {
+  width: 44px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--secondary);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.song-stat-icon-wrap {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(214, 174, 115, 0.1);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.song-stat-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.song-stat-label {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.song-stat-value {
+  font-family: var(--display);
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--text-strong);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.song-stat-sub {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 11px;
+  color: var(--secondary);
+  margin-top: 1px;
+}
+
+.media-hero-description {
+  font-family: var(--display);
+  font-size: 16px;
+  line-height: 1.65;
+  color: #d0c2b0;
+  margin: 0;
+  text-align: justify;
+}
+
+.media-biography-source, .media-bio-toggle {
+  white-space: nowrap;
+}
+
+.song-stat-sparkle {
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  color: rgba(214, 174, 115, 0.28);
+  flex-shrink: 0;
+}
+
+@media (max-width: 680px) {
+  .song-stat-grid-section {
+    grid-template-columns: 1fr;
+  }
+}
+
 .song-quotes-section {
   margin-bottom: 40px;
 }

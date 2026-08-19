@@ -1998,7 +1998,7 @@ function studioAlbumNumberFromExtract(extract: string): number | null {
   return word?.[1] ? studioAlbumOrdinals[word[1].toLowerCase()] || null : null
 }
 
-async function fetchWikipediaStudioAlbumNumber(albumName: string, artistName: string, signal?: AbortSignal) {
+export async function fetchWikipediaStudioAlbumNumber(albumName: string, artistName: string, signal?: AbortSignal) {
   const cacheKey = `wiki-studio-album-number:${normalizeAlbumTitleForMatch(albumName)}:${normalizeAlbumTitleForMatch(artistName)}`
   return cachedApiRequest(cacheKey, signal, async () => {
     try {
@@ -3953,6 +3953,14 @@ const knownCleanLyricEdits: Record<string, Array<{ explicit: string; clean: stri
     { explicit: 'goddamn', clean: 'Vegas' },
     { explicit: 'fucking', clean: 'Vegas' },
   ],
+
+  // Source: Olivia Rodrigo & Dan Nigro (via official clean release / artist interviews)
+  'olivia rodrigo:vampire': [
+    { explicit: 'famefucker', clean: 'dreamcrusher' },
+    { explicit: 'fame fucker', clean: 'dream crusher' },
+    { explicit: 'fucked up little thrill', clean: 'tragic little thrill' },
+    { explicit: 'goddamn vampire', clean: 'damn vampire' },
+  ],
 }
 
 function escapeLyricsPattern(value: string) {
@@ -4121,6 +4129,32 @@ export async function fetchLyrics(
         extraResults.forEach((result) => byId.set(result.id, result))
         results = [...byId.values()]
       }
+    }
+
+    // Tier 2b: For clean-advisory tracks, also search using common clean variant
+    // naming conventions that contributors use when submitting clean lyrics to LRCLIB.
+    // Both parenthesis (Clean) and bracket [Clean] styles are used in the community.
+    // These results are merged into the candidate pool; selectLyricsVariant will
+    // automatically prefer any genuine clean entry (zero explicit terms) over the
+    // masked explicit fallback — no hardcoding needed, works for any song.
+    if (context.explicit === false) {
+      const baseTitle = cleanedTitle || title
+      const cleanVariantNames = [
+        `${baseTitle} (Clean)`,
+        `${baseTitle} (Clean Version)`,
+        `${baseTitle} (Radio Edit)`,
+        `${baseTitle} (Clean Edit)`,
+        `${baseTitle} [Clean]`,
+        `${baseTitle} [Clean Version]`,
+        `${baseTitle} [Radio Edit]`,
+      ]
+      const cleanVariantFetches = cleanVariantNames.map((variantTitle) =>
+        fetchFromLrclibParams(variantTitle, artist).catch(() => [] as LrclibResult[]),
+      )
+      const variantResults = await Promise.all(cleanVariantFetches)
+      const byId = new Map(results.map((result) => [result.id, result]))
+      variantResults.flat().forEach((result) => byId.set(result.id, result))
+      results = [...byId.values()]
     }
 
     const latencyMs = Math.round(performance.now() - startTime)
