@@ -35,6 +35,7 @@ import {
   type MediaEntityType,
   type RelatedEntityItem,
   type GameMetadata,
+  type HumanCapabilities,
   type HumanProfileMetadata,
   getEntityTabs,
 } from '../types/mediaEntity'
@@ -55,6 +56,9 @@ import {
   fetchItunesSongDetails,
   fetchItunesSongAppearances,
   fetchItunesSongArtwork,
+  fetchItunesTopSongs,
+  fetchHumanScreenCredits,
+  fetchHumanPublishedBooks,
   entityImageCacheMap,
   albumEntityMap,
   scoreGameTitleMatch,
@@ -66,10 +70,9 @@ import {
 import { ordinalize } from '../utils/songBio'
 import {
   verifiedProfessionsFromWikipedia,
-  type HumanProfileContext,
   getDynamicHumanTabs,
 } from '../features/profiles/humanProfile'
-import type { MetadataChip, CollectionItem, TopContentItem } from '../types/mediaEntity'
+import type { MetadataChip, CollectionItem, TopContentItem, HumanScreenCredit, HumanProfileContext } from '../types/mediaEntity'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { formatFullDateTime, formatRelativeTime } from '../utils/dateUtils'
 import { createArtworkPlaceholder, resolveArtworkUrl, buildSrcSet, getImageSizes } from '../utils/artwork'
@@ -260,12 +263,51 @@ function entryTypeForEntity(type: MediaEntityType): CardEntry['type'] | null {
   return null
 }
 
+function screenCreditToMediaEntity(credit: HumanScreenCredit, personName: string): UniversalMediaEntity {
+  return {
+    id: credit.providerId ? `tmdb:${credit.mediaType}:${credit.providerId}` : credit.id,
+    name: credit.title,
+    type: credit.mediaType,
+    categoryLabel: credit.mediaType === 'movie' ? 'Film' : 'TV Series',
+    artworkUrl: credit.artworkUrl || '',
+    description: [
+      `Filmography credit for ${personName}.`,
+      credit.role ? `Role: ${credit.role}.` : '',
+      credit.year ? `Released ${credit.year}.` : '',
+    ].filter(Boolean).join(' '),
+    metadataChips: [
+      ...(credit.role ? [{ label: 'Role', value: credit.role }] : []),
+      ...(credit.year ? [{ label: 'Release Year', value: credit.year }] : []),
+    ],
+    communityRating: {
+      average: 0,
+      count: 0,
+      distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+    },
+  }
+}
+
+function humanCreditCategoryLabel(category: HumanScreenCredit['category']) {
+  switch (category) {
+    case 'acting':
+      return 'Acting'
+    case 'directing':
+      return 'Directing'
+    case 'concert':
+      return 'Concert Films'
+    case 'documentary':
+      return 'Documentaries'
+    default:
+      return 'Screen Credits'
+  }
+}
+
 function reviewMatchesEntity(entry: CardEntry, entity: UniversalMediaEntity, chips: MetadataChip[]) {
   const entityName = normalizeReviewSubjectText(entity.name)
   const entryTitle = normalizeReviewSubjectText(entry.title)
   const entityType = entryTypeForEntity(entity.type)
 
-  if (entity.type === 'artist' || entity.type === 'author' || entity.type === 'director' || entity.type === 'game_studio') {
+  if (entity.type === 'artist' || entity.type === 'author' || entity.type === 'director' || entity.type === 'creator' || entity.type === 'game_studio' || entity.type === 'human') {
     return normalizeReviewSubjectText(entry.creator) === entityName
   }
 
@@ -367,7 +409,10 @@ const TrackRow: React.FC<{
     if (!artistName || useParentArtwork) return
 
     const abortController = new AbortController()
-    const providerTrackId = item.id.match(/^song-(\d+)$/i)?.[1]
+    const providerTrackId =
+      item.id.match(/^song-(?:itunes|chart)-(\d+)$/i)?.[1] ||
+      item.id.match(/^song-(\d+)$/i)?.[1] ||
+      undefined
     fetchItunesSongArtwork(item.title, artistName, abortController.signal, providerTrackId)
       .then((url) => {
         if (url) setArtworkUrl(resolveArtworkUrl(url, item.title, item.subtitle))
@@ -920,8 +965,8 @@ function primaryArtistGenre(entity: UniversalMediaEntity | undefined, fallback?:
 
 function getArtistMonthlyListeners(
   name: string,
-  ratingCount = 0,
-  collectionCount = 0,
+  _ratingCount = 0,
+  _collectionCount = 0,
 ): { value: string; sub: string } {
   const normalized = name.toLowerCase().trim()
   const knownListeners: Record<string, string> = {
@@ -1102,6 +1147,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   onSelectEntry,
   onOpenUserProfile,
   onNavigateToEntity,
+  onCanonicalHumanResolved,
   onQuickAddEntry,
   likedEntryIds = [],
   savedEntryIds = [],
@@ -1111,17 +1157,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 }) => {
   const IconComponent = getMediaIcon(entity.type)
   const [liveAlbumVersionFamily, setLiveAlbumVersionFamily] = useState<AlbumVersionFamily | null>(null)
-  const tabs = useMemo(() => {
-    if (entity.type === 'human' && entity.humanProfile) {
-      return getDynamicHumanTabs({
-        context: entity.humanProfile.context,
-        capabilities: entity.humanProfile.capabilities,
-      })
-    }
-    return getEntityTabs(entity.type).filter((tab) =>
-      tab.id !== 'versions' || Boolean(liveAlbumVersionFamily?.editions.length))
-  }, [entity.type, entity.humanProfile, liveAlbumVersionFamily])
-  const [activeTab, setActiveTab] = useState<string>(tabs[0]?.id || 'overview')
 
   const [showAllTopContent, setShowAllTopContent] = useState(false)
   const [showAllCollection, setShowAllCollection] = useState(false)
@@ -1157,6 +1192,8 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
   const [liveCollectionItems, setLiveCollectionItems] = useState<CollectionItem[] | null>(null)
   const [liveTrackItems, setLiveTrackItems] = useState<TopContentItem[] | null>(null)
+  const [liveScreenCredits, setLiveScreenCredits] = useState<HumanScreenCredit[] | null>(null)
+  const [livePublishedWorks, setLivePublishedWorks] = useState<CollectionItem[] | null>(null)
   const [liveAlbumChips, setLiveAlbumChips] = useState<MetadataChip[] | null>(null)
   const [liveRelatedAlbums, setLiveRelatedAlbums] = useState<CollectionItem[] | null>(null)
   const [liveSongAppearances, setLiveSongAppearances] = useState<CollectionItem[] | null>(null)
@@ -1168,12 +1205,41 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const [isRatingModalOpen, setIsRatingModalOpen] = useState(false)
   const warmAbortRef = useRef<AbortController | null>(null)
 
+  const liveCapabilities = useMemo<HumanCapabilities>(() => {
+    const base = entity.humanProfile?.capabilities
+    const musicCatalogKnown = liveCollectionItems !== null || liveTrackItems !== null
+    return {
+      topSongs: musicCatalogKnown ? (liveTrackItems?.length || 0) > 0 : Boolean(base?.topSongs),
+      discography: musicCatalogKnown ? (liveCollectionItems?.length || 0) > 0 : Boolean(base?.discography),
+      filmography: Boolean(base?.filmography) || (liveScreenCredits?.length || 0) > 0,
+      publishedWorks: Boolean(base?.publishedWorks) || (livePublishedWorks?.length || 0) > 0,
+      directing: Boolean(base?.directing) || (liveScreenCredits?.some((credit) => credit.category === 'directing') || false),
+      creating: Boolean(base?.creating),
+    }
+  }, [entity.humanProfile, liveCollectionItems, livePublishedWorks, liveScreenCredits, liveTrackItems])
+  const isMusicianHumanProfile =
+    entity.type === 'human' &&
+    (entity.humanProfile?.context === 'artist' || liveCapabilities.topSongs || liveCapabilities.discography)
+  const tabs = useMemo(() => {
+    if (entity.type === 'human' && entity.humanProfile) {
+      return getDynamicHumanTabs({
+        context: entity.humanProfile.context,
+        capabilities: liveCapabilities,
+      })
+    }
+    return getEntityTabs(entity.type).filter((tab) =>
+      tab.id !== 'versions' || Boolean(liveAlbumVersionFamily?.editions.length))
+  }, [entity.type, entity.humanProfile, liveAlbumVersionFamily, liveCapabilities])
+  const [activeTab, setActiveTab] = useState<string>(tabs[0]?.id || 'overview')
+
   useEffect(() => {
     let isMounted = true
     const albumController = new AbortController()
     setFailedHeroArtworkUrl(null)
     setLiveCollectionItems(null)
     setLiveTrackItems(null)
+    setLiveScreenCredits(null)
+    setLivePublishedWorks(null)
     setLiveAlbumChips(null)
     setLiveRelatedAlbums(null)
     setLiveAlbumVersionFamily(null)
@@ -1222,13 +1288,23 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         })
     }
 
-    if (entity.type === 'artist') {
+    if (entity.type === 'artist' || entity.type === 'human') {
       fetchItunesDiscography(entity.name)
         .then((items) => {
           if (!isMounted) return
-          if (items && items.length > 0) setLiveCollectionItems(items)
+          setLiveCollectionItems(items || [])
         })
         .catch(() => {})
+
+      fetchItunesTopSongs(entity.name)
+        .then((items) => {
+          if (!isMounted) return
+          setLiveTrackItems(items || [])
+        })
+        .catch(() => {})
+    }
+
+    if (entity.type === 'artist' || isMusicianHumanProfile) {
 
       // Fetch live similar artists via MusicBrainz/iTunes fallback
       const warmController = new AbortController()
@@ -1447,7 +1523,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             if (onCanonicalHumanResolved && (profile.wikidataId || profile.pageId)) {
               onCanonicalHumanResolved(entity, {
                 canonicalId: profile.wikidataId ? `human:${profile.wikidataId.toUpperCase()}` : `human:wikipedia:${profile.pageId}`,
-                displayName: profile.title || entity.name,
                 context: (personType as HumanProfileContext) || 'artist',
                 professions: [personType as any],
                 occupationLabels,
@@ -1465,6 +1540,20 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                 },
               })
             }
+
+            fetchHumanScreenCredits(entity.name, profile.wikidataId, albumController.signal)
+              .then((catalog) => {
+                if (!isMounted || albumController.signal.aborted) return
+                setLiveScreenCredits(catalog.credits)
+              })
+              .catch(() => {})
+
+            fetchHumanPublishedBooks(entity.name, albumController.signal)
+              .then((works) => {
+                if (!isMounted || albumController.signal.aborted) return
+                setLivePublishedWorks(works || [])
+              })
+              .catch(() => {})
           }
         })
         .catch(() => {})
@@ -1519,7 +1608,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       albumController.abort()
       warmAbortRef.current?.abort()
     }
-  }, [entity.id, entity.name, entity.type, imageCacheKey, isPortraitProfile])
+  }, [entity.id, entity.name, entity.type, imageCacheKey, isMusicianHumanProfile, isPortraitProfile])
 
   const fallbackArtwork = createArtworkPlaceholder(entity.name, entity.categoryLabel)
   const preferredArtworkUrl = entity.type === 'game'
@@ -1607,6 +1696,16 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     })
   }, [collectionItems])
 
+  const screenCreditGroups = useMemo(() => {
+    const order: HumanScreenCredit['category'][] = ['acting', 'directing', 'concert', 'documentary']
+    const groups: Array<{ category: HumanScreenCredit['category']; credits: HumanScreenCredit[] }> = []
+    for (const category of order) {
+      const credits = (liveScreenCredits || []).filter((credit) => credit.category === category)
+      if (credits.length > 0) groups.push({ category, credits })
+    }
+    return groups
+  }, [liveScreenCredits])
+
   const songQuotes = useMemo(() => {
     if (entity.type !== 'song') return []
     const contributions = matchingReviews
@@ -1660,7 +1759,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     [lyricLines, selectedLyricIndexes],
   )
   const topContentEntityType: MediaEntityType | undefined =
-    entity.type === 'artist' || entity.type === 'album'
+    entity.type === 'artist' || entity.type === 'album' || entity.type === 'human'
       ? 'song'
       : entity.type === 'author'
         ? 'book'
@@ -1724,7 +1823,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       return matches.length > 0 ? matches : (entity.relatedEntities?.items || [])
     }
 
-    if (entity.type !== 'artist') {
+    if (entity.type !== 'artist' && !isMusicianHumanProfile) {
       return entity.relatedEntities?.items || []
     }
 
@@ -1773,7 +1872,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       .filter((item) => (item.sortScore || 0) > 0)
       .sort((a, b) => (b.sortScore || 0) - (a.sortScore || 0))
       .slice(0, 8)
-  }, [activeTab, collectionItems, entity, liveArtistDiscographies, liveRelatedArtists])
+  }, [activeTab, collectionItems, entity, isMusicianHumanProfile, liveArtistDiscographies, liveRelatedArtists])
 
   const visibleTopItems = useMemo(() => {
     if (entity.type === 'album') {
@@ -1786,11 +1885,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const allCurrentChips = liveAlbumChips || entity.metadataChips || []
   const trackNumberChip = entity.type === 'song'
     ? allCurrentChips.find((c) => /track.?#|track.?number/i.test(c.label))
-    : undefined
-  const songGenreChip = entity.type === 'song'
-    ? allCurrentChips.find((c) => /^genres?$/i.test(c.label)) ||
-      (primaryArtistGenre(entity) ? { label: 'Genre', value: primaryArtistGenre(entity) } : undefined) ||
-      { label: 'Genre', value: 'Pop' }
     : undefined
 
   const ratingAnalytics = useMemo(() => {
@@ -1907,19 +2001,43 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       box2Value = 'Author'
       Box2Icon = BookOpen
 
+      const bookCount = livePublishedWorks?.length ?? 0
       box3Label = 'Published Works'
-      box3Value = collectionItems.length > 0 ? `${collectionItems.length} Books` : 'Published Works'
+      box3Value = bookCount > 0 ? `${bookCount} Books` : collectionItems.length > 0 ? `${collectionItems.length} Books` : 'Published Works'
       box3Sub = 'Literary Catalog'
       Box3Icon = Layers
     } else if (entity.type === 'actor' || entity.type === 'director' || entity.type === 'creator' || entity.type === 'human') {
-      box2Label = 'Profession'
-      box2Value = findVal(/profession/i) || entity.categoryLabel
-      Box2Icon = User
+      if (isMusicianHumanProfile) {
+        box2Label = 'Genre'
+        box2Value = findVal(/^genres?$/i) || primaryArtistGenre(entity) || 'Pop'
+        Box2Icon = Disc3
 
-      box3Label = 'Filmography'
-      box3Value = collectionItems.length > 0 ? `${collectionItems.length} Credits` : 'Filmography'
-      box3Sub = 'Industry Credits'
-      Box3Icon = Clapperboard
+        const listenerData = getArtistMonthlyListeners(
+          entity.name,
+          ratingAnalytics.count,
+          collectionItems.length,
+        )
+        box3Label = 'Monthly Listeners'
+        box3Value = listenerData.value
+        box3Sub = listenerData.sub
+        Box3Icon = Users
+      } else {
+        box2Label = 'Profession'
+        box2Value = findVal(/profession/i) || entity.categoryLabel
+        Box2Icon = User
+
+        const creditCount = liveScreenCredits?.length ?? 0
+        box3Label = creditCount > 0 ? 'Filmography' : 'Discography'
+        box3Value = creditCount > 0
+          ? `${creditCount} Credits`
+          : collectionItems.length > 0
+            ? `${collectionItems.length} Releases`
+            : entity.type === 'human'
+              ? 'Music Catalog'
+              : 'Filmography'
+        box3Sub = creditCount > 0 ? 'Industry Credits' : 'Music Catalog'
+        Box3Icon = creditCount > 0 ? Clapperboard : Disc3
+      }
     } else {
       box2Label = 'Category'
       box2Value = entity.categoryLabel
@@ -1935,7 +2053,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       box2: { label: box2Label, value: box2Value || '—', Icon: Box2Icon },
       box3: { label: box3Label, value: box3Value || '—', sub: box3Sub, Icon: Box3Icon },
     }
-  }, [allCurrentChips, collectionItems, entity, liveGameMetadata, liveTrackItems, ratingAnalytics.count])
+  }, [allCurrentChips, collectionItems, entity, isMusicianHumanProfile, liveGameMetadata, livePublishedWorks, liveScreenCredits, liveTrackItems, ratingAnalytics.count])
 
   const chipsToDisplay = useMemo(() => {
     const base = allCurrentChips.filter((chip) => {
@@ -1997,7 +2115,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   )
   const shouldShowRelatedSection =
     activeTab === 'related' &&
-    (entity.type === 'artist' || entity.type === 'game' || (entity.type !== 'album' && relatedItemsToDisplay.length > 0))
+    (entity.type === 'artist' || isMusicianHumanProfile || entity.type === 'game' || (entity.type !== 'album' && relatedItemsToDisplay.length > 0))
 
   const toggleLyricLine = (index: number) => {
     setSelectedLyricIndexes((current) =>
@@ -2167,6 +2285,13 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               <span>{tab.label}</span>
               {tab.id === 'reviews' && (
                 <span className="media-tab-badge">{matchingReviews.length}</span>
+              )}
+              {activeTab === tab.id && (
+                <motion.span
+                  className="media-tab-underline"
+                  layoutId="media-tab-underline"
+                  transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                />
               )}
             </button>
           ))}
@@ -2358,7 +2483,9 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   ? activeTab === 'overview'
                     ? 'Top Tracks'
                     : `Full Tracklist (${topItems.length} Tracks)`
-                  : entity.primaryCollection?.title || 'Top Items'}
+                  : entity.type === 'human'
+                    ? activeTab === 'overview' ? 'Top Songs' : `Top Songs (${topItems.length})`
+                    : entity.primaryCollection?.title || 'Top Items'}
               </h2>
             </div>
             {entity.type === 'album' && activeTab === 'overview' && topItems.length > 5 ? (
@@ -2383,7 +2510,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           <div className="top-content-list">
             {visibleTopItems.map((item) => {
               const effectiveArtistName =
-                entity.type === 'artist'
+                entity.type === 'artist' || entity.type === 'human'
                   ? entity.name
                   : entity.metadataChips?.find((c) => /artist/i.test(c.label))?.value || ''
               return (
@@ -2619,8 +2746,108 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         </>
       )}
 
+      {/* 2b. Filmography for Human Profiles (live TMDB screen credits) */}
+      {liveScreenCredits && liveScreenCredits.length > 0 && (
+        entity.type === 'human'
+          ? activeTab === 'filmography'
+          : activeTab === 'collection' && ['actor', 'director', 'creator'].includes(entity.type)
+      ) && (
+        <section className="media-section filmography-section">
+          <div className="media-section-header">
+            <div className="media-section-title-group">
+              <Clapperboard size={16} className="title-icon" />
+              <h2>Filmography ({liveScreenCredits.length})</h2>
+            </div>
+          </div>
+
+          {screenCreditGroups.map((group) => (
+            <div key={group.category} className="filmography-group">
+              <h3 className="filmography-group-title">
+                {humanCreditCategoryLabel(group.category)} ({group.credits.length})
+              </h3>
+              <div className="collection-grid">
+                {group.credits.map((credit) => (
+                  <div
+                    key={credit.id}
+                    className="collection-card"
+                    onClick={() => onNavigateToEntity?.(
+                      screenCreditToMediaEntity(credit, entity.name).id,
+                      credit.mediaType,
+                      screenCreditToMediaEntity(credit, entity.name),
+                    )}
+                    style={{ cursor: 'pointer' }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    <div className="collection-thumb-wrapper">
+                      <CollectionItemThumb title={credit.title} defaultUrl={credit.artworkUrl || ''} />
+                    </div>
+                    <div className="collection-info">
+                      <span className="collection-title">
+                        <span>{credit.title}</span>
+                      </span>
+                      <span className="collection-subtitle">
+                        {[credit.year, credit.role].filter(Boolean).join(' · ') || credit.mediaType.toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* 2c. Published Works for Human & Author Profiles (books authored by the person) */}
+      {livePublishedWorks && livePublishedWorks.length > 0 && (
+        entity.type === 'human'
+          ? activeTab === 'published_works'
+          : activeTab === 'collection' && entity.type === 'author'
+      ) && (
+        <section className="media-section collection-section">
+          <div className="media-section-header">
+            <div className="media-section-title-group">
+              <BookOpen size={16} className="title-icon" />
+              <h2>Published Works ({livePublishedWorks.length})</h2>
+            </div>
+            {livePublishedWorks.length > 12 && (
+              <button
+                type="button"
+                className="media-view-all-btn"
+                onClick={() => setShowAllCollection((v) => !v)}
+              >
+                <span>{showAllCollection ? 'Show 12' : `View All (${livePublishedWorks.length}) →`}</span>
+              </button>
+            )}
+          </div>
+
+          <div className="collection-grid">
+            {(showAllCollection ? livePublishedWorks : livePublishedWorks.slice(0, 12)).map((item) => (
+              <div
+                key={item.id}
+                className="collection-card"
+                onClick={() => onNavigateToEntity?.(item.id, 'book')}
+                style={{ cursor: 'pointer' }}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="collection-thumb-wrapper">
+                  <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
+                </div>
+                <div className="collection-info">
+                  <span className="collection-title">
+                    <span>{item.title}</span>
+                  </span>
+                  <span className="collection-subtitle">{item.subtitle}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* 3. Generic Secondary Collection Section for non-artists */}
-      {(activeTab === 'collection' || activeTab === 'filmography' || activeTab === 'published_works') && entity.type !== 'artist' && entity.secondaryCollection && (
+      {(activeTab === 'collection' || activeTab === 'filmography' || activeTab === 'published_works') && entity.type !== 'artist' && entity.type !== 'human' && entity.secondaryCollection && (
         <section className="media-section collection-section">
           <div className="media-section-header">
             <div className="media-section-title-group">
@@ -2813,12 +3040,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
       {/* 5. Related Media Section */}
       {shouldShowRelatedSection && (
-        <section className={`media-section related-entities-section ${entity.type === 'artist' ? 'similar-artists-section' : ''}`}>
+        <section className={`media-section related-entities-section ${entity.type === 'artist' || isMusicianHumanProfile ? 'similar-artists-section' : ''}`}>
           <div className="media-section-header">
             <div className="media-section-title-group">
               <Sparkles size={16} className="title-icon" />
               <h2>
-                {entity.type === 'artist'
+                {entity.type === 'artist' || isMusicianHumanProfile
                   ? 'Similar Artists'
                   : entity.type === 'game'
                     ? 'Similar Games'
@@ -2827,7 +3054,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             </div>
           </div>
 
-          {entity.type === 'artist' ? (
+          {entity.type === 'artist' || isMusicianHumanProfile ? (
             relatedItemsToDisplay.length === 0 ? (
               <div className="similar-artists-empty">
                 <Sparkles size={18} />

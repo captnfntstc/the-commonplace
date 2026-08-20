@@ -86,4 +86,43 @@ describe('human screen-credit classification', () => {
       order: 0,
     }, 'Taylor Swift')).toBeUndefined()
   })
+
+  it('excludes guest appearances on reality, news, and talk shows', () => {
+    expect(classifyHumanScreenCredit({
+      id: 5,
+      media_type: 'tv',
+      name: 'The Tonight Show Starring Jimmy Fallon',
+      character: 'Self',
+      genre_ids: [10767],
+      order: 2,
+    }, 'Taylor Swift')).toBeUndefined()
+
+    expect(classifyHumanScreenCredit({
+      id: 6,
+      media_type: 'tv',
+      name: 'Reality Check',
+      character: 'Self',
+      genre_ids: [10764],
+      order: 1,
+    }, 'Taylor Swift')).toBeUndefined()
+
+    expect(classifyHumanScreenCredit({
+      id: 7,
+      media_type: 'tv',
+      name: 'Morning News Desk',
+      character: 'Self - Guest',
+      genre_ids: [10763],
+      order: 1,
+    }, 'Taylor Swift')).toBeUndefined()
+  })
+
+  it('keeps scripted acting roles even when a show is a talk/variety category', () => {
+    expect(classifyHumanScreenCredit({
+      id: 8,
+      media_type: 'tv',
+      name: 'Saturday Night Live',
+      character: 'Various Characters',
+      genre_ids: [10767],
+    }, 'Taylor Swift')).toBe('acting')
+  })
 })

@@ -11,7 +11,7 @@
 import { logApiCall, type ApiProvider } from './services/apiTracker'
 import { resolveArtworkUrl } from './utils/artwork'
 import { buildSongBiography, getSongReleaseKind } from './utils/songBio'
-import type { GameMetadata, GameSystemRequirementSet, HumanScreenCredit, TopContentItem } from './types/mediaEntity'
+import type { CollectionItem, GameMetadata, GameSystemRequirementSet, HumanScreenCredit, TopContentItem } from './types/mediaEntity'
 import {
   clearBrowserCacheNamespace,
   deleteBrowserCacheValue,
@@ -1898,6 +1898,7 @@ function songSearchScore(
   const normArtist = normalizeAlbumTitleForMatch(item.artistName || '')
   const normTargetSong = normalizeAlbumTitleForMatch(songQuery)
   const normTargetArtist = targetArtist ? normalizeAlbumTitleForMatch(targetArtist) : ''
+  const collectionArtist = normalizeAlbumTitleForMatch(item.collectionArtistName || '')
 
   let score = 0
 
@@ -1905,6 +1906,13 @@ function songSearchScore(
     if (normArtist !== normTargetArtist) return -50000
     score += 5000
   }
+
+  // Apple credits compilation tracks to the featured artist (artistId matches)
+  // while the owning collection is credited to "Various Artists" or another
+  // artist. A same-titled track on such an aggregator (e.g. "Lover" on the
+  // "Let's Play" compilation) must never outrank the artist's own album.
+  if (/\b(?:various artists|various)\b/i.test(item.collectionArtistName || '')) return -50000
+  if (normTargetArtist && collectionArtist && collectionArtist !== normTargetArtist) return -50000
 
   if (targetAlbum) {
     const normAlbum = normalizeAlbumTitleForMatch(item.collectionName || '')
@@ -1930,19 +1938,37 @@ function songSearchScore(
     score -= 4000
   }
 
+  // Penalize compilation-shaped collections (playlists, hits, karaoke, etc.)
+  // so a same-titled track on an aggregator never outranks the artist's own
+  // album release.
+  if (item.collectionName && isCompilationLikeCollection(item.collectionName)) {
+    score -= 3000
+  }
+
   if (item.collectionName && !/tribute|karaoke|greatest hits of 20\d\d/i.test(item.collectionName)) {
     score += 200
   }
 
   // Prefer a proper album release of a track over a standalone single so the
-  // album artwork is used and dedupe keeps the album version.
+  // album artwork is used and dedupe keeps the album version. A collection
+  // that shares its name with the track is only treated as a standalone
+  // single when it is explicitly a single — a studio album named after its
+  // lead track (e.g. "Lover") must never be penalized.
   if (item.collectionName) {
     const isStandaloneSingle =
       item.wrapperType === 'track' &&
       item.trackName &&
-      normalizeAlbumTitleForMatch(item.collectionName) === normTrack
+      normalizeAlbumTitleForMatch(item.collectionName) === normTrack &&
+      (/\bsingle\b/i.test(item.collectionName) || Number(item.trackCount || 0) <= 4)
     score += isStandaloneSingle ? -50 : 80
   }
+
+  // Prefer full-length album releases over EP/single-shaped collections when
+  // resolving artwork (e.g. "Lover" from the album over "The More Lover
+  // Chapter").
+  const collectionTrackCount = Number(item.trackCount || 0)
+  if (collectionTrackCount >= 8) score += 300
+  else if (collectionTrackCount > 0) score += Math.min(150, collectionTrackCount * 20)
 
   return score
 }
@@ -2391,7 +2417,7 @@ export async function fetchItunesSongArtwork(
   albumName?: string,
 ): Promise<string> {
   const cacheKey = [
-    'itunes-song-artwork-v3',
+    'itunes-song-artwork-v4',
     normalizeAlbumTitleForMatch(songName),
     normalizeAlbumTitleForMatch(artistName || ''),
     trackId || '',
@@ -3072,8 +3098,12 @@ function normalizePersonName(value: string) {
   return value.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
-const excludedSelfAppearancePattern = /\b(?:archive footage|uncredited|interview|guest|award|audience|thanks)\b/i
+const excludedSelfAppearancePattern = /\b(?:archive footage|uncredited|interview|guest|award|audience|thanks|host|judge|panelist)\b/i
 const concertPattern = /\b(?:concert|tour|live|stadium|world tour|performance)\b/i
+const varietyTalkShowPattern = /\b(?:talk show|late night|morning show|daytime)\b/i
+// TMDB genre ids for Reality (10764), News (10763), and Talk Show (10767)
+// are treated as clutter: guest appearances there are not real filmography.
+const excludedGuestGenreIds = new Set([10763, 10764, 10767])
 
 export function classifyHumanScreenCredit(
   credit: TmdbPersonCredit,
@@ -3095,9 +3125,15 @@ export function classifyHumanScreenCredit(
   const normalizedTitle = normalizePersonName(title)
   const isSelfLed = (credit.order ?? 999) <= 2 || nameTokens.some((token) => normalizedTitle.includes(token))
   if (!isSelfLed) return undefined
+  if (excludedGuestGenreIds.has(anyGenreId(credit)) && !isMusic) return undefined
+  if (varietyTalkShowPattern.test(title)) return undefined
   if (isMusic || concertPattern.test(title)) return 'concert'
   if (isDocumentary) return 'documentary'
   return undefined
+}
+
+function anyGenreId(credit: TmdbPersonCredit) {
+  return (credit.genre_ids || [])[0]
 }
 
 function mapHumanScreenCredit(
@@ -3180,6 +3216,117 @@ export async function fetchHumanScreenCredits(
       if ((error as Error)?.name === 'AbortError') throw error
       return { credits: [] }
     }
+  })
+}
+
+/**
+ * Published works authored by the person themselves (never books *about* them).
+ * Google Books `inauthor:` restricts the search surface, then every result is
+ * author-verified against the person's normalized name before it is returned.
+ */
+// Google Books' `inauthor:` operator is notoriously loose: it also returns
+// volumes where the person is the SUBJECT (biographies, fan guides) and can
+// carry the subject's name in the author field metadata. These title markers
+// identify third-party biographical framing — such volumes are about the
+// person, never works authored by them.
+const thirdPartyBiographyTitlePattern =
+  /\b(?:unauthorized|biograph(?:y|ies|ical)?|biog\b|little golden book|who is\b|who was\b|100 facts|unofficial|fan book|official fan|behind the music|all about|the (?:rise|story|life|world) of|a (?:story|life) of)\b/i
+
+function canonicalPersonNameKey(value: string) {
+  return normalizePersonName(value).split(' ').filter(Boolean).sort().join(' ')
+}
+
+export function isPersonAuthoredBook(book: GoogleBooksVolume, personName: string): boolean {
+  const info = book.volumeInfo ?? {}
+  const title = [info.title, info.subtitle].filter(Boolean).join(' ')
+  if (!title) return false
+
+  const expectedName = normalizePersonName(personName)
+  const expectedCanonical = canonicalPersonNameKey(personName)
+  const authoredByPerson = (info.authors || []).some((author) => {
+    const normalized = normalizePersonName(author)
+    // Exact "Taylor Swift" or catalog-style "Swift, Taylor" author credits.
+    return normalized === expectedName || canonicalPersonNameKey(author) === expectedCanonical
+  })
+  if (!authoredByPerson) return false
+
+  // Even when Google's metadata lists the person in the author field, a
+  // biography-framed title means the person is the subject, not the author.
+  if (thirdPartyBiographyTitlePattern.test(title)) return false
+  return true
+}
+
+export async function fetchHumanPublishedBooks(
+  name: string,
+  signal?: AbortSignal,
+): Promise<CollectionItem[]> {
+  if (!googleBooksApiKey) return []
+  const cacheKey = `google-books-human-works-v2:${normalizePersonName(name)}`
+  return cachedApiRequest(cacheKey, signal, async () => {
+    const startTime = performance.now()
+    const url = new URL('https://www.googleapis.com/books/v1/volumes')
+    url.searchParams.set('q', `inauthor:"${name}"`)
+    url.searchParams.set('maxResults', '40')
+    url.searchParams.set('printType', 'books')
+    url.searchParams.set('key', googleBooksApiKey)
+    const response = await fetch(url, { signal })
+    const latencyMs = Math.round(performance.now() - startTime)
+    if (!response.ok) {
+      logApiCall({
+        provider: 'Google Books',
+        queryOrUrl: `inauthor:"${name}"`,
+        status: response.status,
+        latencyMs,
+        resultCount: 0,
+        cacheStatus: 'MISS',
+        error: `Google Books API HTTP ${response.status}`,
+      })
+      return []
+    }
+    const data = await response.json() as { items?: GoogleBooksVolume[] }
+    const works: CollectionItem[] = []
+    const seenIds = new Set<string>()
+    const seenTitles = new Set<string>()
+    ;(data.items ?? []).forEach((book) => {
+      const info = book.volumeInfo ?? {}
+      const title = [info.title, info.subtitle].filter(Boolean).join(': ')
+      if (!title || seenIds.has(book.id)) return
+      if (!isPersonAuthoredBook(book, name)) return
+      seenIds.add(book.id)
+      const editionKey = `${normalizePersonName(title)}:${yearFrom(info.publishedDate) || ''}`
+      if (seenTitles.has(editionKey)) return
+      seenTitles.add(editionKey)
+      const rawCover =
+        info.imageLinks?.extraLarge ??
+        info.imageLinks?.large ??
+        info.imageLinks?.medium ??
+        info.imageLinks?.thumbnail ??
+        info.imageLinks?.smallThumbnail
+      works.push({
+        id: `googlebooks:book:${book.id}`,
+        title,
+        subtitle: [(info.authors || []).join(', '), yearFrom(info.publishedDate)]
+          .filter(Boolean)
+          .join(' · '),
+        artworkUrl: normalizeHttps(rawCover) || '',
+        year: yearFrom(info.publishedDate),
+        genre: info.categories?.[0] || 'Book',
+        language: info.language,
+        category: undefined,
+      })
+    })
+    works.sort((left, right) =>
+      (right.year || '').localeCompare(left.year || '') || left.title.localeCompare(right.title),
+    )
+    logApiCall({
+      provider: 'Google Books',
+      queryOrUrl: `inauthor:"${name}"`,
+      status: response.status,
+      latencyMs,
+      resultCount: works.length,
+      cacheStatus: 'MISS',
+    })
+    return works
   })
 }
 

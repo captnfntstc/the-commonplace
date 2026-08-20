@@ -10244,8 +10244,7 @@ code.detail-value {
   color: var(--accent);
 }
 
-.media-tab-btn.active::after {
-  content: '';
+.media-tab-underline {
   position: absolute;
   bottom: -1px;
   left: 0;
@@ -10253,6 +10252,7 @@ code.detail-value {
   height: 2px;
   background: var(--accent);
   border-radius: 2px;
+  pointer-events: none;
 }
 
 .media-tab-badge {
@@ -10501,6 +10501,25 @@ code.detail-value {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 16px;
+}
+
+/* Filmography Groups */
+.filmography-section .collection-grid {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.filmography-group + .filmography-group {
+  margin-top: 28px;
+}
+
+.filmography-group-title {
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--secondary);
+  margin: 0 0 12px;
 }
 
 .related-albums-grid {

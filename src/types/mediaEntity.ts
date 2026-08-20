@@ -86,7 +86,7 @@ export interface CollectionItem {
   rating?: number
   genre?: string
   language?: string
-  category?: 'album' | 'ep' | 'single'
+  category?: 'album' | 'ep' | 'single' | 'live'
   explicit?: boolean
 }
 
