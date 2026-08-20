@@ -70,3 +70,25 @@ test('uses the newest Fanart.tv upload for a MusicBrainz group', async () => {
   assert.equal(result.imageUrl, 'https://images.example/latest.jpg')
   assert.equal(result.added, '2026-08-01 00:00:00')
 })
+
+test('returns empty imageUrl when Fanart.tv returns 404 for a band', async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).includes('musicbrainz.org')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ artists: [{ id: 'wings-id', name: 'Wings', type: 'Group', score: 100 }] }),
+      }
+    }
+    return {
+      ok: false,
+      status: 404,
+      json: async () => ({ error: 'artist not found' }),
+    }
+  }
+
+  const result = await fetchFanartArtistPortrait('Wings', { FANART_TV_API_KEY: 'test-key' }, fetchImpl)
+
+  assert.equal(result.artistType, 'Group')
+  assert.equal(result.imageUrl, '')
+})

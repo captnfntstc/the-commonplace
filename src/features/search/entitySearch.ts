@@ -34,7 +34,7 @@ export function getSearchEntityArtwork(entity: {
   return (
     entityImageCacheMap.get(`${entity.type}:${entity.id}`) ||
     entityImageCacheMap.get(`${entity.type}:${cleanTitle}`) ||
-    entityImageCacheMap.get(`wiki-portrait-v5:${cleanTitle}`) ||
+    entityImageCacheMap.get(`wiki-portrait-v6:${cleanTitle}`) ||
     entityImageCacheMap.get(entity.id) ||
     entityImageCacheMap.get(cleanTitle) ||
     universalEntity?.artworkUrl ||

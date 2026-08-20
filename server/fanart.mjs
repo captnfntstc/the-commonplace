@@ -2,11 +2,12 @@ const MUSICBRAINZ_ARTIST_SEARCH_URL = 'https://musicbrainz.org/ws/2/artist'
 const FANART_MUSIC_API_URL = 'https://webservice.fanart.tv/v3.2/music'
 const REQUEST_TIMEOUT_MS = 10_000
 
-function normalizeArtistName(value) {
+function normalizeArtistNameForMatch(value) {
   return String(value || '')
     .toLowerCase()
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/^the\s+/i, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
 }
@@ -16,10 +17,27 @@ function escapeMusicBrainzQuery(value) {
 }
 
 export function selectMusicBrainzArtist(artists, requestedName) {
-  const normalizedName = normalizeArtistName(requestedName)
-  return [...(artists || [])]
-    .filter((artist) => normalizeArtistName(artist?.name) === normalizedName)
+  const normRequested = normalizeArtistNameForMatch(requestedName)
+  if (!normRequested) return undefined
+
+  const candidates = [...(artists || [])]
+
+  // 1. Direct name match (ignoring optional leading "The ")
+  const directMatch = candidates
+    .filter((artist) => normalizeArtistNameForMatch(artist?.name) === normRequested)
     .sort((left, right) => Number(right?.score || 0) - Number(left?.score || 0))[0]
+
+  if (directMatch) return directMatch
+
+  // 2. Alias match
+  const aliasMatch = candidates
+    .filter((artist) =>
+      Array.isArray(artist?.aliases) &&
+      artist.aliases.some((alias) => normalizeArtistNameForMatch(alias?.name) === normRequested),
+    )
+    .sort((left, right) => Number(right?.score || 0) - Number(left?.score || 0))[0]
+
+  return aliasMatch || candidates.sort((left, right) => Number(right?.score || 0) - Number(left?.score || 0))[0]
 }
 
 function fanartUploadTime(image) {
@@ -52,13 +70,21 @@ function getFanartApiKey(env) {
 }
 
 async function fetchJson(url, options, fetchImpl) {
-  const response = await fetchImpl(url, options)
-  if (!response.ok) {
-    const error = new Error(`Artwork provider request failed with HTTP ${response.status}.`)
-    error.statusCode = response.status === 429 ? 429 : 502
-    throw error
+  try {
+    const response = await fetchImpl(url, options)
+    if (response.status === 404) {
+      return null
+    }
+    if (!response.ok) {
+      const error = new Error(`Artwork provider request failed with HTTP ${response.status}.`)
+      error.statusCode = response.status === 429 ? 429 : 502
+      throw error
+    }
+    return response.json()
+  } catch (error) {
+    if (error?.name === 'AbortError' || error?.statusCode) throw error
+    return null
   }
-  return response.json()
 }
 
 export async function fetchFanartArtistPortrait(name, env = process.env, fetchImpl = fetch) {
@@ -75,7 +101,11 @@ export async function fetchFanartArtistPortrait(name, env = process.env, fetchIm
 
   try {
     const musicBrainzUrl = new URL(MUSICBRAINZ_ARTIST_SEARCH_URL)
-    musicBrainzUrl.searchParams.set('query', `artist:"${escapeMusicBrainzQuery(cleanName)}"`)
+    const escaped = escapeMusicBrainzQuery(cleanName)
+    const queryStr = cleanName.toLowerCase().startsWith('the ')
+      ? `artist:"${escaped}"`
+      : `artist:"${escaped}" OR artist:"The ${escaped}"`
+    musicBrainzUrl.searchParams.set('query', queryStr)
     musicBrainzUrl.searchParams.set('fmt', 'json')
     musicBrainzUrl.searchParams.set('limit', '10')
 

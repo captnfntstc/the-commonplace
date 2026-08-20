@@ -628,6 +628,48 @@ function collectionItemToAlbumEntity(item: CollectionItem, fallbackArtist = ''):
   }
 }
 
+const CommunityReviewSkeleton: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
+  <div className={`community-review-card community-review-card--skeleton ${compact ? 'is-compact' : ''}`} aria-hidden="true">
+    <div className="community-review-card-header">
+      <div className="community-review-author">
+        <span className="skeleton-box cr-skel-avatar" />
+        <div className="cr-skel-meta">
+          <span className="skeleton-box cr-skel-handle" />
+          <span className="skeleton-box cr-skel-time" />
+        </div>
+      </div>
+      <span className="skeleton-box cr-skel-bookmark" />
+    </div>
+
+    <div className="community-review-stars cr-skel-stars-row">
+      <span className="skeleton-box cr-skel-stars" />
+    </div>
+
+    <div className="community-review-content cr-skel-content">
+      <div className="cr-skel-pullquote">
+        <span className="skeleton-box cr-skel-line" style={{ width: '92%' }} />
+        <span className="skeleton-box cr-skel-line" style={{ width: '78%' }} />
+        <span className="skeleton-box cr-skel-line" style={{ width: '85%' }} />
+      </div>
+      {!compact && (
+        <div className="cr-skel-body">
+          <span className="skeleton-box cr-skel-line" style={{ width: '100%' }} />
+          <span className="skeleton-box cr-skel-line" style={{ width: '88%' }} />
+          <span className="skeleton-box cr-skel-line" style={{ width: '60%' }} />
+        </div>
+      )}
+    </div>
+
+    <div className="community-review-footer cr-skel-footer">
+      <div className="cr-skel-actions">
+        <span className="skeleton-box cr-skel-action" />
+        <span className="skeleton-box cr-skel-action" />
+      </div>
+      <span className="skeleton-box cr-skel-read-more" />
+    </div>
+  </div>
+)
+
 const CommunityReviewCard: React.FC<{
   entry: CardEntry
   isLiked: boolean
@@ -776,7 +818,7 @@ const SimilarArtistPortraitItem: React.FC<{
       const cachedFanart = entityImageCacheMap.get(getArtistPortraitCacheKey(artist.title))
       if (cachedFanart) return cachedFanart
     }
-    const cachedWiki = entityImageCacheMap.get(`wiki-portrait-v5:${cleanTitle}`)
+    const cachedWiki = entityImageCacheMap.get(`wiki-portrait-v6:${cleanTitle}`)
     if (cachedWiki) return cachedWiki
 
     const cachedArtist = entityImageCacheMap.get(`${personType}:${artist.id}`) || entityImageCacheMap.get(cleanTitle)
@@ -832,7 +874,7 @@ const SimilarArtistPortraitItem: React.FC<{
       return () => { isMounted = false }
     }
 
-    const cachedWiki = entityImageCacheMap.get(`wiki-portrait-v5:${cleanTitle}`)
+    const cachedWiki = entityImageCacheMap.get(`wiki-portrait-v6:${cleanTitle}`)
     if (cachedWiki && personType !== 'artist') {
       setPortraitUrl(cachedWiki)
       return () => { isMounted = false }
@@ -938,6 +980,41 @@ const SimilarGameTile: React.FC<{
       </span>
       <span className="related-album-title">{item.title}</span>
       <span className="related-album-subtitle">{item.subtitle}</span>
+    </button>
+  )
+}
+
+const FilmographyTile: React.FC<{
+  credit: HumanScreenCredit
+  personName: string
+  onNavigate?: (
+    entityId: string,
+    entityType?: MediaEntityType,
+    resolvedEntity?: UniversalMediaEntity,
+  ) => void
+}> = ({ credit, personName, onNavigate }) => {
+  const mediaEntity = screenCreditToMediaEntity(credit, personName)
+  const isTv = credit.mediaType === 'tv'
+
+  return (
+    <button
+      type="button"
+      className="filmography-tile"
+      onClick={() => onNavigate?.(mediaEntity.id, credit.mediaType, mediaEntity)}
+      aria-label={`Open ${credit.title}`}
+    >
+      <span className="filmography-poster-frame">
+        <CollectionItemThumb title={credit.title} defaultUrl={credit.artworkUrl || ''} />
+        <span className="filmography-media-badge">
+          {isTv ? 'TV' : 'Film'}
+        </span>
+      </span>
+      <span className="filmography-tile-title">
+        <span>{credit.title}</span>
+      </span>
+      <span className="filmography-tile-subtitle">
+        {[credit.year, credit.role].filter(Boolean).join(' · ') || (isTv ? 'TV Series' : 'Feature Film')}
+      </span>
     </button>
   )
 }
@@ -1164,6 +1241,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const [showAllEps, setShowAllEps] = useState(false)
   const [showAllSingles, setShowAllSingles] = useState(false)
   const [showAllLive, setShowAllLive] = useState(false)
+  const [expandedFilmographyCategories, setExpandedFilmographyCategories] = useState<Record<string, boolean>>({})
   const [selectedLyricIndexes, setSelectedLyricIndexes] = useState<number[]>([])
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false)
 
@@ -1175,6 +1253,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     setShowAllEps(false)
     setShowAllSingles(false)
     setShowAllLive(false)
+    setExpandedFilmographyCategories({})
     setSelectedLyricIndexes([])
     setIsDescriptionExpanded(false)
   }, [entity.id])
@@ -1480,22 +1559,23 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     if (isPortraitProfile) {
       if (!existingCache) setIsLoadingApi(true)
       const personType = (entity.type === 'human' ? 'artist' : entity.type) as WikipediaPersonType
-      fetchWikipediaProfile(entity.name, personType, albumController.signal)
-        .then((profile) => {
-          if (!isMounted) return
-          if (profile.portraitUrl) {
-            entityImageCacheMap.set(imageCacheKey, profile.portraitUrl)
-            setApiCoverUrl(profile.portraitUrl)
-          } else if (entity.type === 'artist') {
-            fetchArtistPortrait(entity.name, albumController.signal)
-              .then((url) => {
-                if (isMounted && url) {
-                  entityImageCacheMap.set(imageCacheKey, url)
-                  setApiCoverUrl(url)
-                }
-              })
-              .catch(() => {})
-          }
+
+      // For artist profiles, try Fanart.tv first (returns latest uploaded picture for BANDS ONLY).
+      // Solo artists and missing band artwork fall back to Wikipedia.
+      const portraitPromise = entity.type === 'artist'
+        ? fetchArtistPortrait(entity.name, albumController.signal).then((fanartUrl) => fanartUrl || null).catch(() => null)
+        : Promise.resolve<string | null>(null)
+
+      Promise.all([
+        portraitPromise,
+        fetchWikipediaProfile(entity.name, personType, albumController.signal),
+      ]).then(([bandFanartUrl, profile]) => {
+        if (!isMounted) return
+        const resolvedPortrait = bandFanartUrl || profile.portraitUrl || ''
+        if (resolvedPortrait) {
+          entityImageCacheMap.set(imageCacheKey, resolvedPortrait)
+          setApiCoverUrl(resolvedPortrait)
+        }
 
           if (profile.description) {
             setApiSummary(profile.description)
@@ -1782,6 +1862,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     undefined,
     reviewLayoutSignal,
   )
+  // Tracks whether we've done the first paint of the masonry layout.
+  // While false, transform transitions are disabled so cards snap directly
+  // into their computed positions rather than animating from a stacked state.
+  const reviewLayoutReadyRef = useRef(false)
+  const isFirstReviewLayout = !reviewLayoutReadyRef.current && !!reviewMasonryLayout
+  if (isFirstReviewLayout) reviewLayoutReadyRef.current = true
 
   const relatedItemsToDisplay = useMemo<ScoredRelatedEntityItem[]>(() => {
     if (entity.type === 'game') {
@@ -2539,47 +2625,19 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <Layers size={16} className="title-icon" />
                   <h2>Studio Albums ({albumsGroup.length})</h2>
                 </div>
-                {albumsGroup.length > 12 && (
+                {albumsGroup.length > 10 && (
                   <button
                     type="button"
                     className="media-view-all-btn"
                     onClick={() => setShowAllAlbums((v) => !v)}
                   >
-                    <span>{showAllAlbums ? 'Show 12' : `View All (${albumsGroup.length}) →`}</span>
+                    <span>{showAllAlbums ? 'Show Less' : 'Show More →'}</span>
                   </button>
                 )}
               </div>
-              <div className="collection-grid">
-                {(showAllAlbums ? albumsGroup : albumsGroup.slice(0, 12)).map((item) => (
-                  <div
-                    key={item.id}
-                    className="collection-card"
-                    onClick={() => onNavigateToEntity?.(
-                      item.id,
-                      'album',
-                      collectionItemToAlbumEntity(item, entity.name),
-                    )}
-                    style={{ cursor: 'pointer' }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <div className="collection-thumb-wrapper">
-                      <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
-                    </div>
-                    <div className="collection-info">
-                      <span className="collection-title">
-                        <span>{item.title}</span>
-                        {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-                      </span>
-                      <span className="collection-subtitle">{item.subtitle}</span>
-                    </div>
-                    {item.rating && (
-                      <span className="collection-rating-badge">
-                        <Star size={11} fill="currentColor" />
-                        <span>{item.rating.toFixed(1)}</span>
-                      </span>
-                    )}
-                  </div>
+              <div className="related-album-tile-grid">
+                {(showAllAlbums ? albumsGroup : albumsGroup.slice(0, 10)).map((item) => (
+                  <RelatedAlbumTile key={item.id} item={item} onNavigate={onNavigateToEntity} />
                 ))}
               </div>
             </section>
@@ -2592,47 +2650,19 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <Layers size={16} className="title-icon" />
                   <h2>EPs ({epsGroup.length})</h2>
                 </div>
-                {epsGroup.length > 12 && (
+                {epsGroup.length > 10 && (
                   <button
                     type="button"
                     className="media-view-all-btn"
                     onClick={() => setShowAllEps((v) => !v)}
                   >
-                    <span>{showAllEps ? 'Show 12' : `View All (${epsGroup.length}) →`}</span>
+                    <span>{showAllEps ? 'Show Less' : 'Show More →'}</span>
                   </button>
                 )}
               </div>
-              <div className="collection-grid">
-                {(showAllEps ? epsGroup : epsGroup.slice(0, 12)).map((item) => (
-                  <div
-                    key={item.id}
-                    className="collection-card"
-                    onClick={() => onNavigateToEntity?.(
-                      item.id,
-                      'album',
-                      collectionItemToAlbumEntity(item, entity.name),
-                    )}
-                    style={{ cursor: 'pointer' }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <div className="collection-thumb-wrapper">
-                      <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
-                    </div>
-                    <div className="collection-info">
-                      <span className="collection-title">
-                        <span>{item.title}</span>
-                        {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-                      </span>
-                      <span className="collection-subtitle">{item.subtitle}</span>
-                    </div>
-                    {item.rating && (
-                      <span className="collection-rating-badge">
-                        <Star size={11} fill="currentColor" />
-                        <span>{item.rating.toFixed(1)}</span>
-                      </span>
-                    )}
-                  </div>
+              <div className="related-album-tile-grid">
+                {(showAllEps ? epsGroup : epsGroup.slice(0, 10)).map((item) => (
+                  <RelatedAlbumTile key={item.id} item={item} onNavigate={onNavigateToEntity} />
                 ))}
               </div>
             </section>
@@ -2645,47 +2675,19 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <Layers size={16} className="title-icon" />
                   <h2>Live Performances ({livePerformancesGroup.length})</h2>
                 </div>
-                {livePerformancesGroup.length > 12 && (
+                {livePerformancesGroup.length > 10 && (
                   <button
                     type="button"
                     className="media-view-all-btn"
                     onClick={() => setShowAllLive((v) => !v)}
                   >
-                    <span>{showAllLive ? 'Show 12' : `View All (${livePerformancesGroup.length}) →`}</span>
+                    <span>{showAllLive ? 'Show Less' : 'Show More →'}</span>
                   </button>
                 )}
               </div>
-              <div className="collection-grid">
-                {(showAllLive ? livePerformancesGroup : livePerformancesGroup.slice(0, 12)).map((item) => (
-                  <div
-                    key={item.id}
-                    className="collection-card"
-                    onClick={() => onNavigateToEntity?.(
-                      item.id,
-                      'album',
-                      collectionItemToAlbumEntity(item, entity.name),
-                    )}
-                    style={{ cursor: 'pointer' }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <div className="collection-thumb-wrapper">
-                      <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
-                    </div>
-                    <div className="collection-info">
-                      <span className="collection-title">
-                        <span>{item.title}</span>
-                        {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-                      </span>
-                      <span className="collection-subtitle">{item.subtitle}</span>
-                    </div>
-                    {item.rating && (
-                      <span className="collection-rating-badge">
-                        <Star size={11} fill="currentColor" />
-                        <span>{item.rating.toFixed(1)}</span>
-                      </span>
-                    )}
-                  </div>
+              <div className="related-album-tile-grid">
+                {(showAllLive ? livePerformancesGroup : livePerformancesGroup.slice(0, 10)).map((item) => (
+                  <RelatedAlbumTile key={item.id} item={item} onNavigate={onNavigateToEntity} />
                 ))}
               </div>
             </section>
@@ -2698,47 +2700,19 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                   <Layers size={16} className="title-icon" />
                   <h2>Singles ({singlesGroup.length})</h2>
                 </div>
-                {singlesGroup.length > 12 && (
+                {singlesGroup.length > 10 && (
                   <button
                     type="button"
                     className="media-view-all-btn"
                     onClick={() => setShowAllSingles((v) => !v)}
                   >
-                    <span>{showAllSingles ? 'Show 12' : `View All (${singlesGroup.length}) →`}</span>
+                    <span>{showAllSingles ? 'Show Less' : 'Show More →'}</span>
                   </button>
                 )}
               </div>
-              <div className="collection-grid">
-                {(showAllSingles ? singlesGroup : singlesGroup.slice(0, 12)).map((item) => (
-                  <div
-                    key={item.id}
-                    className="collection-card"
-                    onClick={() => onNavigateToEntity?.(
-                      item.id,
-                      'album',
-                      collectionItemToAlbumEntity(item, entity.name),
-                    )}
-                    style={{ cursor: 'pointer' }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <div className="collection-thumb-wrapper">
-                      <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
-                    </div>
-                    <div className="collection-info">
-                      <span className="collection-title">
-                        <span>{item.title}</span>
-                        {item.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
-                      </span>
-                      <span className="collection-subtitle">{item.subtitle}</span>
-                    </div>
-                    {item.rating && (
-                      <span className="collection-rating-badge">
-                        <Star size={11} fill="currentColor" />
-                        <span>{item.rating.toFixed(1)}</span>
-                      </span>
-                    )}
-                  </div>
+              <div className="related-album-tile-grid">
+                {(showAllSingles ? singlesGroup : singlesGroup.slice(0, 10)).map((item) => (
+                  <RelatedAlbumTile key={item.id} item={item} onNavigate={onNavigateToEntity} />
                 ))}
               </div>
             </section>
@@ -2760,41 +2734,44 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             </div>
           </div>
 
-          {screenCreditGroups.map((group) => (
-            <div key={group.category} className="filmography-group">
-              <h3 className="filmography-group-title">
-                {humanCreditCategoryLabel(group.category)} ({group.credits.length})
-              </h3>
-              <div className="collection-grid">
-                {group.credits.map((credit) => (
-                  <div
-                    key={credit.id}
-                    className="collection-card"
-                    onClick={() => onNavigateToEntity?.(
-                      screenCreditToMediaEntity(credit, entity.name).id,
-                      credit.mediaType,
-                      screenCreditToMediaEntity(credit, entity.name),
-                    )}
-                    style={{ cursor: 'pointer' }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <div className="collection-thumb-wrapper">
-                      <CollectionItemThumb title={credit.title} defaultUrl={credit.artworkUrl || ''} />
-                    </div>
-                    <div className="collection-info">
-                      <span className="collection-title">
-                        <span>{credit.title}</span>
-                      </span>
-                      <span className="collection-subtitle">
-                        {[credit.year, credit.role].filter(Boolean).join(' · ') || credit.mediaType.toUpperCase()}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+          {screenCreditGroups.map((group) => {
+            const isExpanded = Boolean(expandedFilmographyCategories[group.category])
+            const itemsToDisplay = isExpanded ? group.credits : group.credits.slice(0, 10)
+
+            return (
+              <div key={group.category} className="filmography-group">
+                <div className="filmography-group-header">
+                  <h3 className="filmography-group-title">
+                    {humanCreditCategoryLabel(group.category)} ({group.credits.length})
+                  </h3>
+                  {group.credits.length > 10 && (
+                    <button
+                      type="button"
+                      className="media-view-all-btn"
+                      onClick={() =>
+                        setExpandedFilmographyCategories((prev) => ({
+                          ...prev,
+                          [group.category]: !prev[group.category],
+                        }))
+                      }
+                    >
+                      <span>{isExpanded ? 'Show Less' : 'Show More →'}</span>
+                    </button>
+                  )}
+                </div>
+                <div className="filmography-tile-grid">
+                  {itemsToDisplay.map((credit) => (
+                    <FilmographyTile
+                      key={credit.id}
+                      credit={credit}
+                      personName={entity.name}
+                      onNavigate={onNavigateToEntity}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </section>
       )}
 
@@ -2810,37 +2787,20 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               <BookOpen size={16} className="title-icon" />
               <h2>Published Works ({livePublishedWorks.length})</h2>
             </div>
-            {livePublishedWorks.length > 12 && (
+            {livePublishedWorks.length > 10 && (
               <button
                 type="button"
                 className="media-view-all-btn"
                 onClick={() => setShowAllCollection((v) => !v)}
               >
-                <span>{showAllCollection ? 'Show 12' : `View All (${livePublishedWorks.length}) →`}</span>
+                <span>{showAllCollection ? 'Show Less' : 'Show More →'}</span>
               </button>
             )}
           </div>
 
-          <div className="collection-grid">
-            {(showAllCollection ? livePublishedWorks : livePublishedWorks.slice(0, 12)).map((item) => (
-              <div
-                key={item.id}
-                className="collection-card"
-                onClick={() => onNavigateToEntity?.(item.id, 'book')}
-                style={{ cursor: 'pointer' }}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="collection-thumb-wrapper">
-                  <CollectionItemThumb title={item.title} defaultUrl={item.artworkUrl} />
-                </div>
-                <div className="collection-info">
-                  <span className="collection-title">
-                    <span>{item.title}</span>
-                  </span>
-                  <span className="collection-subtitle">{item.subtitle}</span>
-                </div>
-              </div>
+          <div className="related-album-tile-grid">
+            {(showAllCollection ? livePublishedWorks : livePublishedWorks.slice(0, 10)).map((item) => (
+              <RelatedAlbumTile key={item.id} item={item} onNavigate={onNavigateToEntity} />
             ))}
           </div>
         </section>
@@ -2936,43 +2896,61 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               ))}
             </div>
           ) : (
-            <div
-              className="card-grid media-reviews-masonry"
-              ref={reviewGridRef}
-              style={{
-                position: 'relative',
-                height: reviewMasonryLayout ? reviewMasonryLayout.height : 'auto',
-                minHeight: 320,
-                opacity: reviewMasonryLayout ? 1 : 0,
-                transition: 'opacity 220ms ease-out',
-              }}
-            >
-              {reviewItemsToDisplay.map((entry) => {
-                const pos = reviewMasonryLayout?.positions.get(entry.id)
+            <div style={{ position: 'relative' }}>
+              {/* Skeleton overlay — visible while masonry layout is computing */}
+              {!reviewMasonryLayout && (
+                <div
+                  className="community-review-skeleton-grid"
+                  aria-label="Loading reviews…"
+                  aria-busy="true"
+                  style={{ position: 'absolute', inset: 0, zIndex: 1 }}
+                >
+                  {Array.from({ length: Math.min(reviewItemsToDisplay.length || 6, 6) }, (_, i) => (
+                    <CommunityReviewSkeleton key={i} />
+                  ))}
+                </div>
+              )}
+              {/* Real masonry grid — always in DOM so useMasonryLayout can measure it */}
+              <div
+                className="card-grid media-reviews-masonry"
+                ref={reviewGridRef}
+                style={{
+                  position: 'relative',
+                  height: reviewMasonryLayout ? reviewMasonryLayout.height : 'auto',
+                  minHeight: 320,
+                  opacity: reviewMasonryLayout ? 1 : 0,
+                  transition: 'opacity 220ms ease-out',
+                  pointerEvents: reviewMasonryLayout ? 'auto' : 'none',
+                }}
+              >
+                {reviewItemsToDisplay.map((entry) => {
+                  const pos = reviewMasonryLayout?.positions.get(entry.id)
 
-                return (
-                  <div
-                    key={entry.id}
-                    data-id={entry.id}
-                    className="masonry-item"
-                    style={
-                      pos
-                        ? {
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            width: pos.width,
-                            transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
-                            transition: 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
-                            willChange: 'transform',
-                          }
-                        : { width: '100%', marginBottom: 16 }
-                    }
-                  >
-                    {renderCommunityReviewCard(entry)}
-                  </div>
-                )
-              })}
+                  return (
+                    <div
+                      key={entry.id}
+                      data-id={entry.id}
+                      className="masonry-item"
+                      style={
+                        pos
+                          ? {
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: pos.width,
+                              transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
+                              // Suppress transition on first layout so cards appear immediately in position
+                              transition: isFirstReviewLayout ? 'none' : 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
+                              willChange: 'transform',
+                            }
+                          : { width: '100%', marginBottom: 16 }
+                      }
+                    >
+                      {renderCommunityReviewCard(entry)}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )}
         </section>

@@ -216,8 +216,8 @@ export function warmSimilarArtistPortraits(
     const delay = i * 80
     const timer = window.setTimeout(async () => {
       if (signal?.aborted) return
-      const cacheKey = `fanart-v2:${artist.name.toLowerCase().trim()}`
-      const wikiKey = `wiki-portrait-v5:${artist.name.toLowerCase().trim()}`
+      const cacheKey = `fanart-v3:${artist.name.toLowerCase().trim()}`
+      const wikiKey = `wiki-portrait-v6:${artist.name.toLowerCase().trim()}`
       if (entityImageCacheMap.has(cacheKey) || entityImageCacheMap.has(wikiKey)) return
       try {
         const personType = artist.type === 'author' ? 'author' : 'artist'
@@ -269,15 +269,16 @@ export function wikipediaIdentityMatches(name: string, title: string, extract = 
   if (!requestedName || !pageTitle) return false
   if (requestedName === pageTitle) return true
 
-  const normalizedExtract = ` ${normalizeWikipediaTitle(extract)} `
-  const aliasPhrases = [
-    ` known professionally as ${requestedName} `,
-    ` better known as ${requestedName} `,
-    ` known as ${requestedName} `,
-    ` stage name ${requestedName} `,
-    ` stylized as ${requestedName} `,
-  ]
-  return requestedName.length >= 3 && aliasPhrases.some((phrase) => normalizedExtract.includes(phrase))
+  if (requestedName.length < 3) return false
+
+  const normalizedExtract = normalizeWikipediaTitle(extract)
+  const escapedName = requestedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const aliasRegex = new RegExp(
+    `\\b(?:known professionally as|better known as|known as|stage name|stylized as)\\s+${escapedName}(?:\\s+(?:is|was|born|an?|the|who|in|on|at|from|with|and|,|\\.)|\\s*$)`,
+    'i',
+  )
+
+  return aliasRegex.test(normalizedExtract)
 }
 
 export function isWikipediaDisambiguationPage(page: {
@@ -291,6 +292,33 @@ export function isWikipediaDisambiguationPage(page: {
     /\(disambiguation\)\s*$/i.test(page.title || '') ||
     /\bmay (?:also )?refer to\b/i.test((page.extract || '').slice(0, 500))
   )
+}
+
+function getWikipediaDisambiguationTitles(queryName: string, type?: WikipediaPersonType): string[] {
+  const clean = queryName.trim()
+  if (!clean) return []
+
+  if (type === 'artist') {
+    return [
+      `${clean} (band)`,
+      `${clean} (musician)`,
+      `${clean} (singer)`,
+      `${clean} (group)`,
+      `${clean} (duo)`,
+      `${clean} (rapper)`,
+      clean,
+    ]
+  }
+  if (type === 'author') {
+    return [`${clean} (author)`, `${clean} (writer)`, `${clean} (novelist)`, clean]
+  }
+  if (type === 'director') {
+    return [`${clean} (director)`, `${clean} (filmmaker)`, clean]
+  }
+  if (type === 'actor') {
+    return [`${clean} (actor)`, `${clean} (actress)`, clean]
+  }
+  return [`${clean} (person)`, clean]
 }
 
 export async function fetchWikipediaProfile(
@@ -322,25 +350,74 @@ export async function fetchWikipediaProfile(
     }
   }
   const role = type || 'person'
-  const profileCacheKey = `wiki-profile-v5:${role}:${cleanName}`
-  const portraitCacheKey = `wiki-portrait-v5:${cleanName}`
+  const profileCacheKey = `wiki-profile-v6:${role}:${cleanName}`
+  const portraitCacheKey = `wiki-portrait-v6:${cleanName}`
   const legacyPortraitCacheKey = `wiki-portrait:${cleanName}`
 
   const profile = await cachedApiRequest(profileCacheKey, signal, async () => {
     try {
+      const requestedTitle = normalizeWikipediaTitle(queryName)
+
+      // 1. Direct Disambiguation Titles Lookup (e.g., "Queen (band)")
+      const titleCandidates = getWikipediaDisambiguationTitles(queryName, type)
+      if (titleCandidates.length > 0) {
+        const directUrl = new URL('https://en.wikipedia.org/w/api.php')
+        directUrl.searchParams.set('action', 'query')
+        directUrl.searchParams.set('titles', titleCandidates.join('|'))
+        directUrl.searchParams.set('prop', 'pageimages|extracts|info|pageprops')
+        directUrl.searchParams.set('piprop', 'thumbnail|original')
+        directUrl.searchParams.set('pithumbsize', '800')
+        directUrl.searchParams.set('pilimit', String(titleCandidates.length))
+        directUrl.searchParams.set('exintro', '1')
+        directUrl.searchParams.set('explaintext', '1')
+        directUrl.searchParams.set('exlimit', String(titleCandidates.length))
+        directUrl.searchParams.set('inprop', 'url')
+        directUrl.searchParams.set('redirects', '1')
+        directUrl.searchParams.set('format', 'json')
+        directUrl.searchParams.set('origin', '*')
+
+        const directRes = await fetch(directUrl, { signal })
+        if (directRes.ok) {
+          const directData = (await directRes.json()) as any
+          const directPages = Object.values(directData.query?.pages || {}) as any[]
+          const validDirectCandidates = directPages.filter(
+            (page) => page && !page.missing && !isWikipediaDisambiguationPage(page),
+          )
+
+          // Find candidate whose title matches requested title when stripped of (band) etc.
+          const bestDirect = validDirectCandidates.find(
+            (page) => normalizeWikipediaTitle(page?.title || '') === requestedTitle,
+          )
+
+          if (bestDirect) {
+            return {
+              title: bestDirect.title || queryName,
+              portraitUrl: bestDirect.thumbnail?.source || bestDirect.original?.source || '',
+              description: String(bestDirect.extract || '').trim(),
+              pageUrl: bestDirect.canonicalurl || bestDirect.fullurl || '',
+              pageId: bestDirect.pageid ? String(bestDirect.pageid) : undefined,
+              wikidataId: typeof bestDirect.pageprops?.wikibase_item === 'string'
+                ? bestDirect.pageprops.wikibase_item
+                : undefined,
+            }
+          }
+        }
+      }
+
+      // 2. Fallback Generator Search
       const url = new URL('https://en.wikipedia.org/w/api.php')
       url.searchParams.set('action', 'query')
       url.searchParams.set('generator', 'search')
       url.searchParams.set('gsrsearch', `intitle:"${queryName}" ${wikipediaRoleHint(type)}`)
       url.searchParams.set('gsrnamespace', '0')
-      url.searchParams.set('gsrlimit', '10')
+      url.searchParams.set('gsrlimit', '20')
       url.searchParams.set('prop', 'pageimages|extracts|info|pageprops')
       url.searchParams.set('piprop', 'thumbnail|original')
       url.searchParams.set('pithumbsize', '800')
-      url.searchParams.set('pilimit', '10')
+      url.searchParams.set('pilimit', '20')
       url.searchParams.set('exintro', '1')
       url.searchParams.set('explaintext', '1')
-      url.searchParams.set('exlimit', '10')
+      url.searchParams.set('exlimit', '20')
       url.searchParams.set('inprop', 'url')
       url.searchParams.set('redirects', '1')
       url.searchParams.set('format', 'json')
@@ -354,7 +431,7 @@ export async function fetchWikipediaProfile(
       const candidates = pages
         .filter((page) => !isWikipediaDisambiguationPage(page))
         .sort((left, right) => Number(left?.index || 999) - Number(right?.index || 999))
-      const requestedTitle = normalizeWikipediaTitle(queryName)
+
       const page = candidates.find((candidate) =>
         normalizeWikipediaTitle(candidate?.title || '') === requestedTitle,
       ) || candidates.find((candidate) =>
@@ -399,7 +476,7 @@ export async function fetchWikipediaPortrait(
   type?: WikipediaPersonType,
 ): Promise<string> {
   const cleanName = name.trim().toLowerCase()
-  const existing = entityImageCacheMap.get(`wiki-portrait-v5:${cleanName}`)
+  const existing = entityImageCacheMap.get(`wiki-portrait-v6:${cleanName}`)
   if (existing) return existing
   const profile = await fetchWikipediaProfile(name, type, signal)
   return profile.portraitUrl
@@ -412,7 +489,7 @@ type ArtistPortraitResponse = {
 }
 
 export function getArtistPortraitCacheKey(name: string) {
-  return `fanart-artist-portrait-v1:${name.trim().toLowerCase()}`
+  return `fanart-artist-portrait-v2:${name.trim().toLowerCase()}`
 }
 
 /**
@@ -460,7 +537,7 @@ export async function fetchArtistPortrait(
     if ((error as Error)?.name === 'AbortError') throw error
   }
 
-  return fetchWikipediaPortrait(name, signal, 'artist')
+  return ''
 }
 
 export interface DiscographyItem {
