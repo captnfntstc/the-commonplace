@@ -1,5 +1,6 @@
 export type MediaEntityType =
   | 'human'
+  | 'music_group'
   | 'artist'
   | 'album'
   | 'song'
@@ -13,9 +14,27 @@ export type MediaEntityType =
   | 'game'
   | 'game_studio'
 
-export type HumanProfession = 'artist' | 'actor' | 'director' | 'creator' | 'author'
+export type HumanProfession =
+  | 'musician'
+  | 'singer_songwriter'
+  | 'singer'
+  | 'songwriter'
+  | 'rapper'
+  | 'composer'
+  | 'music_producer'
+  | 'actor'
+  | 'voice_actor'
+  | 'comedian'
+  | 'director'
+  | 'producer'
+  | 'screenwriter'
+  | 'showrunner'
+  | 'author'
+  | 'novelist'
+  | 'poet'
 
-export type HumanProfileContext = HumanProfession
+export type LegacyHumanProfileContext = 'artist' | 'actor' | 'director' | 'creator' | 'author'
+export type HumanProfileContext = HumanProfession | LegacyHumanProfileContext
 
 export interface HumanProviderIds {
   wikipediaPageId?: string
@@ -24,6 +43,31 @@ export interface HumanProviderIds {
   tmdbPersonId?: string
   itunesArtistId?: string
   googleBooksAuthorId?: string
+  openLibraryAuthorId?: string
+}
+
+export type IdentityKind = 'human' | 'music_group'
+
+export interface IdentityCandidate {
+  canonicalId: string
+  kind: IdentityKind
+  name: string
+  primaryProfession?: HumanProfession
+  professions: HumanProfession[]
+  occupationLabels: string[]
+  description: string
+  portraitUrl: string
+  birthday?: string
+  birthYear?: string
+  country?: string
+  popularity?: {
+    wikidataSitelinks?: number
+    tmdb?: number
+  }
+  knownFor: string[]
+  providerIds: HumanProviderIds
+  wikipediaTitle?: string
+  resolved?: boolean
 }
 
 export interface HumanCapabilities {
@@ -33,6 +77,8 @@ export interface HumanCapabilities {
   publishedWorks: boolean
   directing: boolean
   creating: boolean
+  producing?: boolean
+  writing?: boolean
 }
 
 export type HumanScreenCreditCategory =
@@ -40,6 +86,8 @@ export type HumanScreenCreditCategory =
   | 'concert'
   | 'documentary'
   | 'directing'
+  | 'producing'
+  | 'writing'
 
 export interface HumanScreenCredit {
   id: string
@@ -54,7 +102,9 @@ export interface HumanScreenCredit {
 
 export interface HumanProfileMetadata {
   canonicalId?: string
-  context: HumanProfileContext
+  primaryProfession?: HumanProfession
+  /** Legacy presentation hint. New identities use primaryProfession. */
+  context?: HumanProfileContext
   professions: HumanProfession[]
   occupationLabels: string[]
   providerIds: HumanProviderIds
@@ -81,6 +131,7 @@ export interface CollectionItem {
   title: string
   subtitle: string
   artworkUrl: string
+  providerId?: string
   artist?: string
   year?: string
   rating?: number
@@ -88,6 +139,8 @@ export interface CollectionItem {
   language?: string
   category?: 'album' | 'ep' | 'single' | 'live'
   explicit?: boolean
+  variantIds?: string[]
+  variantCount?: number
 }
 
 export interface RelatedEntityItem {
@@ -130,7 +183,7 @@ export interface GameEdition {
   platforms?: string[]
 }
 
-export type GameRelatedContentKind = 'sequel' | 'expansion' | 'dlc'
+export type GameRelatedContentKind = 'base_game' | 'sequel' | 'expansion' | 'dlc'
 
 export interface GameRelatedContentItem {
   providerId: string
@@ -215,6 +268,7 @@ export interface UniversalMediaEntity {
   gameMetadata?: GameMetadata
   tvMetadata?: TvSeriesMetadata
   humanProfile?: HumanProfileMetadata
+  identity?: IdentityCandidate
   metadataChips: MetadataChip[]
   communityRating: {
     average: number
@@ -270,7 +324,7 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
       return [
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Most Reviewed Books' },
-        { id: 'collection', label: 'Published Works' },
+        { id: 'collection', label: 'Books' },
         { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Similar' },
       ]

@@ -1,7 +1,16 @@
 import type { Entry } from '../features/entries/model'
+import type { ProfileCollection } from '../features/collections/profileCollections'
 import type { UserProfileState } from '../types/userProfile'
 
-export const MOCK_EXTERNAL_PROFILES: Record<string, { profile: UserProfileState; entries: Entry[] }> = {
+export type ExternalProfileData = {
+  profile: UserProfileState
+  entries: Entry[]
+  collections?: ProfileCollection[]
+  savedEntryIds?: string[]
+  savedCollections?: ProfileCollection[]
+}
+
+export const MOCK_EXTERNAL_PROFILES: Record<string, ExternalProfileData> = {
   elena_r: {
     profile: {
       firstName: 'Elena',
@@ -14,6 +23,7 @@ export const MOCK_EXTERNAL_PROFILES: Record<string, { profile: UserProfileState;
       coverUrl: 'https://images.unsplash.com/photo-1507842217343-583bb7270b66?w=1200&auto=format&fit=crop',
       showFollowLists: true,
       allowComments: true,
+      showSavedActivity: false,
     },
     entries: [
       {
@@ -87,7 +97,21 @@ export const MOCK_EXTERNAL_PROFILES: Record<string, { profile: UserProfileState;
       coverUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200&auto=format&fit=crop',
       showFollowLists: true,
       allowComments: true,
+      showSavedActivity: true,
     },
+    savedEntryIds: ['ext-elena-1', 'ext-elena-3'],
+    savedCollections: [
+      {
+        id: 'collection-elena_r-highlights',
+        name: "Elena's Highlights",
+        creatorName: 'Elena Rostova',
+        creatorHandle: 'elena_r',
+        description: 'A selection of literature, music, and cinema gathered by Elena Rostova.',
+        types: ['book', 'album', 'film'],
+        entryIds: ['ext-elena-1', 'ext-elena-2', 'ext-elena-3'],
+        coverMode: 'auto',
+      },
+    ],
     entries: [
       {
         id: 'ext-marcus-1',
@@ -142,6 +166,7 @@ export const MOCK_EXTERNAL_PROFILES: Record<string, { profile: UserProfileState;
       showFollowLists: false,
       allowComments: false,
       isPrivate: true,
+      showSavedActivity: false,
     },
     entries: [
       {
@@ -166,5 +191,3 @@ export const MOCK_EXTERNAL_PROFILES: Record<string, { profile: UserProfileState;
     ],
   },
 }
-
-

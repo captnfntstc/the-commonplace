@@ -8,6 +8,8 @@ export type ApiProvider =
   | 'Steam Store'
   | 'Fanart.tv'
   | 'Last.fm'
+  | 'Open Library'
+  | 'Identity'
   | 'Wikipedia'
 
 export type CacheStatus = 'HIT' | 'MISS'
@@ -22,6 +24,9 @@ export type ApiLogItem = {
   resultCount: number
   cacheStatus: CacheStatus
   error?: string
+  identitySource?: string
+  candidateCount?: number
+  resolutionResult?: string
 }
 
 export type ApiTrackerStats = {
@@ -44,6 +49,8 @@ export const ALL_PROVIDERS: ApiProvider[] = [
   'Steam Store',
   'Fanart.tv',
   'Last.fm',
+  'Open Library',
+  'Identity',
   'Wikipedia',
 ]
 
@@ -107,6 +114,8 @@ export function getApiStats(): ApiTrackerStats {
     'Steam Store': 0,
     'Fanart.tv': 0,
     'Last.fm': 0,
+    'Open Library': 0,
+    Identity: 0,
     Wikipedia: 0,
   }
 

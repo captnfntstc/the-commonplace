@@ -24,7 +24,6 @@ describe('human profile metadata', () => {
       fallbackProfession: 'Artist',
       catalogGenre: 'Alternative',
     })).toEqual([
-      { label: 'Profession', value: 'Band' },
       { label: 'Genre', value: 'Alternative' },
       { label: 'Origin', value: 'Manchester' },
       { label: 'Formed', value: '1982' },
@@ -38,10 +37,9 @@ describe('human profile metadata', () => {
       fallbackProfession: 'Artist',
       catalogGenre: 'R&B/Soul',
     })).toEqual([
-      { label: 'Profession', value: 'Singer-songwriter' },
       { label: 'Genre', value: 'R&B/Soul' },
       { label: 'Nationality', value: 'Indonesian' },
-      { label: 'Born', value: '1999' },
+      { label: 'Birthday', value: '1999' },
     ])
   })
 })

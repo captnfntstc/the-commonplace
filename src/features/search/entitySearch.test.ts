@@ -8,7 +8,9 @@ import {
   metadataResultMatchesQuery,
   metadataResultToSearchEntity,
   normalizeSearchText,
+  providerScopedMusicIdentityFromMetadataResult,
   searchEntityMatchesQuery,
+  searchResultBadge,
   searchResultSubtitle,
   shouldSuppressSynthesizedArtist,
 } from './entitySearch'
@@ -104,5 +106,81 @@ describe('context-aware media search identity', () => {
     expect(shouldSuppressSynthesizedArtist('artist', ['artist', 'author'], false, 8)).toBe(false)
     expect(shouldSuppressSynthesizedArtist('artist', ['artist', 'author'], true)).toBe(false)
     expect(shouldSuppressSynthesizedArtist('author', ['artist', 'author'], false)).toBe(false)
+  })
+
+  it('promotes verified music catalog artist IDs into People identities', () => {
+    const artist = providerScopedMusicIdentityFromMetadataResult(metadataResult({
+      id: 'album-1',
+      type: 'album',
+      title: 'Stick Season',
+      creator: 'Noah Kahan',
+      provider: 'Alternative',
+      providerId: 'collection-1',
+      providerArtistId: '123456',
+    }))
+
+    expect(artist?.id).toBe('human:itunes:123456')
+    expect(artist?.type).toBe('human')
+    expect(artist?.humanProfile?.professions).toEqual(['musician'])
+    expect(artist?.humanProfile?.providerIds.itunesArtistId).toBe('123456')
+  })
+
+  it('does not create People identities from music results without stable artist IDs', () => {
+    const artist = providerScopedMusicIdentityFromMetadataResult(metadataResult({
+      id: 'album-1',
+      type: 'album',
+      title: 'Same Name Album',
+      creator: 'Same Name Artist',
+      provider: 'Album',
+      providerId: 'collection-1',
+    }))
+
+    expect(artist).toBeUndefined()
+  })
+
+  it('shows only the main profession on People results and removes the subtitle', () => {
+    const person = universalEntity('human', 'Tom Kenny', 'Known For', 'SpongeBob SquarePants')
+    person.identity = {
+      canonicalId: 'human:Q1', kind: 'human', name: 'Tom Kenny', primaryProfession: 'voice_actor',
+      professions: ['voice_actor', 'actor', 'comedian'], occupationLabels: ['Voice actor', 'Actor', 'Comedian'],
+      description: '', portraitUrl: '', knownFor: [], providerIds: { wikidataId: 'Q1' },
+      popularity: { wikidataSitelinks: 100 },
+    }
+    const result = metadataResultToSearchEntity(metadataResult({}), 0)
+    const personResult = {
+      ...result,
+      id: person.id,
+      title: person.name,
+      type: 'human',
+      creatorValue: person.categoryLabel,
+      universalEntity: person,
+    }
+    expect(searchResultBadge(personResult)).toBe('Voice Actor')
+    expect(searchResultSubtitle(personResult)).toBe('')
+  })
+
+  it('collapses low-evidence same-name People results but keeps similarly popular namesakes', () => {
+    const makePerson = (id: string, sitelinks: number) => {
+      const person = universalEntity('human', 'Alex Smith', 'Known For', 'Example')
+      person.id = id
+      person.identity = {
+        canonicalId: id, kind: 'human', name: 'Alex Smith', primaryProfession: 'actor',
+        professions: ['actor'], occupationLabels: ['Actor'], description: '', portraitUrl: '', knownFor: [],
+        providerIds: { wikidataId: id.replace('human:', '') }, popularity: { wikidataSitelinks: sitelinks },
+      }
+      return {
+        id,
+        title: person.name,
+        artworkUrl: '',
+        type: 'human',
+        creatorValue: 'Actor',
+        bio: '',
+        source: 'universal' as const,
+        rank: 0,
+        universalEntity: person,
+      }
+    }
+    expect(dedupeSearchEntities([makePerson('human:Q1', 100), makePerson('human:Q2', 5)])).toHaveLength(1)
+    expect(dedupeSearchEntities([makePerson('human:Q1', 100), makePerson('human:Q2', 50)])).toHaveLength(2)
   })
 })

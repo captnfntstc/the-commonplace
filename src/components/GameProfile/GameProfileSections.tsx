@@ -127,9 +127,10 @@ function MetadataItem({ label, value }: { label: string; value?: string }) {
 }
 
 const relatedContentLabels: Record<GameRelatedContentKind, string> = {
-  sequel: 'Sequels',
+  base_game: 'Base Game',
   expansion: 'Expansion Packs',
-  dlc: 'DLC',
+  dlc: 'DLC & Add-ons',
+  sequel: 'Sequels & Related Titles',
 }
 
 function RelatedContentCard({
@@ -160,7 +161,7 @@ export function GameRelatedContentTab({
   metadata,
   onNavigateGame,
 }: GameMetadataProps & GameNavigationProps) {
-  const groups = (['sequel', 'expansion', 'dlc'] as const)
+  const groups = (['base_game', 'expansion', 'dlc', 'sequel'] as const)
     .map((kind) => ({
       kind,
       items: (metadata.relatedContent || []).filter((item) => item.kind === kind),

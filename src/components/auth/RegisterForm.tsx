@@ -1,17 +1,21 @@
 import React, { useState } from 'react'
-import { Mail, Lock, User } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Mail, Lock, User, AlertCircle } from 'lucide-react'
 import { FormInput } from './FormInput'
 import { PasswordInput } from './PasswordInput'
 import { LegalModal, type LegalModalType } from './LegalModal'
 import { AuthToast } from './AuthToast'
 import { PasswordStrengthMeter } from './PasswordStrengthMeter'
 import { SocialSignIn } from './SocialSignIn'
+import { useAuth } from '../../context/AuthContext'
 
 interface RegisterFormProps {
   onSwitchToLogin: () => void
 }
 
 export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) => {
+  const navigate = useNavigate()
+  const { signup, loginWithGoogle } = useAuth()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -19,6 +23,8 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
   const [agreed, setAgreed] = useState(false)
   const [legalModalType, setLegalModalType] = useState<LegalModalType>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [genericError, setGenericError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
   const [errors, setErrors] = useState<{
     name?: string
     email?: string
@@ -41,13 +47,45 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
     return next
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setGenericError(null)
     const errs = validate()
     setErrors(errs)
+
     if (Object.keys(errs).length === 0) {
-      setSubmitted(true)
-      setToastMessage('✦ Account created successfully! (Simulation mode — no data stored)')
+      try {
+        setLoading(true)
+        await signup(email.trim(), password, name.trim())
+        setSubmitted(true)
+        setToastMessage('✦ Account created successfully!')
+        setTimeout(() => {
+          navigate('/')
+        }, 600)
+      } catch (err: unknown) {
+        setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Registration failed.')
+      } finally {
+        setLoading(false)
+      }
+    }
+  }
+
+  const handleSelectProvider = async (provider: string) => {
+    if (provider === 'Google') {
+      try {
+        setLoading(true)
+        await loginWithGoogle()
+        setToastMessage('✦ Signed up with Google successfully!')
+        setTimeout(() => {
+          navigate('/')
+        }, 600)
+      } catch (err: unknown) {
+        setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Google sign up failed.')
+      } finally {
+        setLoading(false)
+      }
+    } else {
+      setToastMessage(`✦ ${provider} sign-up simulation selected.`)
     }
   }
 
@@ -58,7 +96,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
           <div className="auth-success-icon">✦</div>
           <p className="auth-success-text">Your collection begins.</p>
           <p style={{ fontSize: 13, color: 'rgba(223, 194, 161, 0.50)', marginTop: 4 }}>
-            Simulation complete — zero data stored.
+            Simulation complete — account initialized.
           </p>
           <button
             type="button"
@@ -96,6 +134,14 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
             <div className="auth-fading-rule" />
           </div>
         </div>
+
+        {/* Generic Error Banner */}
+        {genericError && (
+          <div className="auth-generic-error-banner" role="alert">
+            <AlertCircle size={16} />
+            <span>{genericError}</span>
+          </div>
+        )}
 
         {/* Fields */}
         <div className="auth-fields-stack">
@@ -188,16 +234,14 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
         </div>
 
         {/* Primary CTA */}
-        <button type="submit" id="btn-register" className="auth-primary-btn">
-          Create account
+        <button type="submit" id="btn-register" className="auth-primary-btn" disabled={loading}>
+          {loading ? 'Creating account...' : 'Create account'}
         </button>
 
         {/* Social Sign In Options */}
         <SocialSignIn
           mode="register"
-          onSelectProvider={(provider) =>
-            setToastMessage(`✦ ${provider} sign-up simulated.`)
-          }
+          onSelectProvider={handleSelectProvider}
         />
 
         {/* Switch to Login */}

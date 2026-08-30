@@ -5,11 +5,6 @@ import {
   User,
   Calendar,
   BookOpen,
-  Disc3,
-  Music4,
-  Clapperboard,
-  Gamepad2,
-  Tv,
   Heart,
   MessageSquare,
   Bookmark,
@@ -23,6 +18,18 @@ import { FormattedText } from './FormattedText'
 import { StarRating } from './CardHeader'
 import { formatFullDateTime } from '../../utils/dateUtils'
 import { getDropCapParts } from './variants/HybridScrollVariant'
+import { getEntryTypeIcon } from '../../utils/mediaIcons'
+import { useAuth } from '../../context/AuthContext'
+import {
+  canUseCloudData,
+  createPostComment,
+  createPostReply,
+  deletePostComment,
+  deletePostReply,
+  loadPostComments,
+  togglePostCommentLike,
+  togglePostReplyLike,
+} from '../../services/cloudData'
 
 export interface OverlayEntry {
   id: string
@@ -50,6 +57,7 @@ export interface OverlayEntry {
 
 interface ReplyItem {
   id: string
+  authorId?: string
   author: string
   initials: string
   text: string
@@ -60,6 +68,7 @@ interface ReplyItem {
 
 interface CommentItem {
   id: string
+  authorId?: string
   author: string
   initials: string
   text: string
@@ -80,15 +89,21 @@ interface CardOverlayModalProps {
 }
 
 const typeIconMap = {
-  book: BookOpen,
-  album: Disc3,
-  song: Music4,
-  film: Clapperboard,
-  game: Gamepad2,
-  tv: Tv,
+  book: getEntryTypeIcon('book'),
+  album: getEntryTypeIcon('album'),
+  song: getEntryTypeIcon('song'),
+  film: getEntryTypeIcon('film'),
+  game: getEntryTypeIcon('game'),
+  tv: getEntryTypeIcon('tv'),
 }
 
 const CURRENT_USER = 'jimboii'
+
+function formatCommentTimestamp(value: string) {
+  if (!value || /ago$|just now/i.test(value)) return value
+  const timestamp = new Date(value)
+  return Number.isNaN(timestamp.getTime()) ? value : timestamp.toLocaleString()
+}
 
 export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   entry,
@@ -99,7 +114,21 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   onToggleSave,
   onOpenProfile,
 }) => {
-  const [comments, setComments] = useState<CommentItem[]>([
+  const { currentUser, isDemoMode } = useAuth()
+  const cloudUserId = !isDemoMode && currentUser && !currentUser.uid.startsWith('demo-')
+    ? currentUser.uid
+    : null
+  const currentAuthor = currentUser?.displayName || currentUser?.email?.split('@')[0] || CURRENT_USER
+  const currentInitials = currentAuthor
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || 'U'
+  const activeEntryId = entry?.id || ''
+  const [commentState, setCommentState] = useState<{ entryId: string; items: CommentItem[] }>({
+    entryId: activeEntryId,
+    items: cloudUserId ? [] : [
     {
       id: 'c1',
       author: 'Elena Rostova',
@@ -130,7 +159,18 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
       isLiked: false,
       replies: [],
     },
-  ])
+    ],
+  })
+  const comments = commentState.entryId === activeEntryId ? commentState.items : []
+  const setComments = (update: React.SetStateAction<CommentItem[]>) => {
+    setCommentState((previous) => {
+      const currentItems = previous.entryId === activeEntryId ? previous.items : []
+      return {
+        entryId: activeEntryId,
+        items: typeof update === 'function' ? update(currentItems) : update,
+      }
+    })
+  }
 
   const [newCommentText, setNewCommentText] = useState('')
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
@@ -140,6 +180,18 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   const [visibleRepliesCount, setVisibleRepliesCount] = useState<Record<string, number>>({})
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false)
   const [reportToast, setReportToast] = useState<string | null>(null)
+  useEffect(() => {
+    if (!activeEntryId || !cloudUserId || !canUseCloudData(cloudUserId)) return
+    let cancelled = false
+    void loadPostComments(activeEntryId, cloudUserId)
+      .then((items) => {
+        if (!cancelled) setCommentState({ entryId: activeEntryId, items })
+      })
+      .catch((error) => console.error('Unable to load comments from Firebase.', error))
+    return () => {
+      cancelled = true
+    }
+  }, [activeEntryId, cloudUserId])
 
   const likeCount = 12
 
@@ -158,7 +210,11 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleCloseAttempt()
+      if (e.key !== 'Escape') return
+      const hasDraft = newCommentText.trim().length > 0
+        || Object.values(replyTexts).some((text) => text && text.trim().length > 0)
+      if (hasDraft) setShowUnsavedConfirm(true)
+      else onClose()
     }
     if (entry) {
       document.body.style.overflow = 'hidden'
@@ -168,12 +224,13 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
       document.body.style.overflow = ''
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [entry, newCommentText, replyTexts])
+  }, [entry, newCommentText, onClose, replyTexts])
 
   if (!entry) return null
 
-  const isPostOwner = !entry.authorHandle || entry.authorHandle.replace(/^@/, '') === CURRENT_USER
-  const displayAuthorHandle = (entry.authorHandle || CURRENT_USER).replace(/^@/, '')
+  const currentAuthorHandle = currentAuthor.replace(/^@/, '')
+  const isPostOwner = !entry.authorHandle || entry.authorHandle.replace(/^@/, '') === currentAuthorHandle
+  const displayAuthorHandle = (entry.authorHandle || currentAuthorHandle).replace(/^@/, '')
 
   const IconComponent = typeIconMap[entry.type] || BookOpen
 
@@ -186,15 +243,20 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     if (!newCommentText.trim()) return
     const item: CommentItem = {
       id: `c-${Date.now()}`,
-      author: CURRENT_USER,
-      initials: 'JB',
+      authorId: cloudUserId || undefined,
+      author: currentAuthor,
+      initials: currentInitials,
       text: newCommentText.trim(),
-      createdAt: 'Just now',
+      createdAt: new Date().toISOString(),
       likesCount: 0,
       isLiked: false,
       replies: [],
     }
     setComments((prev) => [...prev, item])
+    if (cloudUserId) {
+      void createPostComment(entry.id, cloudUserId, item)
+        .catch((error) => console.error('Unable to save comment to Firebase.', error))
+    }
     setNewCommentText('')
   }
 
@@ -203,21 +265,28 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     if (!text) return
     const reply: ReplyItem = {
       id: `r-${Date.now()}`,
-      author: CURRENT_USER,
-      initials: 'JB',
+      authorId: cloudUserId || undefined,
+      author: currentAuthor,
+      initials: currentInitials,
       text,
-      createdAt: 'Just now',
+      createdAt: new Date().toISOString(),
       likesCount: 0,
       isLiked: false,
     }
     setComments((prev) =>
       prev.map((c) => (c.id === commentId ? { ...c, replies: [...c.replies, reply] } : c))
     )
+    if (cloudUserId) {
+      void createPostReply(entry.id, commentId, cloudUserId, reply)
+        .catch((error) => console.error('Unable to save reply to Firebase.', error))
+    }
     setReplyTexts((prev) => ({ ...prev, [commentId]: '' }))
     setReplyingToId(null)
   }
 
   const toggleCommentLike = (commentId: string) => {
+    const comment = comments.find((item) => item.id === commentId)
+    const nextLiked = !comment?.isLiked
     setComments((prev) =>
       prev.map((c) => {
         if (c.id === commentId) {
@@ -231,9 +300,15 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
         return c
       })
     )
+    if (cloudUserId) {
+      void togglePostCommentLike(entry.id, commentId, cloudUserId, nextLiked)
+        .catch((error) => console.error('Unable to sync comment like to Firebase.', error))
+    }
   }
 
   const toggleReplyLike = (commentId: string, replyId: string) => {
+    const reply = comments.find((item) => item.id === commentId)?.replies.find((item) => item.id === replyId)
+    const nextLiked = !reply?.isLiked
     setComments((prev) =>
       prev.map((c) => {
         if (c.id === commentId) {
@@ -255,11 +330,19 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
         return c
       })
     )
+    if (cloudUserId) {
+      void togglePostReplyLike(entry.id, commentId, replyId, cloudUserId, nextLiked)
+        .catch((error) => console.error('Unable to sync reply like to Firebase.', error))
+    }
   }
 
   const handleDeleteComment = (commentId: string) => {
     if (window.confirm('Delete this comment?')) {
       setComments((prev) => prev.filter((c) => c.id !== commentId))
+      if (cloudUserId) {
+        void deletePostComment(entry.id, commentId, cloudUserId)
+          .catch((error) => console.error('Unable to delete comment from Firebase.', error))
+      }
     }
   }
 
@@ -272,6 +355,10 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
             : c
         )
       )
+      if (cloudUserId) {
+        void deletePostReply(entry.id, commentId, replyId, cloudUserId)
+          .catch((error) => console.error('Unable to delete reply from Firebase.', error))
+      }
     }
   }
 
@@ -460,7 +547,9 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
 
             <div className="overlay-comments-list">
               {visibleComments.map((c) => {
-                const canDeleteC = isPostOwner || c.author === CURRENT_USER
+                const canDeleteC = cloudUserId
+                  ? c.authorId === cloudUserId
+                  : isPostOwner || c.author === currentAuthor
                 const maxReplies = visibleRepliesCount[c.id] || 3
                 const visibleReplies = c.replies.slice(0, maxReplies)
 
@@ -470,7 +559,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                     <div className="overlay-comment-body">
                       <div className="overlay-comment-meta">
                         <span className="overlay-comment-author">{c.author}</span>
-                        <span className="overlay-comment-time">{c.createdAt}</span>
+                        <span className="overlay-comment-time">{formatCommentTimestamp(c.createdAt)}</span>
                       </div>
                       <p className="overlay-comment-text">{c.text}</p>
 
@@ -561,14 +650,16 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                       {c.replies.length > 0 && (
                         <div className="overlay-replies-list">
                           {visibleReplies.map((r) => {
-                            const canDeleteR = isPostOwner || r.author === CURRENT_USER
+                            const canDeleteR = cloudUserId
+                              ? r.authorId === cloudUserId
+                              : isPostOwner || r.author === currentAuthor
                             return (
                               <div key={r.id} className="overlay-reply-item">
                                 <div className="overlay-reply-avatar-sm">{r.initials}</div>
                                 <div className="overlay-reply-body">
                                   <div className="overlay-comment-meta">
                                     <span className="overlay-comment-author">{r.author}</span>
-                                    <span className="overlay-comment-time">{r.createdAt}</span>
+                                    <span className="overlay-comment-time">{formatCommentTimestamp(r.createdAt)}</span>
                                   </div>
                                   <p className="overlay-comment-text">{r.text}</p>
                                   <div className="comment-actions-bar">

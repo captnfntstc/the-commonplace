@@ -1,6 +1,8 @@
 import { handleFanartApiRequest } from './fanart.mjs'
 import { handleIgdbApiRequest } from './igdb.mjs'
 import { handleLastFmApiRequest } from './lastfm.mjs'
+import { handleIdentityApiRequest } from './identities.mjs'
+import { handleOpenLibraryApiRequest } from './openlibrary.mjs'
 
 export function createIgdbDevPlugin(env) {
   return {
@@ -10,9 +12,15 @@ export function createIgdbDevPlugin(env) {
         const isIgdbRequest = request.url?.startsWith('/api/igdb/')
         const isFanartRequest = request.url?.startsWith('/api/fanart/')
         const isLastFmRequest = request.url?.startsWith('/api/lastfm/')
-        if (request.method !== 'GET' || (!isIgdbRequest && !isFanartRequest && !isLastFmRequest)) return next()
+        const isIdentityRequest = request.url?.startsWith('/api/identities/')
+        const isOpenLibraryRequest = request.url?.startsWith('/api/openlibrary/')
+        if (request.method !== 'GET' || (!isIgdbRequest && !isFanartRequest && !isLastFmRequest && !isIdentityRequest && !isOpenLibraryRequest)) return next()
         try {
-          const payload = isFanartRequest
+          const payload = isOpenLibraryRequest
+            ? await handleOpenLibraryApiRequest(request.url)
+            : isIdentityRequest
+            ? await handleIdentityApiRequest(request.url, env)
+            : isFanartRequest
             ? await handleFanartApiRequest(request.url, env)
             : isLastFmRequest
               ? await handleLastFmApiRequest(request.url, env)

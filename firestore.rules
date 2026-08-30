@@ -1,0 +1,183 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function canReadProfileContent(userId) {
+      return isOwner(userId)
+        || get(/databases/$(database)/documents/users/$(userId)).data.isPrivate != true
+        || (signedIn()
+          && exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + userId)));
+    }
+
+    function canReadPost(postId) {
+      return canReadProfileContent(
+        get(/databases/$(database)/documents/posts/$(postId)).data.ownerId
+      );
+    }
+
+    function canCommentOnPost(postId) {
+      let post = get(/databases/$(database)/documents/posts/$(postId));
+      return canReadProfileContent(post.data.ownerId)
+        && post.data.commentsDisabled != true
+        && get(/databases/$(database)/documents/users/$(post.data.ownerId)).data.allowComments != false;
+    }
+
+    function isPostOwner(postId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/posts/$(postId)).data.ownerId == request.auth.uid;
+    }
+
+    match /handles/{handle} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.handle == handle;
+      allow update: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.handle == handle;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if true;
+      allow create, update, delete: if isOwner(userId);
+
+      match /private/{document=**} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /media/{mediaId} {
+        allow read: if true;
+        allow create, update: if isOwner(userId)
+          && request.resource.data.ownerId == userId
+          && request.resource.data.kind in ['avatar', 'cover', 'collection-cover']
+          && request.resource.data.dataUrl is string
+          && request.resource.data.dataUrl.size() <= 700000;
+        allow delete: if isOwner(userId);
+      }
+
+      match /entries/{entryId} {
+        allow read: if canReadProfileContent(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.ownerId == userId;
+        allow delete: if isOwner(userId);
+      }
+
+      match /collections/{collectionId} {
+        allow read: if canReadProfileContent(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.ownerId == userId;
+        allow delete: if isOwner(userId);
+      }
+
+      match /saved-collections/{collectionId} {
+        allow read: if isOwner(userId)
+          || (canReadProfileContent(userId)
+            && get(/databases/$(database)/documents/users/$(userId)).data.showSavedActivity == true);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.ownerId == userId;
+        allow delete: if isOwner(userId);
+      }
+
+      match /activity/saved {
+        allow read: if isOwner(userId)
+          || (canReadProfileContent(userId)
+            && get(/databases/$(database)/documents/users/$(userId)).data.showSavedActivity == true);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.ownerId == userId;
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    match /follows/{followId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.followerId == request.auth.uid
+        && followId == request.auth.uid + '_' + request.resource.data.followingId
+        && (get(/databases/$(database)/documents/users/$(request.resource.data.followingId)).data.isPrivate != true
+          || get(/databases/$(database)/documents/follow-requests/$(followId)).data.status == 'accepted');
+      allow delete: if signedIn() && resource.data.followerId == request.auth.uid;
+      allow update: if false;
+    }
+
+    match /follow-requests/{requestId} {
+      allow read: if signedIn()
+        && (resource.data.requesterId == request.auth.uid
+          || resource.data.targetId == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.requesterId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && requestId == request.auth.uid + '_' + request.resource.data.targetId;
+      allow update: if signedIn()
+        && resource.data.targetId == request.auth.uid
+        && request.resource.data.requesterId == resource.data.requesterId
+        && request.resource.data.targetId == resource.data.targetId
+        && request.resource.data.status in ['accepted', 'rejected'];
+      allow delete: if signedIn()
+        && (resource.data.requesterId == request.auth.uid
+          || resource.data.targetId == request.auth.uid);
+    }
+
+    match /posts/{postId} {
+      // The index contains only ownership metadata; content remains under users/{uid}/entries.
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update: if signedIn()
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == request.auth.uid;
+      allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
+
+      match /comments/{commentId} {
+        allow read: if signedIn() && canReadPost(postId);
+        allow create: if signedIn()
+          && request.resource.data.authorId == request.auth.uid
+          && canCommentOnPost(postId);
+        allow update: if signedIn() && resource.data.authorId == request.auth.uid;
+        allow delete: if signedIn()
+          && (resource.data.authorId == request.auth.uid || isPostOwner(postId));
+
+        match /likes/{userId} {
+          allow read: if signedIn() && canReadPost(postId);
+          allow create, update: if isOwner(userId)
+            && canReadPost(postId)
+            && request.resource.data.userId == userId;
+          allow delete: if isOwner(userId)
+            || isPostOwner(postId)
+            || get(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)).data.authorId == request.auth.uid;
+        }
+
+        match /replies/{replyId} {
+          allow read: if signedIn() && canReadPost(postId);
+          allow create: if signedIn()
+            && canCommentOnPost(postId)
+            && request.resource.data.authorId == request.auth.uid;
+          allow update: if signedIn() && resource.data.authorId == request.auth.uid;
+          allow delete: if signedIn()
+            && (resource.data.authorId == request.auth.uid
+              || isPostOwner(postId)
+              || get(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)).data.authorId == request.auth.uid);
+
+          match /likes/{userId} {
+            allow read: if signedIn() && canReadPost(postId);
+            allow create, update: if isOwner(userId)
+              && canReadPost(postId)
+              && request.resource.data.userId == userId;
+            allow delete: if isOwner(userId)
+              || isPostOwner(postId)
+              || get(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)/replies/$(replyId)).data.authorId == request.auth.uid
+              || get(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)).data.authorId == request.auth.uid;
+          }
+        }
+      }
+    }
+  }
+}

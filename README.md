@@ -1,4 +1,35 @@
-# React + TypeScript + Vite
+# The Commonplace
+
+A React, TypeScript, and Vite application for reviews, catalogs, and media collections.
+
+## Firebase data setup
+
+Account data and compressed profile/collection images are persisted in Cloud Firestore. Firebase Storage is not used, so the app can run on the no-cost Spark plan. Copy `.env.example` to `.env.local`, fill in the Firebase web-app values, enable Email/Password Authentication, and create Firestore for the project.
+
+Deploy the included access rules before using a production project:
+
+```bash
+npx firebase-tools login
+npx firebase-tools use --add
+npx firebase-tools deploy --only firestore
+```
+
+See [docs/FIREBASE_DATA.md](docs/FIREBASE_DATA.md) for the schema, migration behavior, and rollout checklist.
+
+## Development
+
+```bash
+npm install
+npm run dev
+```
+
+## Build
+
+```bash
+npm run build
+```
+
+## Vite template notes
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

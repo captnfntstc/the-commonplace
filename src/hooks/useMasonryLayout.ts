@@ -4,10 +4,10 @@ const M_GAP = 20
 const M_PAD_X = 12
 const M_PAD_TOP = 20
 
-function getColumnCount(width: number): number {
+function getColumnCount(width: number, fourColumnBreakpoint: number): number {
   if (width < 640) return 1
   if (width < 960) return 2
-  if (width < 1280) return 3
+  if (width < fourColumnBreakpoint) return 3
   return 4
 }
 
@@ -36,7 +36,8 @@ export function useMasonryLayout(
   containerRef: React.RefObject<HTMLElement | null>,
   itemCount: number,
   expandedId?: string,
-  activeSignal?: any,
+  activeSignal?: unknown,
+  fourColumnBreakpoint = 1280,
 ): MasonryLayout {
   const [layout, setLayout] = useState<MasonryLayout>(null)
 
@@ -59,7 +60,7 @@ export function useMasonryLayout(
         const w = container.clientWidth
         if (w === 0) return
 
-        const numCols = getColumnCount(w)
+        const numCols = getColumnCount(w, fourColumnBreakpoint)
         const colWidth = (w - M_PAD_X * 2 - M_GAP * (numCols - 1)) / numCols
         const heights = Array<number>(numCols).fill(M_PAD_TOP)
         const positions = new Map<string, MasonryPos>()
@@ -106,8 +107,7 @@ export function useMasonryLayout(
       clearTimeout(t3)
       clearTimeout(t4)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerRef, itemCount, expandedId, activeSignal])
+  }, [containerRef, itemCount, expandedId, activeSignal, fourColumnBreakpoint])
 
   return layout
 }

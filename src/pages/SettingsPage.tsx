@@ -5,7 +5,6 @@ import {
   AlertCircle,
   Clock,
   ShieldCheck,
-  Trash2,
   Download,
   Lock,
 } from 'lucide-react'
@@ -22,8 +21,6 @@ import { SettingsSection } from '../components/Settings/SettingsSection'
 import { SettingsField } from '../components/Settings/SettingsField'
 import { SettingsToggle } from '../components/Settings/SettingsToggle'
 import type { UserProfileState } from '../types/userProfile'
-import { AvatarUploader } from '../components/Settings/AvatarUploader'
-import { CoverUploader } from '../components/Settings/CoverUploader'
 import { ApiUsageTracker } from '../components/DeveloperTools/ApiUsageTracker'
 import type { AppNotification } from '../types/notification'
 
@@ -103,9 +100,9 @@ const PROVIDERS: ProviderInfo[] = [
 
 interface SettingsPageProps {
   onBack: () => void
-  onClearAllData: () => void
+  showLocalNavigation?: boolean
   userProfile: UserProfileState
-  onSaveProfile: (updated: UserProfileState) => void
+  onSaveProfile: (updated: UserProfileState) => void | Promise<void>
   onAddNotification: (notification: AppNotification) => void
 }
 
@@ -114,7 +111,7 @@ const USERNAME_COOLDOWN_DAYS = 14
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
   onBack,
-  onClearAllData,
+  showLocalNavigation = true,
   userProfile,
   onSaveProfile,
   onAddNotification,
@@ -128,10 +125,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [handleInput, setHandleInput] = useState(userProfile.handle.replace(/^@/, ''))
   const [email, setEmail] = useState(userProfile.email)
   const [bio, setBio] = useState(userProfile.bio)
-  const [avatarUrl, setAvatarUrl] = useState(userProfile.avatarUrl)
-  const [coverUrl, setCoverUrl] = useState(userProfile.coverUrl)
   const [showFollowLists, setShowFollowLists] = useState(userProfile.showFollowLists ?? true)
   const [allowComments, setAllowComments] = useState(userProfile.allowComments ?? true)
+  const [privateProfile, setPrivateProfile] = useState(userProfile.isPrivate ?? false)
+  const [showSavedActivity, setShowSavedActivity] = useState(userProfile.showSavedActivity ?? false)
   const [savedNotice, setSavedNotice] = useState(false)
 
   // Activity Modals State
@@ -139,16 +136,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   // Sync form state if props update
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- The editable draft mirrors externally hydrated account data.
     setFirstName(userProfile.firstName)
     setLastName(userProfile.lastName)
     setShowFullName(userProfile.showFullName)
     setHandleInput(userProfile.handle.replace(/^@/, ''))
     setEmail(userProfile.email)
     setBio(userProfile.bio)
-    setAvatarUrl(userProfile.avatarUrl)
-    setCoverUrl(userProfile.coverUrl)
     setShowFollowLists(userProfile.showFollowLists ?? true)
     setAllowComments(userProfile.allowComments ?? true)
+    setPrivateProfile(userProfile.isPrivate ?? false)
+    setShowSavedActivity(userProfile.showSavedActivity ?? false)
   }, [userProfile])
 
   // Account Statuses Map (Google & GitHub connected by default)
@@ -207,7 +205,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   // Toggles state
   const [deepSearchIndexing, setDeepSearchIndexing] = useState(true)
   const [publicIndexing, setPublicIndexing] = useState(true)
-  const [privateProfile, setPrivateProfile] = useState(false)
 
   // Check if dirty changes exist
   const sanitizedHandle = handleInput.trim().toLowerCase().replace(/^@/, '')
@@ -218,16 +215,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     sanitizedHandle !== userProfile.handle.toLowerCase().replace(/^@/, '') ||
     email.trim() !== userProfile.email ||
     bio.trim() !== userProfile.bio ||
-    avatarUrl.trim() !== userProfile.avatarUrl ||
-    coverUrl.trim() !== userProfile.coverUrl ||
     showFollowLists !== (userProfile.showFollowLists ?? true) ||
-    allowComments !== (userProfile.allowComments ?? true)
+    allowComments !== (userProfile.allowComments ?? true) ||
+    privateProfile !== (userProfile.isPrivate ?? false) ||
+    showSavedActivity !== (userProfile.showSavedActivity ?? false)
 
   // 14-Day Cooldown Calculation
   const lastChangeMs = userProfile.lastUsernameChangeDate
     ? new Date(userProfile.lastUsernameChangeDate).getTime()
     : 0
-  const nowMs = Date.now()
+  const [nowMs] = useState(() => Date.now())
   const daysPassed = (nowMs - lastChangeMs) / (1000 * 60 * 60 * 24)
   const isUsernameCooldownActive = daysPassed < USERNAME_COOLDOWN_DAYS && lastChangeMs > 0
   const nextAvailableDate = new Date(lastChangeMs + USERNAME_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toLocaleDateString(
@@ -248,13 +245,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setHandleInput(userProfile.handle.replace(/^@/, ''))
     setEmail(userProfile.email)
     setBio(userProfile.bio)
-    setAvatarUrl(userProfile.avatarUrl)
-    setCoverUrl(userProfile.coverUrl)
     setShowFollowLists(userProfile.showFollowLists ?? true)
     setAllowComments(userProfile.allowComments ?? true)
+    setPrivateProfile(userProfile.isPrivate ?? false)
+    setShowSavedActivity(userProfile.showSavedActivity ?? false)
   }
 
-  const handleSave = (e?: React.FormEvent) => {
+  const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
 
     if (!isCurrentUsername && isTaken) {
@@ -276,16 +273,23 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       handle: sanitizedHandle || 'jimboii',
       email: email.trim() || 'jimboii@commonplace.app',
       bio: bio.trim(),
-      avatarUrl: avatarUrl.trim(),
-      coverUrl: coverUrl.trim(),
+      avatarUrl: userProfile.avatarUrl,
+      coverUrl: userProfile.coverUrl,
       lastUsernameChangeDate: usernameChanged ? new Date().toISOString() : userProfile.lastUsernameChangeDate,
       showFollowLists,
       allowComments,
+      isPrivate: privateProfile,
+      showSavedActivity,
     }
 
-    onSaveProfile(updated)
-    setSavedNotice(true)
-    setTimeout(() => setSavedNotice(false), 3000)
+    try {
+      await onSaveProfile(updated)
+      setSavedNotice(true)
+      setTimeout(() => setSavedNotice(false), 3000)
+    } catch (error) {
+      console.error('Unable to save profile settings.', error)
+      alert(error instanceof Error ? error.message : 'Settings could not be saved. Please try again.')
+    }
   }
 
   const computedDisplayName = showFullName ? `${firstName} ${lastName}`.trim() : firstName
@@ -293,7 +297,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   return (
     <div className="page-wrapper settings-desktop-wrapper">
       {/* Top Floating Circle Back Button */}
-      <button
+      {showLocalNavigation && <button
         type="button"
         className="profile-back-circle"
         onClick={onBack}
@@ -301,7 +305,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         aria-label="Back to Feed"
       >
         <ArrowLeft aria-hidden="true" />
-      </button>
+      </button>}
 
       <div className="settings-desktop-container">
         {/* Left Sticky Navigation Sidebar */}
@@ -322,24 +326,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <div className="settings-header-minimal">
                 <h1 className="settings-page-title">Profile Information</h1>
                 <p className="settings-page-desc">
-                  Manage your public profile identity, avatar, and social list preferences.
+                  Manage your public profile identity and social list preferences.
                 </p>
               </div>
-
-              <SettingsSection
-                title="Profile Picture & Cover"
-                description="Upload custom artwork or paste image links."
-              >
-                <div className="settings-block">
-                  <div className="uploader-sublabel">Avatar Photo</div>
-                  <AvatarUploader avatarUrl={avatarUrl} onChangeAvatar={setAvatarUrl} />
-                </div>
-
-                <div className="settings-block" style={{ marginTop: 32 }}>
-                  <div className="uploader-sublabel">Banner Artwork</div>
-                  <CoverUploader coverUrl={coverUrl} onChangeCover={setCoverUrl} />
-                </div>
-              </SettingsSection>
 
               <SettingsSection
                 title="Identity Details"
@@ -564,6 +553,18 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 />
               </SettingsSection>
 
+              <SettingsSection
+                title="Saved Activity"
+                description="Choose whether visitors can browse the things you have saved."
+              >
+                <SettingsToggle
+                  label="Show Saved Catalog & Collections"
+                  description="Display a Saved tab on your public profile. This is hidden by default and does not affect what you can see yourself."
+                  checked={showSavedActivity}
+                  onChange={setShowSavedActivity}
+                />
+              </SettingsSection>
+
               <SettingsSection title="Search Engine Indexing">
                 <SettingsToggle
                   label="Allow Search Engine Indexing"
@@ -682,7 +683,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="settings-page-content">
               <div className="settings-header-minimal">
                 <h1 className="settings-page-title">Data & Storage</h1>
-                <p className="settings-page-desc">Export backups or clear local storage data.</p>
+                <p className="settings-page-desc">Export backups of your library archive.</p>
               </div>
 
               <SettingsSection title="Export Library Archive">
@@ -694,28 +695,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   <Download aria-hidden="true" />
                   <span>Download JSON Archive</span>
                 </button>
-              </SettingsSection>
-
-              <SettingsSection title="Catalog Reset" isDanger>
-                <div className="settings-action-row">
-                  <div className="action-info">
-                    <span className="action-title">Reset Local Storage Catalog</span>
-                    <span className="action-sub">Permanently delete all saved entries and reset local storage.</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="action-btn danger"
-                    onClick={() => {
-                      if (window.confirm('Are you sure you want to clear all cataloged entries?')) {
-                        onClearAllData()
-                        onBack()
-                      }
-                    }}
-                  >
-                    <Trash2 aria-hidden="true" />
-                    Clear All Data
-                  </button>
-                </div>
               </SettingsSection>
             </div>
           )}

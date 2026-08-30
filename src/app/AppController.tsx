@@ -10,6 +10,8 @@ import {
   LogOut,
   Wrench,
   X,
+  CircleUserRound,
+  Home,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -27,29 +29,45 @@ import { CardOverlayModal } from '../components/CommonplaceCard/CardOverlayModal
 import { CardSkeletonGrid } from '../components/CommonplaceCard/CardSkeleton'
 import { UserProfilePage } from '../pages/UserProfilePage'
 import { SettingsPage } from '../pages/SettingsPage'
+import { LoginPage } from '../pages/LoginPage'
+import { RegisterPage } from '../pages/RegisterPage'
+import { useAuth } from '../context/AuthContext'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { NotificationBell } from '../components/Notifications/NotificationPanel'
 import { MOCK_ENTITY_PROFILES } from '../data/entityProfiles'
 import { UniversalMediaProfilePage } from '../pages/UniversalMediaProfilePage'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../data/universalMediaEntities'
-import type { HumanProfileMetadata, MediaEntityType, UniversalMediaEntity } from '../types/mediaEntity'
+import type { MediaEntityType, UniversalMediaEntity } from '../types/mediaEntity'
 import { resolveArtworkUrl } from '../utils/artwork'
 import { ApiUsageTracker } from '../components/DeveloperTools/ApiUsageTracker'
-import { cacheProfileEntity, getCachedProfileEntity } from '../services/profileCache'
+import { CollectionPickerModal } from '../components/Collections/CollectionPickerModal'
+import {
+  cacheIdentityAlias,
+  cacheProfileEntity,
+  getCachedProfileEntity,
+  migrateUnsafeIdentityCaches,
+} from '../services/profileCache'
+import { identityToUniversalEntity, searchIdentities } from '../services/identity'
 import { MOCK_EXTERNAL_PROFILES } from '../data/externalProfiles'
 import type { UserProfileState } from '../types/userProfile'
+import type { MetadataChip } from '../types/mediaEntity'
+import {
+  loadProfileCollections,
+  loadSavedProfileCollections,
+  saveProfileCollections,
+  saveSavedProfileCollections,
+  type ProfileCollectionItem,
+} from '../features/collections/profileCollections'
 import type { AppNotification } from '../types/notification'
 import { EntryComposer } from '../features/entries/composer/EntryComposer'
 import {
   dedupeSearchEntities,
-  creatorEntityForMetadataType,
   getSearchEntityScore,
-  isCollaborationCredit,
   isYearOnlyMetadataMatch,
   metadataResultToSearchEntity,
   normalizeSearchText,
+  providerScopedMusicIdentityFromMetadataResult,
   searchEntityMatchesQuery,
-  shouldSuppressSynthesizedArtist,
   universalEntityToSearchEntity,
   type HeaderSearchEntity,
 } from '../features/search/entitySearch'
@@ -63,7 +81,6 @@ import {
   routeSegment,
 } from '../features/entities/routing'
 import {
-  ENTRY_STORAGE_KEY,
   emptyDraft,
   entryTypes,
   getDefaultCoverTone,
@@ -75,10 +92,84 @@ import {
   type EntryDraft,
   type EntryType,
 } from '../features/entries/model'
+import {
+  canUseCloudData,
+  loadPublicUserByHandle,
+  loadOrMigrateUserCollections,
+  loadOrMigrateUserData,
+  saveFollowRequest,
+  saveFollowRelationship,
+  savePostCommenting,
+  saveUserCloudState,
+  saveUserEntries,
+  saveUserProfile,
+  uploadUserImage,
+  type PublicUserData,
+  type UserCloudSnapshot,
+} from '../services/cloudData'
 
 const SEARCH_INITIAL_RESULT_LIMIT = 6
 const SEARCH_RESULTS_PER_PAGE = 6
 const SEARCH_MAX_RESULT_LIMIT = 40
+const PROFILE_STORAGE_KEY = 'the-commonplace.user-profile.v1'
+
+const DEFAULT_USER_PROFILE: UserProfileState = {
+  firstName: 'Jimmy',
+  lastName: 'Boy',
+  showFullName: true,
+  handle: 'jimboii',
+  email: 'jimboii@commonplace.app',
+  bio: 'Collector of timeless passages, album impressions, cinematic notes, and personal reflections in one quiet place.',
+  avatarUrl: '',
+  coverUrl: 'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?q=80&w=1200&auto=format&fit=crop',
+  lastUsernameChangeDate: '2026-07-01T00:00:00.000Z',
+  showFollowLists: true,
+  allowComments: true,
+  showSavedActivity: false,
+}
+
+function loadLocalUserProfile() {
+  try {
+    const stored = localStorage.getItem(PROFILE_STORAGE_KEY)
+    return stored ? { ...DEFAULT_USER_PROFILE, ...JSON.parse(stored) } as UserProfileState : DEFAULT_USER_PROFILE
+  } catch {
+    return DEFAULT_USER_PROFILE
+  }
+}
+
+function collectionItemFromEntity(
+  entity: UniversalMediaEntity,
+  artworkUrl: string,
+  metadataChips: MetadataChip[],
+): ProfileCollectionItem | null {
+  const typeMap: Partial<Record<MediaEntityType, EntryType>> = {
+    album: 'album',
+    song: 'song',
+    book: 'book',
+    movie: 'film',
+    tv: 'tv',
+    game: 'game',
+  }
+  const type = typeMap[entity.type]
+  if (!type) return null
+  const creator = metadataChips.find((chip) =>
+    ['artist', 'author', 'director', 'creator', 'studio', 'developer'].includes(chip.label.toLowerCase()),
+  )?.value || entity.categoryLabel
+  const year = metadataChips.find((chip) => /year|release date/i.test(chip.label))?.value
+  const genre = metadataChips.find((chip) => /genre/i.test(chip.label))?.value
+  const providerId = entity.providerId || entity.id
+  return {
+    id: `media:${type}:${providerId}`,
+    type,
+    title: entity.name,
+    creator,
+    provider: 'entity-profile',
+    providerId,
+    coverUrl: artworkUrl,
+    year,
+    genre,
+  }
+}
 
 export default function AppController() {
   const location = useLocation()
@@ -88,12 +179,18 @@ export default function AppController() {
   const [typeFilter, setTypeFilter] = useState<EntryType | 'all'>('all')
   const { expandedCardId, setExpandedCardId, toggleCardExpanded } = useCardExpansion()
 
-  const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings' | 'entity'>('feed')
+  const { logout, currentUser, isDemoMode } = useAuth()
+  const cloudUserId = !isDemoMode && currentUser && !currentUser.uid.startsWith('demo-')
+    ? currentUser.uid
+    : null
+  const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings' | 'entity' | 'login' | 'register'>('feed')
   const [selectedProfileHandle, setSelectedProfileHandle] = useState<string | null>(null)
+  const [selectedProfileCollectionId, setSelectedProfileCollectionId] = useState<string | null>(null)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
   const [selectedEntityType, setSelectedEntityType] = useState<MediaEntityType | null>(null)
   const [searchTab, setSearchTab] = useState<'media' | 'users'>('media')
   const [headerMediaResults, setHeaderMediaResults] = useState<MetadataResult[]>([])
+  const [headerIdentityResults, setHeaderIdentityResults] = useState<UniversalMediaEntity[]>([])
   const [headerMediaSearchLoading, setHeaderMediaSearchLoading] = useState(false)
   const headerAlbumResults = headerMediaResults
   const headerAlbumSearchLoading = headerMediaSearchLoading
@@ -101,6 +198,10 @@ export default function AppController() {
   void headerAlbumSearchLoading
   const [profileCategoryFilter, setProfileCategoryFilter] = useState<string>('all')
   const searchEntityCacheRef = useRef(new Map<string, UniversalMediaEntity>())
+  // Provider-scoped source ID -> verified canonical ID. Names are never aliases.
+  const humanCanonicalMapRef = useRef(new Map<string, string>())
+  // Set of legacy portrait entity types that should all collapse to 'human'.
+  const LEGACY_HUMAN_TYPES = new Set<MediaEntityType>(['artist', 'actor', 'director', 'creator', 'author'])
 
   const getPathForEntity = (entityId: string, entityType?: MediaEntityType) => {
     const resolvedType =
@@ -126,6 +227,60 @@ export default function AppController() {
     setActiveView('entity')
     setSearchOpen(false)
     navigate(getEntityRoutePath(entityId, resolvedType))
+  }
+
+  const handleOpenCollectionMedia = (entry: Entry) => {
+    const entityTypeByEntryType: Record<EntryType, MediaEntityType> = {
+      album: 'album',
+      book: 'book',
+      film: 'movie',
+      game: 'game',
+      song: 'song',
+      tv: 'tv',
+    }
+    const categoryLabelByEntryType: Record<EntryType, string> = {
+      album: 'Album',
+      book: 'Book',
+      film: 'Film',
+      game: 'Game',
+      song: 'Song',
+      tv: 'Show',
+    }
+    const creatorLabelByEntryType: Record<EntryType, string> = {
+      album: 'Artist',
+      book: 'Author',
+      film: 'Director',
+      game: 'Studio',
+      song: 'Artist',
+      tv: 'Creator',
+    }
+    const entityType = entityTypeByEntryType[entry.type]
+    const entityId = `collection:${entry.type}:${entry.providerId || entry.id}`
+    const entity: UniversalMediaEntity = {
+      id: entityId,
+      name: entry.title,
+      type: entityType,
+      categoryLabel: categoryLabelByEntryType[entry.type],
+      providerId: entry.providerId,
+      artworkUrl: resolveArtworkUrl(entry.coverUrl || '', entry.title, entry.type),
+      description: entry.summary || `Catalog profile for ${entry.title}${entry.creator ? ` by ${entry.creator}` : ''}.`,
+      metadataChips: [
+        { label: creatorLabelByEntryType[entry.type], value: entry.creator || 'Unknown' },
+        { label: 'Category', value: categoryLabelByEntryType[entry.type] },
+        ...(entry.genre ? [{ label: 'Genre', value: entry.genre }] : []),
+        ...(entry.year ? [{ label: 'Release Year', value: entry.year }] : []),
+      ],
+      communityRating: {
+        average: entry.rating,
+        count: entry.rating > 0 ? 1 : 0,
+        distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+      },
+    }
+
+    searchEntityCacheRef.current.set(entityId, entity)
+    setPersistedEntityCache((current) => ({ ...current, [entityId]: entity }))
+    void cacheProfileEntity(entity)
+    handleOpenEntity(entityId, entityType)
   }
 
   const handleOpenSearchEntity = (entity: HeaderSearchEntity) => {
@@ -154,12 +309,31 @@ export default function AppController() {
       setPersistedEntityCache((current) => ({ ...current, [entityId]: resolvedEntity }))
       void cacheProfileEntity(resolvedEntity)
     }
+
+    const incomingType = resolvedEntity?.type ?? entityType
+    if (incomingType && LEGACY_HUMAN_TYPES.has(incomingType)) {
+      const canonicalId = humanCanonicalMapRef.current.get(entityId)
+      if (canonicalId && canonicalId !== entityId) {
+        const cachedEntity = searchEntityCacheRef.current.get(canonicalId)
+        if (!cachedEntity && resolvedEntity) {
+          const promoted: UniversalMediaEntity = { ...resolvedEntity, id: canonicalId, type: 'human' }
+          searchEntityCacheRef.current.set(canonicalId, promoted)
+          setPersistedEntityCache((current) => ({ ...current, [canonicalId]: promoted }))
+        }
+        setSelectedEntityId(canonicalId)
+        setSelectedEntityType('human')
+        setActiveView('entity')
+        navigate(getEntityRoutePath(canonicalId, 'human'))
+        return
+      }
+    }
+
     const resolvedType =
-      resolvedEntity?.type ||
-      entityType ||
-      searchEntityCacheRef.current.get(entityId)?.type ||
-      UNIVERSAL_MEDIA_ENTITIES[entityId]?.type ||
-      (MOCK_ENTITY_PROFILES[entityId]?.type as MediaEntityType | undefined) ||
+      resolvedEntity?.type ??
+      entityType ??
+      searchEntityCacheRef.current.get(entityId)?.type ??
+      UNIVERSAL_MEDIA_ENTITIES[entityId]?.type ??
+      (MOCK_ENTITY_PROFILES[entityId]?.type as MediaEntityType | undefined) ??
       inferEntityTypeFromId(entityId)
 
     setSelectedEntityId(entityId)
@@ -168,25 +342,32 @@ export default function AppController() {
     navigate(getPathForEntity(entityId, resolvedType))
   }
 
-  const handleCanonicalHumanResolved = (
-    sourceEntity: UniversalMediaEntity,
-    humanProfile: HumanProfileMetadata,
+  const handleCanonicalMediaResolved = (
+    sourceId: string,
+    canonicalId: string,
+    canonicalEntity: UniversalMediaEntity,
   ) => {
-    const canonicalId = humanProfile.canonicalId
-    if (!canonicalId || canonicalId === sourceEntity.id) return
-    const canonicalEntity: UniversalMediaEntity = {
-      ...sourceEntity,
-      id: canonicalId,
-      type: 'human',
-      categoryLabel: humanProfile.context.charAt(0).toUpperCase() + humanProfile.context.slice(1),
-      humanProfile,
-    }
+    // Cache under both IDs — future navigations from either path land on the same profile.
     searchEntityCacheRef.current.set(canonicalId, canonicalEntity)
-    setPersistedEntityCache((current) => ({ ...current, [canonicalId]: canonicalEntity }))
+    searchEntityCacheRef.current.set(sourceId, canonicalEntity)
+    setPersistedEntityCache((current) => ({
+      ...current,
+      [canonicalId]: canonicalEntity,
+      [sourceId]: canonicalEntity,
+    }))
     void cacheProfileEntity(canonicalEntity)
+    const isProviderScopedIdentity = /^(?:human|music-group):(tmdb|musicbrainz|openlibrary|itunes):/i.test(sourceId)
+      || /^itunes:artist:\d+$/i.test(sourceId)
+      || /^musicbrainz:artist:[0-9a-f-]{36}$/i.test(sourceId)
+    if (canonicalEntity.type === 'human' || canonicalEntity.type === 'music_group') {
+      humanCanonicalMapRef.current.set(sourceId, canonicalId)
+    }
+    if ((canonicalEntity.type === 'human' || canonicalEntity.type === 'music_group') && isProviderScopedIdentity) {
+      void cacheIdentityAlias(sourceId, canonicalId)
+    }
     setSelectedEntityId(canonicalId)
-    setSelectedEntityType('human')
-    navigate(getEntityRoutePath(canonicalId, 'human'), { replace: true })
+    setSelectedEntityType(canonicalEntity.type)
+    navigate(getEntityRoutePath(canonicalId, canonicalEntity.type), { replace: true })
   }
 
   const handleHome = () => {
@@ -220,19 +401,44 @@ export default function AppController() {
     navigate('/settings')
   }
 
-  const [userProfile, setUserProfile] = useState<UserProfileState>({
-    firstName: 'Jimmy',
-    lastName: 'Boy',
-    showFullName: true,
-    handle: 'jimboii',
-    email: 'jimboii@commonplace.app',
-    bio: 'Collector of timeless passages, album impressions, cinematic notes, and personal reflections in one quiet place.',
-    avatarUrl: '',
-    coverUrl: 'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?q=80&w=1200&auto=format&fit=crop',
-    lastUsernameChangeDate: '2026-07-01T00:00:00.000Z',
-    showFollowLists: true,
-    allowComments: true,
-  })
+  const [userProfile, setUserProfile] = useState<UserProfileState>(loadLocalUserProfile)
+  const [cloudExternalProfile, setCloudExternalProfile] = useState<{
+    handle: string
+    data: PublicUserData
+  } | null>(null)
+
+  useEffect(() => {
+    const handle = selectedProfileHandle
+    if (!handle || handle === userProfile.handle) {
+      setCloudExternalProfile(null)
+      return
+    }
+    let cancelled = false
+    void loadPublicUserByHandle(handle)
+      .then((data) => {
+        if (!cancelled) setCloudExternalProfile(data ? { handle, data } : null)
+      })
+      .catch((error) => {
+        if (!cancelled) setCloudExternalProfile(null)
+        console.error('Unable to load the public Firebase profile.', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedProfileHandle, userProfile.handle])
+
+  const persistUserProfile = async (updated: UserProfileState) => {
+    let nextProfile = updated
+    if (cloudUserId && canUseCloudData(cloudUserId)) {
+      const [avatarUrl, coverUrl] = await Promise.all([
+        uploadUserImage(cloudUserId, 'avatar', updated.avatarUrl),
+        uploadUserImage(cloudUserId, 'cover', updated.coverUrl),
+      ])
+      nextProfile = await saveUserProfile(cloudUserId, { ...updated, avatarUrl, coverUrl })
+    }
+    setUserProfile(nextProfile)
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(nextProfile))
+  }
 
   const userProfileName = userProfile.showFullName
     ? `${userProfile.firstName} ${userProfile.lastName}`.trim()
@@ -241,6 +447,7 @@ export default function AppController() {
   const handleOpenUserProfile = (handle?: string) => {
     const cleanHandle = (handle || userProfile.handle).replace(/^@/, '')
     setSelectedProfileHandle(cleanHandle === userProfile.handle ? null : cleanHandle)
+    setSelectedProfileCollectionId(null)
     setActiveView('profile')
     setSearchOpen(false)
     navigate(`/users/${routeSegment(cleanHandle)}`)
@@ -273,6 +480,7 @@ export default function AppController() {
     setLikedEntryIds((prev) => {
       const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
       localStorage.setItem('the-commonplace.likes', JSON.stringify(next))
+      persistCloudState({ likedEntryIds: next })
       return next
     })
   }
@@ -281,6 +489,7 @@ export default function AppController() {
     setSavedEntryIds((prev) => {
       const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
       localStorage.setItem('the-commonplace.saves', JSON.stringify(next))
+      persistCloudState({ savedEntryIds: next })
       return next
     })
   }
@@ -289,6 +498,12 @@ export default function AppController() {
     setDisabledCommentEntryIds((prev) => {
       const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
       localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(next))
+      persistCloudState({ disabledCommentEntryIds: next })
+      if (cloudUserId) {
+        void savePostCommenting(cloudUserId, id, next.includes(id)).catch((error) => {
+          console.error('Unable to sync comment settings to Firebase.', error)
+        })
+      }
       return next
     })
   }
@@ -302,10 +517,15 @@ export default function AppController() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [isLoggedOut, setIsLoggedOut] = useState(false)
   const [quickDevToolsOpen, setQuickDevToolsOpen] = useState(false)
+  const [collectionTarget, setCollectionTarget] = useState<ProfileCollectionItem | null>(null)
   const gridRef = useRef<HTMLElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const [searchLimit, setSearchLimit] = useState(SEARCH_INITIAL_RESULT_LIMIT)
   const [persistedEntityCache, setPersistedEntityCache] = useState<Record<string, UniversalMediaEntity>>({})
+
+  useEffect(() => {
+    void migrateUnsafeIdentityCaches()
+  }, [])
 
   useEffect(() => {
     if (!selectedEntityId || UNIVERSAL_MEDIA_ENTITIES[selectedEntityId] || searchEntityCacheRef.current.has(selectedEntityId)) {
@@ -316,13 +536,22 @@ export default function AppController() {
     getCachedProfileEntity(selectedEntityId).then((cachedEntity) => {
       if (cancelled || !cachedEntity) return
       searchEntityCacheRef.current.set(cachedEntity.id, cachedEntity)
-      setPersistedEntityCache((current) => ({ ...current, [cachedEntity.id]: cachedEntity }))
+      searchEntityCacheRef.current.set(selectedEntityId, cachedEntity)
+      setPersistedEntityCache((current) => ({ ...current, [cachedEntity.id]: cachedEntity, [selectedEntityId]: cachedEntity }))
+      if (
+        cachedEntity.id !== selectedEntityId
+        && (cachedEntity.type === 'human' || cachedEntity.type === 'music_group')
+      ) {
+        setSelectedEntityId(cachedEntity.id)
+        setSelectedEntityType(cachedEntity.type)
+        navigate(getEntityRoutePath(cachedEntity.id, cachedEntity.type), { replace: true })
+      }
     }).catch(() => {})
 
     return () => {
       cancelled = true
     }
-  }, [selectedEntityId])
+  }, [navigate, selectedEntityId])
 
   useEffect(() => {
     const segments = location.pathname
@@ -330,7 +559,7 @@ export default function AppController() {
       .filter(Boolean)
       .map(decodeRouteSegment)
 
-    const [section, rawId] = segments
+    const [section, rawId, nestedSection, nestedId] = segments
 
     if (!section) {
       setActiveView('feed')
@@ -342,6 +571,22 @@ export default function AppController() {
 
     if (section === 'profile') {
       navigate(`/users/${routeSegment(userProfile.handle)}`, { replace: true })
+      return
+    }
+
+    if (section === 'login') {
+      setActiveView('login')
+      setSelectedProfileHandle(null)
+      setSelectedEntityId(null)
+      setSelectedEntityType(null)
+      return
+    }
+
+    if (section === 'register') {
+      setActiveView('register')
+      setSelectedProfileHandle(null)
+      setSelectedEntityId(null)
+      setSelectedEntityType(null)
       return
     }
 
@@ -357,6 +602,7 @@ export default function AppController() {
       const cleanHandle = rawId.replace(/^@/, '')
       setActiveView('profile')
       setSelectedProfileHandle(cleanHandle === userProfile.handle ? null : cleanHandle)
+      setSelectedProfileCollectionId(nestedSection === 'collections' && nestedId ? nestedId : null)
       setSelectedEntityId(null)
       setSelectedEntityType(null)
       return
@@ -385,9 +631,7 @@ export default function AppController() {
         const safeArtworkUrl = resolveArtworkUrl(entity.artworkUrl, entity.name, entity.categoryLabel)
         entityImageCacheMap.set(entity.id, safeArtworkUrl)
         if (['artist', 'author', 'director', 'creator', 'actor'].includes(entity.type)) {
-          entityImageCacheMap.set(entity.name.toLowerCase(), safeArtworkUrl)
           entityImageCacheMap.set(`${entity.type}:${entity.id}`, safeArtworkUrl)
-          entityImageCacheMap.set(`${entity.type}:${entity.name.toLowerCase()}`, safeArtworkUrl)
         }
       }
       if (entity.secondaryCollection?.items) {
@@ -404,9 +648,7 @@ export default function AppController() {
             const safeArtworkUrl = resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle)
             entityImageCacheMap.set(item.id, safeArtworkUrl)
             if (['artist', 'author', 'director', 'creator', 'actor'].includes(item.type || '')) {
-              entityImageCacheMap.set(item.title.toLowerCase(), safeArtworkUrl)
               entityImageCacheMap.set(`${item.type}:${item.id}`, safeArtworkUrl)
-              entityImageCacheMap.set(`${item.type}:${item.title.toLowerCase()}`, safeArtworkUrl)
             }
           }
         })
@@ -424,6 +666,7 @@ export default function AppController() {
     const normalizedQuery = query.trim()
     if (!searchOpen || searchTab !== 'media' || normalizedQuery.length < 2) {
       setHeaderMediaResults([])
+      setHeaderIdentityResults([])
       setHeaderMediaSearchLoading(false)
       return
     }
@@ -433,8 +676,23 @@ export default function AppController() {
       const typesToSearch = entryTypes.map((entryType) => entryType.id)
       setHeaderMediaSearchLoading(true)
 
-      let pendingSearches = typesToSearch.length
+      let pendingSearches = typesToSearch.length + 1
       setHeaderMediaResults([])
+      setHeaderIdentityResults([])
+
+      searchIdentities(normalizedQuery, abortController.signal, 10)
+        .then((result) => {
+          if (!abortController.signal.aborted) {
+            setHeaderIdentityResults(result.candidates.map(identityToUniversalEntity))
+          }
+        })
+        .catch((err) => {
+          if ((err as Error)?.name === 'AbortError') return
+        })
+        .finally(() => {
+          pendingSearches -= 1
+          if (pendingSearches === 0 && !abortController.signal.aborted) setHeaderMediaSearchLoading(false)
+        })
 
       typesToSearch.forEach((type) => {
         searchMetadata(type, normalizedQuery, abortController.signal)
@@ -518,78 +776,20 @@ export default function AppController() {
       })
       .filter((entity) => searchEntityMatchesQuery(entity, normalizedQuery))
 
-    const synthesizedPeopleResults: HeaderSearchEntity[] = []
-    const knownArtistNames = new Set(
-      localProfileResults
-        .filter((entity) => entity.type === 'artist')
-        .map((entity) => normalizeSearchText(entity.title)),
-    )
-    const creatorTypesByName = new Map<string, Set<MediaEntityType>>()
-    const creatorEvidenceCountByName = new Map<string, Map<MediaEntityType, number>>()
-    const creatorEvidenceSourcesByName = new Map<string, Map<MediaEntityType, Set<string>>>()
-    headerMediaResults.forEach((result) => {
-      if (!result.creator) return
-      const creatorNorm = normalizeSearchText(result.creator)
-      if (!creatorNorm) return
-      const personType = creatorEntityForMetadataType(result.type).type
-      const types = creatorTypesByName.get(creatorNorm) || new Set<MediaEntityType>()
-      types.add(personType)
-      creatorTypesByName.set(creatorNorm, types)
+    const identityResults = headerIdentityResults
+      .map((identity, index) => universalEntityToSearchEntity(identity, index))
+      .filter((identity) => searchEntityMatchesQuery(identity, normalizedQuery))
 
-      const evidenceCounts = creatorEvidenceCountByName.get(creatorNorm) || new Map<MediaEntityType, number>()
-      evidenceCounts.set(personType, (evidenceCounts.get(personType) || 0) + 1)
-      creatorEvidenceCountByName.set(creatorNorm, evidenceCounts)
-
-      const evidenceSources = creatorEvidenceSourcesByName.get(creatorNorm) || new Map<MediaEntityType, Set<string>>()
-      const personSources = evidenceSources.get(personType) || new Set<string>()
-      personSources.add(result.type)
-      evidenceSources.set(personType, personSources)
-      creatorEvidenceSourcesByName.set(creatorNorm, evidenceSources)
-    })
-    const seenPeople = new Set<string>(
-      localProfileResults
-        .filter((e) => ['artist', 'author', 'director', 'creator', 'actor', 'game_studio'].includes(e.type))
-        .map((e) => `${e.type}:${normalizeSearchText(e.title)}`),
-    )
-
-    headerMediaResults.forEach((result) => {
-      if (!result.creator) return
-      if (result.type === 'album' || result.type === 'song') {
-        if (isCollaborationCredit(result.creator)) return
-      }
-      const creatorNorm = normalizeSearchText(result.creator)
-      if (!creatorNorm || creatorNorm.length < 1) return
-      if (creatorNorm.includes(normalizedQuery) || normalizedQuery.includes(creatorNorm)) {
-        const person = creatorEntityForMetadataType(result.type)
-        const evidenceCount = creatorEvidenceCountByName.get(creatorNorm)?.get(person.type) || 0
-        const evidenceSourceCount = creatorEvidenceSourcesByName.get(creatorNorm)?.get(person.type)?.size || 0
-        if (shouldSuppressSynthesizedArtist(
-          person.type,
-          creatorTypesByName.get(creatorNorm) || [],
-          knownArtistNames.has(creatorNorm),
-          evidenceCount,
-        )) return
-        const personKey = `${person.type}:${creatorNorm}`
-        if (!seenPeople.has(personKey)) {
-          seenPeople.add(personKey)
-          synthesizedPeopleResults.push({
-            id: `${person.type.replace('_', '-')}:${creatorNorm.replace(/\s+/g, '-')}`,
-            title: result.creator,
-            artworkUrl: '',
-            type: person.type,
-            creatorValue: person.label,
-            bio: person.bio,
-            source: 'metadata',
-            rank: 0,
-            evidenceCount,
-            evidenceSourceCount,
-          })
-        }
-      }
-    })
+    const providerScopedMusicPeople = dedupeSearchEntities(
+      headerMediaResults
+        .map(providerScopedMusicIdentityFromMetadataResult)
+        .filter((entity): entity is UniversalMediaEntity => Boolean(entity))
+        .map((entity, index) => universalEntityToSearchEntity(entity, index)),
+    ).filter((identity) => searchEntityMatchesQuery(identity, normalizedQuery))
 
     const combined = dedupeSearchEntities([
-      ...synthesizedPeopleResults,
+      ...identityResults,
+      ...providerScopedMusicPeople,
       ...localProfileResults,
       ...metadataResults,
     ])
@@ -599,7 +799,7 @@ export default function AppController() {
       const scoreB = getSearchEntityScore(b, normalizedQuery)
       return scoreB - scoreA
     })
-  }, [headerMediaResults, query])
+  }, [headerIdentityResults, headerMediaResults, query])
 
   const [followedUserHandles, setFollowedUserHandles] = useState<string[]>(() => {
     try {
@@ -614,6 +814,12 @@ export default function AppController() {
     setFollowedUserHandles((prev) => {
       const next = prev.includes(clean) ? prev.filter((h) => h !== clean) : [...prev, clean]
       localStorage.setItem('the-commonplace.following-users', JSON.stringify(next))
+      persistCloudState({ followedUserHandles: next })
+      if (cloudUserId) {
+        void saveFollowRelationship(cloudUserId, clean, next.includes(clean)).catch((error) => {
+          console.error('Unable to sync follow relationship to Firebase.', error)
+        })
+      }
       return next
     })
   }
@@ -631,6 +837,12 @@ export default function AppController() {
     setFollowRequestedHandles((prev) => {
       const next = prev.includes(clean) ? prev.filter((h) => h !== clean) : [...prev, clean]
       localStorage.setItem('the-commonplace.follow-requests', JSON.stringify(next))
+      persistCloudState({ followRequestedHandles: next })
+      if (cloudUserId) {
+        void saveFollowRequest(cloudUserId, clean, next.includes(clean)).catch((error) => {
+          console.error('Unable to sync follow request to Firebase.', error)
+        })
+      }
       return next
     })
   }
@@ -644,10 +856,85 @@ export default function AppController() {
     }
   })
 
+  const cloudHydratedUserRef = useRef<string | null>(null)
+  const localMigrationSnapshotRef = useRef<UserCloudSnapshot>({
+    profile: userProfile,
+    entries,
+    state: {
+      likedEntryIds,
+      savedEntryIds,
+      disabledCommentEntryIds,
+      followedUserHandles,
+      followRequestedHandles,
+      notifications,
+    },
+  })
+
+  useEffect(() => {
+    if (!cloudUserId || cloudHydratedUserRef.current === cloudUserId) return
+    cloudHydratedUserRef.current = cloudUserId
+    let cancelled = false
+
+    void loadOrMigrateUserData(cloudUserId, localMigrationSnapshotRef.current)
+      .then(async (snapshot) => {
+        const [createdCollections, savedCollections] = await Promise.all([
+          loadOrMigrateUserCollections(
+            cloudUserId,
+            'created',
+            loadProfileCollections(snapshot.profile.handle),
+          ),
+          loadOrMigrateUserCollections(
+            cloudUserId,
+            'saved',
+            loadSavedProfileCollections(snapshot.profile.handle),
+          ),
+        ])
+        if (cancelled) return
+        saveProfileCollections(snapshot.profile.handle, createdCollections)
+        saveSavedProfileCollections(snapshot.profile.handle, savedCollections)
+        setUserProfile(snapshot.profile)
+        setEntries(snapshot.entries)
+        setLikedEntryIds(snapshot.state.likedEntryIds)
+        setSavedEntryIds(snapshot.state.savedEntryIds)
+        setDisabledCommentEntryIds(snapshot.state.disabledCommentEntryIds)
+        setFollowedUserHandles(snapshot.state.followedUserHandles)
+        setFollowRequestedHandles(snapshot.state.followRequestedHandles)
+        setNotifications(snapshot.state.notifications)
+
+        localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(snapshot.profile))
+        saveEntriesToStorage(snapshot.entries)
+        localStorage.setItem('the-commonplace.likes', JSON.stringify(snapshot.state.likedEntryIds))
+        localStorage.setItem('the-commonplace.saves', JSON.stringify(snapshot.state.savedEntryIds))
+        localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(snapshot.state.disabledCommentEntryIds))
+        localStorage.setItem('the-commonplace.following-users', JSON.stringify(snapshot.state.followedUserHandles))
+        localStorage.setItem('the-commonplace.follow-requests', JSON.stringify(snapshot.state.followRequestedHandles))
+        localStorage.setItem('the-commonplace.notifications', JSON.stringify(snapshot.state.notifications))
+      })
+      .catch((error) => {
+        console.error('Unable to hydrate Firebase data; continuing with local data.', error)
+        cloudHydratedUserRef.current = null
+      })
+
+    return () => {
+      cancelled = true
+      if (cloudHydratedUserRef.current === cloudUserId) {
+        cloudHydratedUserRef.current = null
+      }
+    }
+  }, [cloudUserId])
+
+  const persistCloudState = (patch: Parameters<typeof saveUserCloudState>[1]) => {
+    if (!cloudUserId) return
+    void saveUserCloudState(cloudUserId, patch).catch((error) => {
+      console.error('Unable to sync account state to Firebase.', error)
+    })
+  }
+
   const addNotification = (n: AppNotification) => {
     setNotifications((prev) => {
       const next = [n, ...prev]
       localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+      persistCloudState({ notifications: next })
       return next
     })
   }
@@ -656,6 +943,7 @@ export default function AppController() {
     setNotifications((prev) => {
       const next = prev.map((n) => ({ ...n, read: true }))
       localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+      persistCloudState({ notifications: next })
       return next
     })
   }
@@ -664,6 +952,7 @@ export default function AppController() {
     setNotifications((prev) => {
       const next = prev.filter((n) => n.id !== id)
       localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+      persistCloudState({ notifications: next })
       return next
     })
   }
@@ -671,23 +960,25 @@ export default function AppController() {
   const clearAllNotifications = () => {
     setNotifications([])
     localStorage.removeItem('the-commonplace.notifications')
+    persistCloudState({ notifications: [] })
   }
 
-  const allHomepageEntries = useMemo(() => {
-    const ownWithAuthor = entries.map((e) => ({
+  const ownProfileEntries = useMemo(() => entries.map((e) => ({
       ...e,
-      authorHandle: e.authorHandle || userProfile.handle,
-      authorName: e.authorName || userProfileName,
-      authorAvatarUrl: e.authorAvatarUrl || userProfile.avatarUrl,
-    }))
+      authorHandle: userProfile.handle,
+      authorName: userProfileName,
+      authorAvatarUrl: userProfile.avatarUrl,
+    })), [entries, userProfile.handle, userProfile.avatarUrl, userProfileName])
+
+  const allHomepageEntries = useMemo(() => {
     // Only include external profile entries if the profile is public OR the user follows them
     const externalEntries = Object.entries(MOCK_EXTERNAL_PROFILES).flatMap(([handle, p]) => {
       if (p.profile.isPrivate && !followedUserHandles.includes(handle)) return []
       return p.entries
     })
-    const combined = [...ownWithAuthor, ...externalEntries]
+    const combined = [...ownProfileEntries, ...externalEntries]
     return combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-  }, [entries, userProfile.handle, userProfile.avatarUrl, userProfileName, followedUserHandles])
+  }, [ownProfileEntries, followedUserHandles])
 
   const filteredEntries = useMemo(() => {
     if (typeFilter !== 'all') {
@@ -721,15 +1012,26 @@ export default function AppController() {
     }
   }, [masonryLayout, typeFilter, query])
 
-  const saveEntries = (nextEntries: Entry[]) => {
+  const saveEntries = (nextEntries: Entry[], nextDisabledCommentEntryIds = disabledCommentEntryIds) => {
     setEntries(nextEntries)
     saveEntriesToStorage(nextEntries)
+    if (cloudUserId) {
+      void saveUserEntries(cloudUserId, nextEntries, nextDisabledCommentEntryIds).catch((error) => {
+        console.error('Unable to sync posts to Firebase.', error)
+      })
+    }
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (window.confirm(`Log out of ${userProfileName} session?`)) {
+      try {
+        await logout()
+      } catch {
+        // ignore
+      }
       setIsLoggedOut(true)
       setProfileMenuOpen(false)
+      navigate('/login')
     }
   }
 
@@ -770,6 +1072,7 @@ export default function AppController() {
           type="button"
           className={`quick-devtools-btn ${quickDevToolsOpen ? 'active' : ''}`}
           onClick={() => setQuickDevToolsOpen((open) => !open)}
+          aria-label="Developer tools"
           title="Open developer tools"
         >
           <Wrench aria-hidden="true" />
@@ -804,11 +1107,43 @@ export default function AppController() {
     />
   )
 
-  const renderFloatingHeaderActions = () => (
-    <div className="floating-header-actions">
-      {renderSearchBox()}
+  const renderGlobalHeader = () => {
+    const isHomeHeader = activeView === 'feed'
 
-      {renderNotificationsGroup()}
+    return (
+    <header className={`global-app-header ${isHomeHeader ? 'is-home-page' : 'is-inner-page'}`}>
+      <div className="global-app-header-layout">
+        <div className="global-header-navigation">
+          {!isHomeHeader && (
+            <button
+              type="button"
+              className="global-header-nav-btn"
+              onClick={handleHome}
+              aria-label="Go home"
+              title="Home"
+            >
+              <Home aria-hidden="true" />
+            </button>
+          )}
+        </div>
+
+        <button
+          type="button"
+          className="global-header-brand"
+          onClick={handleHome}
+          aria-label="The Commonplace home"
+        >
+          <span className="global-brand-ornament is-left" aria-hidden="true"><i /><b>✦</b></span>
+          <span className="global-header-brand-copy">
+            <span className="global-header-wordmark">The Commonplace.</span>
+          </span>
+          <span className="global-brand-ornament is-right" aria-hidden="true"><b>✦</b><i /></span>
+        </button>
+
+        <div className="global-header-actions">
+          {renderSearchBox()}
+
+          {renderNotificationsGroup()}
 
       <div className="profile-menu-wrapper" ref={profileMenuRef}>
         <button
@@ -821,7 +1156,7 @@ export default function AppController() {
           {userProfile.avatarUrl ? (
             <img src={userProfile.avatarUrl} alt="Avatar" className="profile-avatar-img-sm" />
           ) : (
-            <User aria-hidden="true" />
+            <CircleUserRound aria-hidden="true" />
           )}
         </button>
 
@@ -865,37 +1200,14 @@ export default function AppController() {
               <LogOut aria-hidden="true" />
               <span>Logout</span>
             </button>
-            <button
-              type="button"
-              className="menu-item danger"
-              onClick={() => {
-                if (window.confirm('Clear all entries from local storage?')) {
-                  setEntries([])
-                  localStorage.removeItem('the-commonplace.entries')
-                  setProfileMenuOpen(false)
-                }
-              }}
-            >
-              <Trash2 aria-hidden="true" />
-              <span>Clear All Data</span>
-            </button>
           </div>
         )}
+          </div>
+        </div>
       </div>
-    </div>
-  )
-
-  const [showScrollTop, setShowScrollTop] = useState(false)
-
-  useEffect(() => {
-    const handleScroll = () => {
-      const scrollPos = window.scrollY || document.documentElement.scrollTop
-      setShowScrollTop(scrollPos > 350)
-    }
-
-    window.addEventListener('scroll', handleScroll, { passive: true })
-    return () => window.removeEventListener('scroll', handleScroll)
-  }, [])
+    </header>
+    )
+  }
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -967,27 +1279,21 @@ export default function AppController() {
     const timestamp = new Date().toISOString()
 
     if (editingEntry) {
+      const nextDisabledCommentEntryIds = disableComments === undefined
+        ? disabledCommentEntryIds
+        : disableComments
+          ? Array.from(new Set([...disabledCommentEntryIds, editingEntry.id]))
+          : disabledCommentEntryIds.filter((id) => id !== editingEntry.id)
       const nextEntries = entries.map((entry) =>
         entry.id === editingEntry.id
           ? { ...entry, ...draft, updatedAt: timestamp }
           : entry,
       )
-      saveEntries(nextEntries)
+      saveEntries(nextEntries, nextDisabledCommentEntryIds)
       if (disableComments !== undefined) {
-        setDisabledCommentEntryIds((prev) => {
-          const has = prev.includes(editingEntry.id)
-          if (disableComments && !has) {
-            const next = [...prev, editingEntry.id]
-            localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(next))
-            return next
-          }
-          if (!disableComments && has) {
-            const next = prev.filter((id) => id !== editingEntry.id)
-            localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(next))
-            return next
-          }
-          return prev
-        })
+        setDisabledCommentEntryIds(nextDisabledCommentEntryIds)
+        localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(nextDisabledCommentEntryIds))
+        persistCloudState({ disabledCommentEntryIds: nextDisabledCommentEntryIds })
       }
       setExpandedCardId(editingEntry.id)
     } else {
@@ -998,13 +1304,14 @@ export default function AppController() {
         createdAt: timestamp,
         updatedAt: timestamp,
       }
-      saveEntries([newEntry, ...entries])
+      const nextDisabledCommentEntryIds = disableComments
+        ? [...disabledCommentEntryIds, newId]
+        : disabledCommentEntryIds
+      saveEntries([newEntry, ...entries], nextDisabledCommentEntryIds)
       if (disableComments) {
-        setDisabledCommentEntryIds((prev) => {
-          const next = [...prev, newId]
-          localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(next))
-          return next
-        })
+        setDisabledCommentEntryIds(nextDisabledCommentEntryIds)
+        localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(nextDisabledCommentEntryIds))
+        persistCloudState({ disabledCommentEntryIds: nextDisabledCommentEntryIds })
       }
       setExpandedCardId('')
     }
@@ -1030,24 +1337,43 @@ export default function AppController() {
   // Render Standalone Pages
   if (activeView === 'profile') {
     const isViewingOwn = selectedProfileHandle === null || selectedProfileHandle === userProfile.handle
+    const externalProfileData = isViewingOwn
+      ? undefined
+      : cloudExternalProfile?.handle === selectedProfileHandle
+        ? cloudExternalProfile.data
+        : MOCK_EXTERNAL_PROFILES[selectedProfileHandle || '']
     const currentProfileData = isViewingOwn
-      ? { profile: userProfile, entries: entries }
-      : MOCK_EXTERNAL_PROFILES[selectedProfileHandle || ''] || { profile: userProfile, entries: entries }
+      ? { profile: userProfile, entries: ownProfileEntries }
+      : externalProfileData || { profile: userProfile, entries: entries }
+    const externalSavedIsVisible = externalProfileData?.profile.showSavedActivity === true
+    const catalogSavedEntryIds = isViewingOwn
+      ? savedEntryIds
+      : externalSavedIsVisible ? externalProfileData?.savedEntryIds ?? [] : []
+    const publicSavedCollections = externalSavedIsVisible ? externalProfileData?.savedCollections ?? [] : []
 
     return (
       <>
-        {renderFloatingHeaderActions()}
+        {renderGlobalHeader()}
         <UserProfilePage
+          key={currentProfileData.profile.handle}
           onBack={handlePageBack}
+          showLocalNavigation={false}
           entries={currentProfileData.entries}
+          popularDemandEntries={allHomepageEntries}
+          savedCatalogEntries={allHomepageEntries}
           savedEntryIds={savedEntryIds}
+          catalogSavedEntryIds={catalogSavedEntryIds}
+          publicCollections={externalProfileData?.collections}
+          publicSavedCollections={publicSavedCollections}
           likedEntryIds={likedEntryIds}
           disabledCommentEntryIds={disabledCommentEntryIds}
           onSelectEntry={(entry) => setOverlayEntry(entry)}
+          onOpenMediaProfile={handleOpenCollectionMedia}
           onToggleLike={toggleLikeEntry}
           onToggleSave={toggleSaveEntry}
           onToggleCommentsDisabled={toggleCommentsDisabled}
           userProfile={currentProfileData.profile}
+          onUpdateProfile={isViewingOwn ? persistUserProfile : undefined}
           onNavigateToSettings={handleOpenSettings}
           onDeleteEntry={(id) => promptDeleteEntry(id)}
           onEditEntry={(entry) => openComposer(entry)}
@@ -1058,8 +1384,18 @@ export default function AppController() {
           followedUserHandles={followedUserHandles}
           onToggleFollowUser={toggleFollowUser}
           currentUserProfile={userProfile}
+          cloudUserId={cloudUserId}
           followRequestedHandles={followRequestedHandles}
           onToggleFollowRequest={toggleFollowRequest}
+          initialCollectionId={selectedProfileCollectionId}
+          onOpenCollectionPage={(collectionId) => {
+            setSelectedProfileCollectionId(collectionId)
+            navigate(`/users/${routeSegment(currentProfileData.profile.handle)}/collections/${routeSegment(collectionId)}`)
+          }}
+          onCloseCollectionPage={() => {
+            setSelectedProfileCollectionId(null)
+            navigate(`/users/${routeSegment(currentProfileData.profile.handle)}`)
+          }}
         />
         <CardOverlayModal
           entry={overlayEntry}
@@ -1154,7 +1490,7 @@ export default function AppController() {
       const mapItem = albumEntityMap.get(selectedEntityId) || albumEntityMap.get(selectedEntityId.toLowerCase())
       const igdbGameMatch = selectedEntityId.match(/^igdb:game:(.+)$/i)
       const steamGameMatch = selectedEntityId.match(/^steam:game:(.+)$/i)
-      const trackIdMatch = selectedEntityId.match(/^song-(\d+)$/i)
+      const trackIdMatch = selectedEntityId.match(/^song-(?:itunes-)?(\d+)$/i)
       const legacyItunesTrackIdMatch = selectedEntityId.match(/^itunes:song:(\d+)$/i)
       const albumIdMatch = selectedEntityId.match(/^album-(\d+)$/i)
       const legacyItunesAlbumIdMatch = selectedEntityId.match(/^itunes:album:(\d+)$/i)
@@ -1167,6 +1503,7 @@ export default function AppController() {
             .replace(/^game-/i, '')
             .replace(/^album-\d+/i, '')
             .replace(/^album-/i, '')
+            .replace(/^song-itunes-\d+/i, '')
             .replace(/^song-\d+/i, '')
             .replace(/^song-/i, '')
             .replace(/^itunes:song:\d+/i, '')
@@ -1241,17 +1578,22 @@ export default function AppController() {
     if (universalEntity) {
       return (
         <>
-          {renderFloatingHeaderActions()}
+          {renderGlobalHeader()}
           <UniversalMediaProfilePage
             entity={universalEntity}
             onBack={handlePageBack}
             onHome={handleHome}
+            showLocalNavigation={false}
             communityEntries={allHomepageEntries}
             onSelectEntry={setOverlayEntry}
             onOpenUserProfile={handleOpenUserProfile}
             onNavigateToEntity={handleNavigateEntityBreadcrumb}
-            onCanonicalHumanResolved={handleCanonicalHumanResolved}
+            onCanonicalMediaResolved={handleCanonicalMediaResolved}
             onQuickAddEntry={handleQuickAddEntityEntry}
+            onAddToCollection={({ entity, artworkUrl, metadataChips }) => {
+              const item = collectionItemFromEntity(entity, artworkUrl, metadataChips)
+              if (item) setCollectionTarget(item)
+            }}
             likedEntryIds={likedEntryIds}
             savedEntryIds={savedEntryIds}
             disabledCommentEntryIds={disabledCommentEntryIds}
@@ -1282,25 +1624,39 @@ export default function AppController() {
               />
             ) : null}
           </AnimatePresence>
+          <AnimatePresence>
+            {collectionTarget && (
+              <CollectionPickerModal
+                handle={userProfile.handle}
+                userId={cloudUserId}
+                item={collectionTarget}
+                onClose={() => setCollectionTarget(null)}
+              />
+            )}
+          </AnimatePresence>
           {renderQuickDevTools()}
         </>
       )
     }
   }
 
+  if (activeView === 'login') {
+    return <LoginPage onSwitchToRegister={() => navigate('/register')} />
+  }
+
+  if (activeView === 'register') {
+    return <RegisterPage onSwitchToLogin={() => navigate('/login')} />
+  }
+
   if (activeView === 'settings') {
     return (
       <>
+        {renderGlobalHeader()}
         <SettingsPage
           onBack={handlePageBack}
-          onClearAllData={() => {
-            setEntries([])
-            localStorage.removeItem(ENTRY_STORAGE_KEY)
-            localStorage.removeItem('the-commonplace.likes')
-            localStorage.removeItem('the-commonplace.saves')
-          }}
+          showLocalNavigation={false}
           userProfile={userProfile}
-          onSaveProfile={(updated) => setUserProfile(updated)}
+          onSaveProfile={persistUserProfile}
           onAddNotification={addNotification}
         />
         {renderQuickDevTools()}
@@ -1312,98 +1668,9 @@ export default function AppController() {
     <div className="app-shell">
       {/* Main content */}
       <main className="main-content">
-        {/* Header */}
-        <header className="commonplace-header">
-          <div className="header-title-row">
-            <div className="header-title-block">
-              <h1 className="commonplace-title">The Commonplace.</h1>
-            </div>
-            <div className="header-actions">
-              {renderSearchBox()}
+        {renderGlobalHeader()}
 
-              {renderNotificationsGroup()}
-
-              <div className="profile-menu-wrapper" ref={profileMenuRef}>
-                <button
-                  className="profile-avatar-btn"
-                  type="button"
-                  aria-label="User Profile & Settings"
-                  title="User Profile & Settings"
-                  onClick={() => setProfileMenuOpen((v) => !v)}
-                >
-                  {userProfile.avatarUrl ? (
-                    <img src={userProfile.avatarUrl} alt="Avatar" className="profile-avatar-img-sm" />
-                  ) : (
-                    <User aria-hidden="true" />
-                  )}
-                </button>
-
-                {profileMenuOpen && (
-                  <div className="profile-dropdown-menu">
-                    {/* Identity block at the top */}
-                    <div className="menu-identity-block">
-                      <div className="menu-identity-avatar">
-                        {userProfile.avatarUrl ? (
-                          <img src={userProfile.avatarUrl} alt="Avatar" className="menu-identity-avatar-img" />
-                        ) : (
-                          <User aria-hidden="true" />
-                        )}
-                      </div>
-                      <div className="menu-identity-info">
-                        <span className="menu-user-name">
-                          {userProfile.showFullName ? `${userProfile.firstName} ${userProfile.lastName}` : userProfile.firstName}
-                        </span>
-                        <button
-                          type="button"
-                          className="menu-view-profile-link"
-                          onClick={() => {
-                            handleOpenUserProfile(userProfile.handle)
-                            setProfileMenuOpen(false)
-                          }}
-                        >
-                          View Profile
-                        </button>
-                      </div>
-                    </div>
-                    <div className="menu-divider" />
-                    <button
-                      type="button"
-                      className="menu-item"
-                      onClick={handleOpenSettings}
-                    >
-                      <Settings aria-hidden="true" />
-                      <span>Settings</span>
-                    </button>
-                    <div className="menu-divider" />
-                    <button
-                      type="button"
-                      className="menu-item"
-                      onClick={handleLogout}
-                    >
-                      <LogOut aria-hidden="true" />
-                      <span>Logout</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="menu-item danger"
-                      onClick={() => {
-                        if (window.confirm('Clear all entries from local storage?')) {
-                          setEntries([])
-                          localStorage.removeItem('the-commonplace.entries')
-                          setProfileMenuOpen(false)
-                        }
-                      }}
-                    >
-                      <Trash2 aria-hidden="true" />
-                      <span>Clear All Data</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="header-rule" />
-
+        <div className="homepage-filter-shell">
           {/* Type filter tabs with animated pill */}
           <div className="filter-row">
             <nav className="type-tabs" aria-label="Filter by type">
@@ -1446,7 +1713,7 @@ export default function AppController() {
               })}
             </nav>
           </div>
-        </header>
+        </div>
 
         {/* Skeleton loading grid during filter switching or initialization */}
         {(!masonryLayout || isFilterSwitching) && filteredEntries.length > 0 ? (
@@ -1647,23 +1914,15 @@ export default function AppController() {
 
       {/* Floating action buttons stack */}
       <div className="fab-stack">
-        <AnimatePresence>
-          {showScrollTop && (
-            <motion.button
-              className="fab fab-scroll-top"
-              type="button"
-              aria-label="Scroll back to top"
-              title="Scroll back to top"
-              initial={{ opacity: 0, scale: 0.7, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.7, y: 10 }}
-              transition={{ duration: 0.18 }}
-              onClick={scrollToTop}
-            >
-              <ChevronUp aria-hidden="true" />
-            </motion.button>
-          )}
-        </AnimatePresence>
+        <button
+          className="fab fab-scroll-top"
+          type="button"
+          aria-label="Back to top"
+          title="Back to top"
+          onClick={scrollToTop}
+        >
+          <ChevronUp aria-hidden="true" />
+        </button>
 
         <button
           className="fab"

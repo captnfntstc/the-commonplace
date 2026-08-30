@@ -1,8 +1,9 @@
-import { BookOpen, Clapperboard, Disc3, Gamepad2, Music4, Tv } from 'lucide-react'
+import { BookOpen } from 'lucide-react'
 import type { Alignment } from '../../components/CommonplaceCard/FormattedText'
 import { stripHtmlAlignment } from '../../components/CommonplaceCard/FormattedText'
 import type { MetadataResult, MetadataType } from '../../metadata'
 import { resolveArtworkUrl } from '../../utils/artwork'
+import { getEntryTypeIcon } from '../../utils/mediaIcons'
 
 export type EntryType = MetadataType
 export type CoverTone = 'gold' | 'rose' | 'sage' | 'blue' | 'violet' | 'ember'
@@ -43,12 +44,12 @@ export const entryTypes: Array<{
   label: string
   Icon: typeof BookOpen
 }> = [
-  { id: 'album', label: 'Albums', Icon: Disc3 },
-  { id: 'book', label: 'Books', Icon: BookOpen },
-  { id: 'film', label: 'Films', Icon: Clapperboard },
-  { id: 'game', label: 'Games', Icon: Gamepad2 },
-  { id: 'song', label: 'Songs', Icon: Music4 },
-  { id: 'tv', label: 'Shows', Icon: Tv },
+  { id: 'album', label: 'Albums', Icon: getEntryTypeIcon('album') },
+  { id: 'book', label: 'Books', Icon: getEntryTypeIcon('book') },
+  { id: 'film', label: 'Films', Icon: getEntryTypeIcon('film') },
+  { id: 'game', label: 'Games', Icon: getEntryTypeIcon('game') },
+  { id: 'song', label: 'Songs', Icon: getEntryTypeIcon('song') },
+  { id: 'tv', label: 'Shows', Icon: getEntryTypeIcon('tv') },
 ]
 
 const defaultCoverToneByType: Record<EntryType, CoverTone> = {

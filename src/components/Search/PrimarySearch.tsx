@@ -1,22 +1,70 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  BookOpen,
-  Clapperboard,
-  Disc3,
-  Gamepad2,
+  Clock,
   Layers,
   Lock,
-  Music4,
   Search,
-  Tv,
   User,
   Users,
   X,
 } from 'lucide-react'
 import { USER_DIRECTORY } from '../../data/userDirectory'
-import { fetchArtistPortrait, fetchWikipediaPortrait } from '../../metadata'
-import { createArtworkPlaceholder, resolveArtworkUrl } from '../../utils/artwork'
+import { createArtworkPlaceholder } from '../../utils/artwork'
 import { AdaptiveGameArtwork } from '../GameArtwork/AdaptiveGameArtwork'
+import { getEntryTypeIcon } from '../../utils/mediaIcons'
+
+type SearchMode = 'media' | 'users'
+
+const LEGACY_RECENT_SEARCHES_KEY = 'the_commonplace_recent_searches_v2'
+const RECENT_SEARCHES_KEYS: Record<SearchMode, string> = {
+  media: 'the_commonplace_recent_media_searches_v3',
+  users: 'the_commonplace_recent_user_searches_v3',
+}
+const MAX_RECENT_SEARCHES = 8
+
+export type RecentSearchItem = {
+  id: string
+  name: string
+  subtitle?: string
+  badge?: string
+  image?: string
+  category?: SearchCategory
+  type: SearchResultType | 'user' | 'query'
+  handle?: string
+}
+
+function belongsToSearchMode(item: RecentSearchItem, mode: SearchMode) {
+  return mode === 'users' ? item.type === 'user' : item.type !== 'user'
+}
+
+function loadRecentSearches(mode: SearchMode): RecentSearchItem[] {
+  try {
+    const raw = localStorage.getItem(RECENT_SEARCHES_KEYS[mode])
+    if (raw !== null) {
+      return (JSON.parse(raw) as RecentSearchItem[]).filter((item) => belongsToSearchMode(item, mode))
+    }
+
+    const legacyRaw = localStorage.getItem(LEGACY_RECENT_SEARCHES_KEY)
+    const migrated = legacyRaw
+      ? (JSON.parse(legacyRaw) as RecentSearchItem[]).filter((item) => belongsToSearchMode(item, mode))
+      : []
+    saveRecentSearches(mode, migrated)
+    return migrated
+  } catch {
+    return []
+  }
+}
+
+function saveRecentSearches(mode: SearchMode, items: RecentSearchItem[]) {
+  try {
+    const scopedItems = items
+      .filter((item) => belongsToSearchMode(item, mode))
+      .slice(0, MAX_RECENT_SEARCHES)
+    localStorage.setItem(RECENT_SEARCHES_KEYS[mode], JSON.stringify(scopedItems))
+  } catch {
+    // ignore
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Primary archival-style header search experience.
@@ -33,6 +81,7 @@ export type SearchCategory =
 
 export type SearchResultType =
   | 'human'
+  | 'music_group'
   | 'artist'
   | 'author'
   | 'director'
@@ -53,6 +102,7 @@ export type SearchMediaResult = {
   category: SearchCategory
   type: SearchResultType
   subtitle: string
+  badge?: string
   explicit?: boolean
   preferWikipediaArtwork?: boolean
 }
@@ -69,8 +119,8 @@ interface PrimarySearchProps {
   onQueryChange: (value: string) => void
   open: boolean
   onOpenChange: (open: boolean) => void
-  mode: 'media' | 'users'
-  onModeChange: (mode: 'media' | 'users') => void
+  mode: SearchMode
+  onModeChange: (mode: SearchMode) => void
   mediaResults: SearchMediaResult[]
   mediaLoading: boolean
   resultLimit: number
@@ -87,18 +137,19 @@ const FILTERS: Array<{
 }> = [
   { id: 'all', label: 'All', plural: 'media', Icon: Layers },
   { id: 'people', label: 'People', plural: 'people', Icon: Users },
-  { id: 'books', label: 'Books', plural: 'books', Icon: BookOpen },
-  { id: 'albums', label: 'Albums', plural: 'albums', Icon: Disc3 },
-  { id: 'songs', label: 'Songs', plural: 'songs', Icon: Music4 },
-  { id: 'films', label: 'Films', plural: 'films', Icon: Clapperboard },
-  { id: 'shows', label: 'Shows', plural: 'shows', Icon: Tv },
-  { id: 'games', label: 'Games', plural: 'games', Icon: Gamepad2 },
+  { id: 'books', label: 'Books', plural: 'books', Icon: getEntryTypeIcon('book') },
+  { id: 'albums', label: 'Albums', plural: 'albums', Icon: getEntryTypeIcon('album') },
+  { id: 'songs', label: 'Songs', plural: 'songs', Icon: getEntryTypeIcon('song') },
+  { id: 'films', label: 'Films', plural: 'films', Icon: getEntryTypeIcon('film') },
+  { id: 'shows', label: 'Shows', plural: 'shows', Icon: getEntryTypeIcon('tv') },
+  { id: 'games', label: 'Games', plural: 'games', Icon: getEntryTypeIcon('game') },
 ]
 
 const MAX_VISIBLE_SEARCH_RESULTS = 40
 
 const TYPE_BADGES: Record<SearchResultType, string> = {
   human: 'Person',
+  music_group: 'Music Group',
   artist: 'Artist',
   author: 'Author',
   director: 'Director',
@@ -115,6 +166,7 @@ const TYPE_BADGES: Record<SearchResultType, string> = {
 
 const PORTRAIT_TYPES = new Set<SearchResultType>([
   'human',
+  'music_group',
   'artist',
   'author',
   'director',
@@ -138,45 +190,10 @@ const SearchThumb: React.FC<{
   square?: boolean
   preferWikipediaArtwork?: boolean
 }> = ({ image, name, type, square = false, preferWikipediaArtwork = false }) => {
-  const isPortrait = PORTRAIT_TYPES.has(type)
   const photoKey = `${type}:${name}:${image}`
   const fallbackPhoto = image || createArtworkPlaceholder(name, TYPE_BADGES[type])
   const [resolvedPhoto, setResolvedPhoto] = useState<{ key: string; url: string } | null>(null)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const photo = resolvedPhoto?.key === photoKey ? resolvedPhoto.url : fallbackPhoto
-
-  useEffect(() => {
-    if (!isPortrait) return
-    let cancelled = false
-
-    // Debounce portrait fetches by 120ms — avoids firing on every keystroke
-    // when the user types quickly and components mount/unmount rapidly.
-    debounceRef.current = setTimeout(() => {
-      if (cancelled) return
-      const wikipediaType = type === 'artist' || type === 'author' || type === 'director' || type === 'creator' || type === 'actor'
-        ? type
-        : undefined
-      const portraitRequest = type === 'artist'
-        ? fetchArtistPortrait(name)
-        : fetchWikipediaPortrait(name, undefined, wikipediaType)
-      portraitRequest
-        .then((portraitUrl) => {
-          if (!cancelled && portraitUrl) {
-            setResolvedPhoto({ key: photoKey, url: resolveArtworkUrl(portraitUrl, name, type) })
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setResolvedPhoto({ key: photoKey, url: fallbackPhoto })
-          }
-        })
-    }, 120)
-
-    return () => {
-      cancelled = true
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-  }, [fallbackPhoto, isPortrait, name, photoKey, type])
 
   return (
     <span className={`alt-search-thumb ${square ? 'is-square' : ''}`}>
@@ -249,9 +266,9 @@ const MediaResultRow: React.FC<{
         <span>{result.name}</span>
         {result.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
       </span>
-      <span className="alt-search-result-sub">{result.subtitle}</span>
+      {result.subtitle && <span className="alt-search-result-sub">{result.subtitle}</span>}
     </span>
-    <span className="alt-search-type-badge">{TYPE_BADGES[result.type]}</span>
+    <span className="alt-search-type-badge">{result.badge || TYPE_BADGES[result.type]}</span>
   </button>
 )
 
@@ -300,11 +317,98 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
 }) => {
   const [mediaFilter, setMediaFilter] = useState<SearchCategory | 'all'>('all')
   const [activeIndex, setActiveIndex] = useState(-1)
+  const [recentSearchesByMode, setRecentSearchesByMode] = useState<Record<SearchMode, RecentSearchItem[]>>(() => ({
+    media: loadRecentSearches('media'),
+    users: loadRecentSearches('users'),
+  }))
+  const [iconExpanded, setIconExpanded] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const trimmedQuery = query.trim()
+  const expanded = iconExpanded || open || Boolean(trimmedQuery)
+  const recentSearches = recentSearchesByMode[mode]
+
+  const replaceRecentSearches = (items: RecentSearchItem[]) => {
+    setRecentSearchesByMode((current) => ({ ...current, [mode]: items }))
+    saveRecentSearches(mode, items)
+  }
+
+  const addRecentSearch = (item: SearchMediaResult | SearchUser) => {
+    const isUser = 'handle' in item
+    const newItem: RecentSearchItem = isUser
+      ? {
+          id: `user:${item.handle}`,
+          name: `@${item.handle}`,
+          subtitle: item.name,
+          image: item.avatar,
+          type: 'user',
+          handle: item.handle,
+        }
+      : {
+          id: item.id,
+          name: item.name,
+          subtitle: item.subtitle,
+          badge: item.badge,
+          image: item.image,
+          category: item.category,
+          type: item.type,
+        }
+
+    const filtered = recentSearches.filter((r) => r.id !== newItem.id)
+    const updated = [newItem, ...filtered].slice(0, MAX_RECENT_SEARCHES)
+    replaceRecentSearches(updated)
+  }
+
+  const addRecentQuery = (text: string) => {
+    const cleanText = text.trim()
+    if (!cleanText) return
+    const newItem: RecentSearchItem = {
+      id: `query:${cleanText.toLowerCase()}`,
+      name: cleanText,
+      subtitle: 'Search query',
+      type: 'query',
+    }
+
+    const filtered = recentSearches.filter(
+      (r) => r.id !== newItem.id && r.name.toLowerCase() !== cleanText.toLowerCase(),
+    )
+    const updated = [newItem, ...filtered].slice(0, MAX_RECENT_SEARCHES)
+    replaceRecentSearches(updated)
+  }
+
+  const handleRemoveRecent = (id: string) => {
+    const updated = recentSearches.filter((r) => r.id !== id)
+    replaceRecentSearches(updated)
+  }
+
+  const handleClearAllRecent = () => {
+    replaceRecentSearches([])
+  }
+
+  const handleOpenRecent = (recent: RecentSearchItem) => {
+    if (recent.type === 'query') {
+      onQueryChange(recent.name)
+      inputRef.current?.focus()
+      return
+    }
+    setIconExpanded(false)
+    onOpenChange(false)
+    if (recent.type === 'user' && recent.handle) {
+      onOpenUser(recent.handle)
+    } else {
+      onOpenEntity({
+        id: recent.id,
+        name: recent.name,
+        image: recent.image || '',
+        category: recent.category || 'albums',
+        type: recent.type as SearchResultType,
+        subtitle: recent.subtitle || '',
+        badge: recent.badge,
+      })
+    }
+  }
 
   const userResults = useMemo<SearchUser[]>(() => {
     const normalizedQuery = normalizeSearchText(query)
@@ -331,17 +435,37 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
   const results = mode === 'media' ? mediaResultsFiltered : userResults
   const visibleResults = useMemo(() => results.slice(0, resultLimit), [resultLimit, results])
 
-  // Clicking outside closes the dropdown.
+  // Clicking outside closes the dropdown and returns search to its icon.
   useEffect(() => {
-    if (!open) return
+    if (!expanded) return
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        onOpenChange(false)
+        setIconExpanded(false)
+        if (open) onOpenChange(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [open, onOpenChange])
+  }, [expanded, open, onOpenChange])
+
+  useEffect(() => {
+    const handleSearchShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setIconExpanded(true)
+        onOpenChange(true)
+        window.requestAnimationFrame(() => inputRef.current?.focus())
+      }
+    }
+    window.addEventListener('keydown', handleSearchShortcut)
+    return () => window.removeEventListener('keydown', handleSearchShortcut)
+  }, [onOpenChange])
+
+  useEffect(() => {
+    if (!open) return
+    const frame = window.requestAnimationFrame(() => inputRef.current?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [open])
 
   const scrollActiveIntoView = (index: number) => {
     const node = resultsRef.current?.querySelector<HTMLElement>(`[data-index="${index}"]`)
@@ -354,19 +478,21 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
     if (event.key === 'Escape') {
       event.preventDefault()
       setActiveIndex(-1)
+      setIconExpanded(false)
       onOpenChange(false)
       return
     }
-
-    if (visibleResults.length === 0) return
 
     // If a tab/filter/result button is focused, Enter should activate that
     // button natively rather than open the highlighted result.
     if (event.key === 'Enter' && (event.target as HTMLElement).tagName === 'BUTTON') return
 
+    const maxItems = trimmedQuery.length === 0 ? recentSearches.length : visibleResults.length
+    if (maxItems === 0) return
+
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      const next = activeIndex >= visibleResults.length - 1 ? activeIndex : activeIndex + 1
+      const next = activeIndex >= maxItems - 1 ? activeIndex : activeIndex + 1
       setActiveIndex(next)
       scrollActiveIntoView(next)
       return
@@ -381,9 +507,20 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
     }
 
     if (event.key === 'Enter') {
-      if (activeIndex >= 0 && activeIndex < visibleResults.length) {
-        event.preventDefault()
-        handleOpenResult(activeIndex)
+      if (trimmedQuery.length === 0) {
+        if (activeIndex >= 0 && activeIndex < recentSearches.length) {
+          event.preventDefault()
+          handleOpenRecent(recentSearches[activeIndex])
+        }
+      } else {
+        if (activeIndex >= 0 && activeIndex < visibleResults.length) {
+          event.preventDefault()
+          handleOpenResult(activeIndex)
+        } else if (visibleResults.length > 0) {
+          event.preventDefault()
+          addRecentQuery(trimmedQuery)
+          handleOpenResult(0)
+        }
       }
     }
   }
@@ -395,6 +532,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
       inputRef.current?.focus()
     } else {
       setActiveIndex(-1)
+      setIconExpanded(false)
       onOpenChange(false)
     }
   }
@@ -402,9 +540,15 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
   const handleOpenResult = (index: number) => {
     const result = visibleResults[index]
     if (mode === 'media') {
-      onOpenEntity(result as SearchMediaResult)
+      const mediaResult = result as SearchMediaResult
+      addRecentSearch(mediaResult)
+      setIconExpanded(false)
+      onOpenEntity(mediaResult)
     } else {
-      onOpenUser((result as SearchUser).handle)
+      const userResult = result as SearchUser
+      addRecentSearch(userResult)
+      setIconExpanded(false)
+      onOpenUser(userResult.handle)
     }
   }
 
@@ -417,7 +561,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
 
   return (
     <div
-      className={`alt-search ${open ? 'open' : ''} ${trimmedQuery ? 'has-value' : ''}`}
+      className={`alt-search ${expanded ? 'expanded' : ''} ${open ? 'open' : ''} ${trimmedQuery ? 'has-value' : ''}`}
       ref={containerRef}
       onKeyDown={handleKeyDown}
     >
@@ -429,7 +573,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
           title="Search"
           onClick={() => {
             setActiveIndex(-1)
-            onOpenChange(!open)
+            if (!expanded) setIconExpanded(true)
           }}
         >
           <Search aria-hidden="true" />
@@ -450,9 +594,8 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
             onQueryChange(e.target.value)
             if (!open) onOpenChange(true)
           }}
-          placeholder={mode === 'users' ? 'Search users…' : 'Search media…'}
+          placeholder={mode === 'users' ? 'Search users…' : 'Search media, people, thoughts…'}
           aria-label="Search"
-          autoFocus
         />
         <button
           type="button"
@@ -517,9 +660,93 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
 
           <div className="alt-search-results" ref={resultsRef}>
             {trimmedQuery.length === 0 ? (
-              <div className="alt-search-empty">
-                {mode === 'users' ? 'Start typing to search users.' : 'Start typing to search media.'}
-              </div>
+              recentSearches.length > 0 ? (
+                <div className="alt-search-recent-section">
+                  <div className="alt-search-recent-header">
+                    <span className="alt-search-recent-title">
+                      <Clock size={13} aria-hidden="true" />
+                      <span>Recent Searches</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="alt-search-clear-all"
+                      onClick={handleClearAllRecent}
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <div className="alt-search-recent-list">
+                    {recentSearches.map((item, index) => (
+                      <div
+                        key={item.id}
+                        className={`alt-search-recent-row ${index === activeIndex ? 'keyboard' : ''}`}
+                        data-index={index}
+                        onMouseEnter={() => setActiveIndex(index)}
+                      >
+                        <button
+                          type="button"
+                          className="alt-search-result alt-search-recent-item-btn"
+                          onClick={() => handleOpenRecent(item)}
+                        >
+                          {item.type === 'user' ? (
+                            <span className="alt-search-user-avatar">
+                              {item.image ? (
+                                <img src={item.image} alt="" referrerPolicy="no-referrer" loading="eager" decoding="async" />
+                              ) : (
+                                <User aria-hidden="true" />
+                              )}
+                            </span>
+                          ) : item.type === 'query' ? (
+                            <span className="alt-search-query-icon">
+                              <Search size={14} aria-hidden="true" />
+                            </span>
+                          ) : (
+                            <SearchThumb
+                              image={item.image || ''}
+                              name={item.name}
+                              type={item.type as SearchResultType}
+                              square={isSquareThumb(item.type as SearchResultType)}
+                            />
+                          )}
+                          <span className="alt-search-result-copy">
+                            <span className="alt-search-result-title">{item.name}</span>
+                            {item.subtitle && !PORTRAIT_TYPES.has(item.type as SearchResultType) && (
+                              <span className="alt-search-result-sub">{item.subtitle}</span>
+                            )}
+                          </span>
+                          <span className="alt-search-type-badge">
+                            {item.type === 'user'
+                              ? 'User'
+                              : item.type === 'query'
+                                ? 'Search'
+                                : item.badge || (
+                                  PORTRAIT_TYPES.has(item.type as SearchResultType)
+                                    ? item.subtitle?.split('·')[0]?.trim()
+                                    : ''
+                                ) || TYPE_BADGES[item.type as SearchResultType] || 'Media'}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="alt-search-remove-recent"
+                          title="Remove recent search"
+                          aria-label={`Remove ${item.name} from recent searches`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleRemoveRecent(item.id)
+                          }}
+                        >
+                          <X size={14} aria-hidden="true" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="alt-search-empty">
+                  {mode === 'users' ? 'Start typing to search users.' : 'Start typing to search media.'}
+                </div>
+              )
             ) : mediaLoading && results.length === 0 ? (
               <SearchSkeleton />
             ) : results.length === 0 ? (

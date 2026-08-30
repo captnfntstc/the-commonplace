@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "clsx": "^2.1.1",
-    "firebase": "^12.16.0",
+    "firebase": "^12.18.0",
     "framer-motion": "^12.42.2",
     "lucide-react": "^1.25.0",
     "react": "^19.2.7",

@@ -2,10 +2,6 @@ import React, { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft,
-  Disc3,
-  Clapperboard,
-  Tv,
-  Gamepad2,
   BookOpen,
   Star,
   Sparkles,
@@ -18,6 +14,7 @@ import { Card } from '../components/CommonplaceCard/Card'
 import type { Entry as CardEntry } from '../features/entries/model'
 import { searchMetadata, type MetadataType } from '../metadata'
 import { createArtworkPlaceholder, resolveArtworkUrl } from '../utils/artwork'
+import { getMediaEntityIcon } from '../utils/mediaIcons'
 
 export interface EntityProfile {
   id: string
@@ -46,18 +43,7 @@ interface EntityProfilePageProps {
 }
 
 function getTypeIcon(type: EntityProfile['type']) {
-  switch (type) {
-    case 'artist':
-      return Disc3
-    case 'movie':
-      return Clapperboard
-    case 'tv':
-      return Tv
-    case 'game':
-      return Gamepad2
-    default:
-      return BookOpen
-  }
+  return getMediaEntityIcon(type)
 }
 
 function getTypeBadgeLabel(type: EntityProfile['type']) {
@@ -102,7 +88,7 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
   onToggleLike,
   onToggleSave,
 }) => {
-  const IconComponent = getTypeIcon(entity.type)
+  const typeIcon = getTypeIcon(entity.type)
   const [activeTab, setActiveTab] = useState<'top5' | 'reviews'>('top5')
   const [apiCoverUrl, setApiCoverUrl] = useState<string | null>(null)
   const [apiSummary, setApiSummary] = useState<string | null>(null)
@@ -181,7 +167,7 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
         </button>
 
         <span className="entity-topbar-type-badge">
-          <IconComponent size={14} />
+          {React.createElement(typeIcon, { size: 14 })}
           <span>{getTypeBadgeLabel(entity.type)}</span>
         </span>
       </div>
@@ -228,12 +214,16 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
           {/* Inline Pill Container Badges */}
           <div className="profile-pill-container">
             <span className="profile-pill-badge">
-              <IconComponent aria-hidden="true" />
+              {React.createElement(typeIcon, { 'aria-hidden': true })}
               <span>{getTypeBadgeLabel(entity.type)}</span>
             </span>
             <span className="profile-pill-badge rating">
               <Star aria-hidden="true" />
-              <span>4.8 Community Rating</span>
+              <span>
+                {matchingEntries.filter((e) => e.rating > 0).length > 0
+                  ? `${(matchingEntries.filter((e) => e.rating > 0).reduce((acc, curr) => acc + curr.rating, 0) / matchingEntries.filter((e) => e.rating > 0).length).toFixed(1)} Community Rating`
+                  : 'No ratings recorded'}
+              </span>
             </span>
             <span className="profile-pill-badge">
               <BookOpen aria-hidden="true" />
@@ -342,7 +332,7 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
                       onToggle={() => onSelectEntry?.(entry)}
                       onExpandOverlay={() => onSelectEntry?.(entry)}
                       onOpenProfile={() => onOpenUserProfile?.(entry.authorHandle || 'jimboii')}
-                      typeIcon={IconComponent}
+                      typeIcon={typeIcon}
                       typeLabel={getTypeBadgeLabel(entity.type)}
                       isLiked={likedEntryIds.includes(entry.id)}
                       isSaved={savedEntryIds.includes(entry.id)}

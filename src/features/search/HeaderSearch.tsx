@@ -45,8 +45,17 @@ export function HeaderSearch({
       resultLimit={resultLimit}
       onLoadMore={onLoadMore}
       onOpenEntity={(result) => {
-        const entity = mediaResults.find((candidate) => candidate.id === result.id)
-        if (entity) onOpenEntity(entity)
+        const entity = mediaResults.find((candidate) => candidate.id === result.id) || {
+          id: result.id,
+          title: result.name,
+          artworkUrl: result.image,
+          type: result.type,
+          creatorValue: result.subtitle,
+          bio: '',
+          source: 'metadata',
+          rank: 0,
+        }
+        onOpenEntity(entity)
       }}
       onOpenUser={onOpenUser}
     />

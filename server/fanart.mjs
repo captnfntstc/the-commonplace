@@ -109,13 +109,12 @@ export async function fetchFanartArtistPortrait(name, env = process.env, fetchIm
     musicBrainzUrl.searchParams.set('fmt', 'json')
     musicBrainzUrl.searchParams.set('limit', '10')
 
-    const musicBrainzData = await fetchJson(musicBrainzUrl, {
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': `TheCommonplace/1.0 (${env.APP_CONTACT || env.VITE_APP_CONTACT || 'the-commonplace@example.com'})`,
-      },
+    const musicBrainzResponse = await fetchMusicBrainz(musicBrainzUrl, {
+      env,
+      fetchImpl,
       signal: timeoutController.signal,
-    }, fetchImpl)
+    })
+    const musicBrainzData = musicBrainzResponse.ok ? await musicBrainzResponse.json() : null
     const artist = selectMusicBrainzArtist(musicBrainzData?.artists, cleanName)
 
     // MusicBrainz classifies duos and larger bands as Group. Person entries stay
@@ -148,8 +147,49 @@ export async function fetchFanartArtistPortrait(name, env = process.env, fetchIm
   }
 }
 
+export async function fetchFanartArtistPortraitById(musicBrainzId, env = process.env, fetchImpl = fetch) {
+  const cleanId = String(musicBrainzId || '').trim()
+  if (!/^[0-9a-f-]{36}$/i.test(cleanId)) {
+    const error = new Error('A valid MusicBrainz artist ID is required.')
+    error.statusCode = 400
+    throw error
+  }
+  const apiKey = getFanartApiKey(env)
+  const timeoutController = new AbortController()
+  const timeout = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    const artistUrl = new URL(`${MUSICBRAINZ_ARTIST_SEARCH_URL}/${encodeURIComponent(cleanId)}`)
+    artistUrl.searchParams.set('fmt', 'json')
+    const artistResponse = await fetchMusicBrainz(artistUrl, { env, fetchImpl, signal: timeoutController.signal })
+    if (!artistResponse.ok) return { artistType: 'Unknown', imageUrl: '', musicBrainzId: cleanId }
+    const artist = await artistResponse.json()
+    if (artist.type !== 'Group') return { artistType: artist.type || 'Unknown', imageUrl: '', musicBrainzId: cleanId }
+
+    const fanartUrl = new URL(`${FANART_MUSIC_API_URL}/${encodeURIComponent(cleanId)}`)
+    fanartUrl.searchParams.set('api_key', apiKey)
+    const fanartData = await fetchJson(fanartUrl, {
+      headers: { Accept: 'application/json' },
+      signal: timeoutController.signal,
+    }, fetchImpl)
+    const latestImage = selectLatestArtistThumb(fanartData?.artistthumb)
+    return {
+      artistType: artist.type,
+      imageUrl: latestImage?.url || '',
+      musicBrainzId: cleanId,
+      fanartId: latestImage?.id ? String(latestImage.id) : '',
+      added: latestImage?.added || '',
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export async function handleFanartApiRequest(requestUrl, env = process.env) {
   const url = new URL(requestUrl, 'http://localhost')
   if (!/^\/api\/fanart\/artist\/?$/.test(url.pathname)) return undefined
-  return fetchFanartArtistPortrait(url.searchParams.get('name') || '', env)
+  const musicBrainzId = url.searchParams.get('id') || ''
+  return musicBrainzId
+    ? fetchFanartArtistPortraitById(musicBrainzId, env)
+    : fetchFanartArtistPortrait(url.searchParams.get('name') || '', env)
 }
+import { fetchMusicBrainz } from './musicbrainz.mjs'

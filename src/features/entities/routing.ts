@@ -1,6 +1,7 @@
 import type { MetadataResult, MetadataType } from '../../metadata'
 import type { MediaEntityType, UniversalMediaEntity } from '../../types/mediaEntity'
 import { resolveArtworkUrl } from '../../utils/artwork'
+import { cleanDisplayText, cleanMetadataChips } from '../../utils/text'
 
 export function metadataTypeToEntityType(type: MetadataType): MediaEntityType {
   if (type === 'film') return 'movie'
@@ -9,6 +10,7 @@ export function metadataTypeToEntityType(type: MetadataType): MediaEntityType {
 
 const entityRouteSegmentByType: Record<MediaEntityType, string> = {
   human: 'people',
+  music_group: 'groups',
   artist: 'artists',
   album: 'albums',
   song: 'songs',
@@ -25,6 +27,7 @@ const entityRouteSegmentByType: Record<MediaEntityType, string> = {
 
 export const entityTypeByRouteSegment: Record<string, MediaEntityType> = {
   people: 'human',
+  groups: 'music_group',
   artists: 'artist',
   albums: 'album',
   songs: 'song',
@@ -57,6 +60,7 @@ export function decodeRouteSegment(value: string) {
 export function inferEntityTypeFromId(entityId: string): MediaEntityType {
   const normalizedId = entityId.toLowerCase()
   if (normalizedId.startsWith('human:')) return 'human'
+  if (normalizedId.startsWith('music-group:')) return 'music_group'
   if (normalizedId.startsWith('itunes:song:') || normalizedId.startsWith('song-')) return 'song'
   if (normalizedId.startsWith('itunes:album:') || normalizedId.startsWith('album-') || normalizedId.includes('ep')) return 'album'
   if (normalizedId.startsWith('itunes:artist:')) return 'artist'
@@ -98,14 +102,16 @@ export function creatorLabelForMetadata(type: MetadataType) {
 export function metadataResultToUniversalEntity(entity: { id: string; metadataResult: MetadataResult }): UniversalMediaEntity {
   const result = entity.metadataResult
   const categoryLabel = metadataTypeLabel(result.type)
-  const detail = result.provider || result.genre || result.year || categoryLabel
+  const detail = cleanDisplayText(result.provider || result.genre || result.year || categoryLabel)
+  const title = cleanDisplayText(result.title)
+  const creator = cleanDisplayText(result.creator)
 
   return {
     id: entity.id,
-    name: result.title,
+    name: title,
     type: metadataTypeToEntityType(result.type),
     categoryLabel,
-    artworkUrl: resolveArtworkUrl(result.coverUrl || '', result.title, result.type),
+    artworkUrl: resolveArtworkUrl(result.coverUrl || '', title, result.type),
     providerId: result.providerId,
     explicit: result.explicit,
     preferWikipediaArtwork:
@@ -114,10 +120,10 @@ export function metadataResultToUniversalEntity(entity: { id: string; metadataRe
       ),
     gameMetadata: result.gameMetadata,
     description:
-      result.summary ||
-      `Catalog entry for ${result.title}${result.creator ? ` by ${result.creator}` : ''} in The Commonplace community archive.`,
-    metadataChips: [
-      { label: creatorLabelForMetadata(result.type), value: result.creator || 'Unknown' },
+      cleanDisplayText(result.summary) ||
+      `Catalog entry for ${title}${creator ? ` by ${creator}` : ''} in The Commonplace community archive.`,
+    metadataChips: cleanMetadataChips([
+      { label: creatorLabelForMetadata(result.type), value: creator || 'Unknown' },
       { label: 'Category', value: categoryLabel },
       ...(result.type === 'song' && result.provider
         ? [{ label: 'Album', value: result.provider }]
@@ -131,7 +137,7 @@ export function metadataResultToUniversalEntity(entity: { id: string; metadataRe
         : []),
       ...(result.year && detail !== result.year ? [{ label: 'Release Year', value: result.year }] : []),
       ...(result.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
-    ],
+    ]),
     communityRating: {
       average: 4.7,
       count: 0,

@@ -125,4 +125,27 @@ describe('human screen-credit classification', () => {
       genre_ids: [10767],
     }, 'Taylor Swift')).toBe('acting')
   })
+
+  it('keeps directing, writing, and producing credits in distinct role groups', () => {
+    expect(classifyHumanScreenCredit({
+      id: 9,
+      media_type: 'movie',
+      title: 'All Too Well: The Short Film',
+      job: 'Director',
+    }, 'Taylor Swift')).toBe('directing')
+
+    expect(classifyHumanScreenCredit({
+      id: 10,
+      media_type: 'movie',
+      title: 'All Too Well: The Short Film',
+      job: 'Writer',
+    }, 'Taylor Swift')).toBe('writing')
+
+    expect(classifyHumanScreenCredit({
+      id: 11,
+      media_type: 'movie',
+      title: 'Taylor Swift: The Eras Tour',
+      job: 'Producer',
+    }, 'Taylor Swift')).toBe('producing')
+  })
 })

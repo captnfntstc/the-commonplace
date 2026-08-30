@@ -1,8 +1,9 @@
 import React from 'react'
 import { motion } from 'framer-motion'
-import { User, X, BookOpen, Disc3, Clapperboard, Gamepad2, Music4, Tv, Calendar, Award } from 'lucide-react'
+import { User, X, BookOpen, Calendar, Award } from 'lucide-react'
 import type { Entry as CardEntry } from '../features/entries/model'
 import { StarRating } from './CommonplaceCard/CardHeader'
+import { getEntryTypeIcon } from '../utils/mediaIcons'
 
 interface UserProfileModalProps {
   isOpen: boolean
@@ -121,18 +122,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           ) : (
             <div className="profile-reviews-list">
               {entries.map((entry) => {
-                const getIcon = () => {
-                  switch (entry.type) {
-                    case 'album': return Disc3
-                    case 'book': return BookOpen
-                    case 'film': return Clapperboard
-                    case 'game': return Gamepad2
-                    case 'song': return Music4
-                    case 'tv': return Tv
-                    default: return BookOpen
-                  }
-                }
-                const Icon = getIcon()
+                const Icon = getEntryTypeIcon(entry.type)
 
                 return (
                   <div

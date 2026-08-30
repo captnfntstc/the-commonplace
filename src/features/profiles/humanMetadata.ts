@@ -23,54 +23,14 @@ export function getDominantCatalogGenre(items: CollectionItem[]) {
     .sort((left, right) => right.count - left.count || left.firstIndex - right.firstIndex)[0]?.label
 }
 
-function professionFromBiography(type: HumanEntityType, description: string, fallback: string) {
-  const intro = description.slice(0, 320)
-  const rules: Partial<Record<HumanEntityType, Array<[RegExp, string]>>> = {
-    artist: [
-      [/\bband\b/i, 'Band'],
-      [/\bduo\b/i, 'Duo'],
-      [/\bgroup\b/i, 'Group'],
-      [/\bsinger-songwriter\b/i, 'Singer-songwriter'],
-      [/\brapper\b/i, 'Rapper'],
-      [/\bsinger\b/i, 'Singer'],
-      [/\bmusician\b/i, 'Musician'],
-    ],
-    author: [
-      [/\bnovelist\b/i, 'Novelist'],
-      [/\bpoet\b/i, 'Poet'],
-      [/\bwriter\b/i, 'Writer'],
-      [/\bauthor\b/i, 'Author'],
-    ],
-    director: [
-      [/\bfilmmaker\b/i, 'Filmmaker'],
-      [/\bfilm director\b/i, 'Film Director'],
-      [/\bdirector\b/i, 'Director'],
-    ],
-    creator: [
-      [/\btelevision producer\b/i, 'Television Producer'],
-      [/\bscreenwriter\b/i, 'Screenwriter'],
-      [/\bproducer\b/i, 'Producer'],
-      [/\bcreator\b/i, 'Creator'],
-    ],
-    actor: [
-      [/\bactress\b/i, 'Actress'],
-      [/\bactor\b/i, 'Actor'],
-    ],
-  }
-
-  return rules[type]?.find(([pattern]) => pattern.test(intro))?.[1] || fallback
-}
-
 export function buildHumanMetadata(options: {
   type: HumanEntityType
   description: string
   fallbackProfession: string
   catalogGenre?: string
 }): MetadataChip[] {
-  const { type, description, fallbackProfession, catalogGenre } = options
-  const chips: MetadataChip[] = [
-    { label: 'Profession', value: professionFromBiography(type, description, fallbackProfession) },
-  ]
+  const { type, description, catalogGenre } = options
+  const chips: MetadataChip[] = []
 
   if (catalogGenre && !/^(book|genre match)$/i.test(catalogGenre.trim())) {
     chips.push({ label: 'Genre', value: catalogGenre.trim() })
@@ -89,7 +49,7 @@ export function buildHumanMetadata(options: {
   }
 
   if (formedMatch?.[1]) chips.push({ label: 'Formed', value: formedMatch[1] })
-  else if (bornMatch?.[1]) chips.push({ label: 'Born', value: bornMatch[1] })
+  else if (bornMatch?.[1]) chips.push({ label: 'Birthday', value: bornMatch[1] })
 
   return chips.slice(0, 4)
 }

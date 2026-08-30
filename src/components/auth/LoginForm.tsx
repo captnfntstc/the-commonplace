@@ -1,21 +1,26 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Mail, Lock, AlertCircle, Info } from 'lucide-react'
 import { FormInput } from './FormInput'
 import { PasswordInput } from './PasswordInput'
 import { AuthDivider } from './Divider'
 import { AuthToast } from './AuthToast'
 import { SocialSignIn } from './SocialSignIn'
+import { useAuth } from '../../context/AuthContext'
 
 interface LoginFormProps {
   onSwitchToRegister: () => void
 }
 
 export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
+  const navigate = useNavigate()
+  const { login, resetPassword, loginWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [rememberMe, setRememberMe] = useState(false)
   const [genericError, setGenericError] = useState<string | null>(null)
   const [submitted, setSubmitted] = useState(false)
+  const [loading, setLoading] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
 
   // Forgot password flow state: 'login' | 'forgot' | 'reset-sent'
@@ -24,44 +29,89 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   const [resetError, setResetError] = useState<string | null>(null)
   const [sentEmailTarget, setSentEmailTarget] = useState('')
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setGenericError(null)
 
-    const trimmedInput = email.trim().toLowerCase()
+    const trimmedInput = email.trim()
+    if (!trimmedInput || !password) {
+      setGenericError('Please enter email and password.')
+      return
+    }
 
-    // Test credentials check: admin (or admin@example.com / admin@commonplace.app) + password
-    const isValidAdminUser =
-      trimmedInput === 'admin' ||
-      trimmedInput === 'admin@example.com' ||
-      trimmedInput === 'admin@commonplace.app'
-
-    if (isValidAdminUser && password === 'password') {
+    try {
+      setLoading(true)
+      await login(trimmedInput, password)
       setSubmitted(true)
-      setToastMessage('✦ Logged in successfully as admin! (Simulation mode)')
-    } else {
-      // Unified generic security error - does not reveal specific field mistakes
-      setGenericError('Invalid email or password.')
+      setToastMessage('✦ Logged in successfully!')
+      setTimeout(() => {
+        navigate('/')
+      }, 600)
+    } catch (err: unknown) {
+      const message = (err as Error)?.message || 'Invalid email or password.'
+      if (
+        message.includes('auth/invalid-credential') ||
+        message.includes('auth/user-not-found') ||
+        message.includes('auth/wrong-password') ||
+        message.includes('auth/invalid-email')
+      ) {
+        setGenericError('Invalid email or password.')
+      } else {
+        setGenericError(message.replace(/^Firebase:\s*/, ''))
+      }
+    } finally {
+      setLoading(false)
     }
   }
 
-  const handleResetSubmit = (e: React.FormEvent) => {
+  const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const trimmed = resetInput.trim()
     if (!trimmed) {
-      setResetError('Please enter your email or username.')
+      setResetError('Please enter your email address.')
       return
     }
 
     const resolvedEmail = trimmed.includes('@') ? trimmed : `${trimmed}@commonplace.app`
-    setSentEmailTarget(resolvedEmail)
-    setViewMode('reset-sent')
-    setToastMessage(`✦ Reset email dispatched to ${resolvedEmail}`)
+    try {
+      setLoading(true)
+      await resetPassword(resolvedEmail)
+      setSentEmailTarget(resolvedEmail)
+      setViewMode('reset-sent')
+      setToastMessage(`✦ Reset email dispatched to ${resolvedEmail}`)
+    } catch (err: unknown) {
+      setResetError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Failed to send reset link.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSelectProvider = async (provider: string) => {
+    if (provider === 'Google') {
+      try {
+        setLoading(true)
+        await loginWithGoogle()
+        setToastMessage('✦ Logged in with Google successfully!')
+        setTimeout(() => {
+          navigate('/')
+        }, 600)
+      } catch (err: unknown) {
+        setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Google login failed.')
+      } finally {
+        setLoading(false)
+      }
+    } else {
+      setToastMessage(`✦ ${provider} login simulation selected.`)
+    }
   }
 
   const handleGuestClick = () => {
     setToastMessage('✦ Continuing as Guest reader...')
+    setTimeout(() => {
+      navigate('/')
+    }, 400)
   }
+
 
   if (submitted) {
     return (
@@ -205,7 +255,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
         {/* Test Credential Hint Banner */}
         <div className="auth-test-credentials-box">
           <Info size={14} className="test-cred-icon" />
-          <span>Test login — <strong>User:</strong> admin | <strong>Password:</strong> password</span>
+          <span>Test login — <strong>User:</strong> jimb0iii | <strong>Password:</strong> password</span>
         </div>
 
         {/* Unified Generic Error Message */}
@@ -223,7 +273,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
             label="Email or Username"
             type="text"
             autoComplete="username"
-            placeholder="admin or you@example.com"
+            placeholder="jimb0iii or you@example.com"
             value={email}
             onChange={(e) => {
               setEmail(e.target.value)
@@ -273,16 +323,14 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
         </div>
 
         {/* Primary CTA */}
-        <button type="submit" id="btn-login" className="auth-primary-btn">
-          Log In
+        <button type="submit" id="btn-login" className="auth-primary-btn" disabled={loading}>
+          {loading ? 'Logging in...' : 'Log In'}
         </button>
 
         {/* Social Sign In Options */}
         <SocialSignIn
           mode="login"
-          onSelectProvider={(provider) =>
-            setToastMessage(`✦ ${provider} log-in simulated.`)
-          }
+          onSelectProvider={handleSelectProvider}
         />
 
         <AuthDivider label="OR" />

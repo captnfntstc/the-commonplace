@@ -1,13 +1,17 @@
 import {
   entityImageCacheMap,
+  sanitizeYearRange,
   type MetadataResult,
   type MetadataType,
 } from '../../metadata'
 import type { SearchMediaResult } from '../../components/Search/PrimarySearch'
-import type { MediaEntityType, UniversalMediaEntity } from '../../types/mediaEntity'
+import type { HumanCapabilities, HumanProviderIds, MediaEntityType, UniversalMediaEntity } from '../../types/mediaEntity'
+import { areHumanIdentitiesComparableForDisambiguation, professionLabel } from '../profiles/humanProfile'
 import { createArtworkPlaceholder } from '../../utils/artwork'
 import { MOCK_ENTITY_PROFILES } from '../../data/entityProfiles'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../../data/universalMediaEntities'
+
+import { extractCanonicalGameTitle, isPatchOrUpdateTitle } from '../../utils/gameMetadata'
 
 export function getSearchEntityArtwork(entity: {
   id: string
@@ -15,7 +19,6 @@ export function getSearchEntityArtwork(entity: {
   artworkUrl: string
   type: string
 }) {
-  const cleanTitle = entity.title.toLowerCase()
   const mockProfile = MOCK_ENTITY_PROFILES[entity.id]
   const universalEntity = UNIVERSAL_MEDIA_ENTITIES[entity.id]
   const isMusicMedia = entity.type === 'album' || entity.type === 'song'
@@ -33,10 +36,7 @@ export function getSearchEntityArtwork(entity: {
 
   return (
     entityImageCacheMap.get(`${entity.type}:${entity.id}`) ||
-    entityImageCacheMap.get(`${entity.type}:${cleanTitle}`) ||
-    entityImageCacheMap.get(`wiki-portrait-v6:${cleanTitle}`) ||
     entityImageCacheMap.get(entity.id) ||
-    entityImageCacheMap.get(cleanTitle) ||
     universalEntity?.artworkUrl ||
     mockProfile?.coverUrl ||
     entity.artworkUrl ||
@@ -104,6 +104,72 @@ export function metadataResultToSearchEntity(result: MetadataResult, rank: numbe
     source: 'metadata',
     rank,
     metadataResult: result,
+  }
+}
+
+function emptyHumanCapabilities(overrides: Partial<HumanCapabilities> = {}): HumanCapabilities {
+  return {
+    topSongs: false,
+    discography: false,
+    filmography: false,
+    publishedWorks: false,
+    directing: false,
+    creating: false,
+    producing: false,
+    writing: false,
+    ...overrides,
+  }
+}
+
+export function providerScopedMusicIdentityFromMetadataResult(result: MetadataResult): UniversalMediaEntity | undefined {
+  if (result.type !== 'album' && result.type !== 'song') return undefined
+  const artistId = String(result.providerArtistId || '').trim()
+  const artistName = result.creator.trim()
+  if (!artistName || !/^\d+$/.test(artistId)) return undefined
+
+  const canonicalId = `human:itunes:${artistId}`
+  const providerIds: HumanProviderIds = { itunesArtistId: artistId }
+  const description = result.genre ? `${result.genre} artist` : 'Music artist'
+  const knownFor = [result.provider, result.title].filter(Boolean).slice(0, 2)
+
+  return {
+    id: canonicalId,
+    name: artistName,
+    type: 'human',
+    categoryLabel: 'Musician',
+    artworkUrl: '',
+    description,
+    identity: {
+      canonicalId,
+      kind: 'human',
+      name: artistName,
+      primaryProfession: 'musician',
+      professions: ['musician'],
+      occupationLabels: ['Musician'],
+      description,
+      portraitUrl: '',
+      birthYear: '',
+      country: '',
+      knownFor,
+      providerIds,
+    },
+    humanProfile: {
+      canonicalId,
+      primaryProfession: 'musician',
+      professions: ['musician'],
+      occupationLabels: ['Musician'],
+      providerIds,
+      capabilities: emptyHumanCapabilities({ topSongs: true, discography: true }),
+    },
+    metadataChips: [
+      { label: 'Profession', value: 'Musician' },
+      ...(knownFor.length > 0 ? [{ label: 'Known For', value: knownFor.join(', ') }] : []),
+    ],
+    communityRating: {
+      average: 0,
+      count: 0,
+      distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+    },
   }
 }
 
@@ -175,23 +241,34 @@ export function universalEntityToSearchEntity(entity: UniversalMediaEntity, rank
   }
 }
 
-export function artistRoleFromDescription(bio: string): string {
+export function humanRoleFromDescription(bio: string): string {
   const text = bio.toLowerCase()
   const patterns: Array<[RegExp, string]> = [
+    [/voice act(?:or|ress)|voice artist/, 'Voice Actor'],
     [/singer[\s-]songwriter/, 'Singer-Songwriter'],
+    [/rapper/, 'Rapper'],
+    [/novelist/, 'Novelist'],
+    [/poet/, 'Poet'],
+    [/film director|filmmaker/, 'Director'],
+    [/screenwriter|showrunner/, 'Screenwriter'],
+    [/act(?:or|ress)/, 'Actor'],
+    [/comedian/, 'Comedian'],
+    [/author|writer/, 'Author'],
     [/songwriter/, 'Songwriter'],
     [/composer/, 'Composer'],
-    [/rapper/, 'Rapper'],
-    [/record producer|music producer/, 'Record Producer'],
-    [/singer/, 'Singer'],
+    [/record producer|music producer/, 'Producer'],
+    [/singer|vocalist/, 'Singer'],
     [/duo/, 'Musical Duo'],
-    [/band|group/, 'Musician'],
+    [/band|group/, 'Band'],
+    [/musician/, 'Musician'],
   ]
   for (const [re, label] of patterns) {
     if (re.test(text)) return label
   }
   return ''
 }
+
+export const artistRoleFromDescription = humanRoleFromDescription
 
 export function isCollaborationCredit(value: string) {
   return /(?:\s&\s|\s\/\s|\s\+\s|\bfeat\.?\b|\bfeaturing\b|\bwith\b|,\s*)/i.test(value)
@@ -243,6 +320,8 @@ export function searchCategoryAndType(entity: HeaderSearchEntity): {
   switch (entity.type) {
     case 'human':
       return { category: 'people', type: 'human' }
+    case 'music_group':
+      return { category: 'people', type: 'music_group' }
     case 'artist':
       return { category: 'people', type: 'artist' }
     case 'author':
@@ -298,19 +377,13 @@ export function searchResultSubtitle(entity: HeaderSearchEntity): string {
 
   switch (entity.type) {
     case 'human':
-      return creator || entity.universalEntity?.categoryLabel || 'Person'
-    case 'artist': {
-      const role = artistRoleFromDescription(entity.bio)
-      return role || creator || 'Artist'
-    }
+    case 'music_group':
+    case 'artist':
     case 'author':
-      return creator || 'Author'
     case 'director':
-      return creator || 'Director'
     case 'creator':
-      return creator || 'Creator'
     case 'actor':
-      return creator || 'Actor'
+      return ''
     case 'game_studio':
       return creator || 'Game Studio'
     case 'album':
@@ -325,7 +398,7 @@ export function searchResultSubtitle(entity: HeaderSearchEntity): string {
     case 'tv':
     case 'show':
     case 'series': {
-      const yearLabel = year ? `${year}–` : ''
+      const yearLabel = year ? sanitizeYearRange(year) : ''
       return yearLabel || creator || 'TV Show'
     }
     case 'game':
@@ -333,6 +406,27 @@ export function searchResultSubtitle(entity: HeaderSearchEntity): string {
     default:
       return creator
   }
+}
+
+export function searchResultBadge(entity: HeaderSearchEntity): string {
+  const identity = entity.universalEntity?.identity
+  if (entity.type === 'music_group') return 'Music Group'
+  if (identity?.primaryProfession) return professionLabel(identity.primaryProfession)
+  if (entity.universalEntity?.humanProfile?.primaryProfession) {
+    return professionLabel(entity.universalEntity.humanProfile.primaryProfession)
+  }
+  if (['human', 'artist', 'author', 'director', 'creator', 'actor'].includes(entity.type)) {
+    return humanRoleFromDescription(entity.bio) || creatorRoleLabel(entity) || 'Human'
+  }
+  return ''
+}
+
+function creatorRoleLabel(entity: HeaderSearchEntity) {
+  const creator = entity.creatorValue.replace(/^[^:]+:\s*/, '').trim()
+  if (creator && !/^(?:human|person)$/i.test(creator)) return creator
+  return entity.type !== 'human'
+    ? entity.type.charAt(0).toUpperCase() + entity.type.slice(1)
+    : ''
 }
 
 export function toSearchMediaResult(entity: HeaderSearchEntity): SearchMediaResult {
@@ -344,6 +438,7 @@ export function toSearchMediaResult(entity: HeaderSearchEntity): SearchMediaResu
     category,
     type,
     subtitle: searchResultSubtitle(entity),
+    badge: searchResultBadge(entity) || undefined,
     explicit: entity.explicit,
     preferWikipediaArtwork: entity.preferWikipediaArtwork,
   }
@@ -354,6 +449,9 @@ export function getEntityPopularityScore(entity: HeaderSearchEntity): number {
   if (entity.universalEntity) {
     const { count, average } = entity.universalEntity.communityRating
     score += count * average
+    const identityPopularity = entity.universalEntity.identity?.popularity
+    score += Number(identityPopularity?.wikidataSitelinks || 0) * 100
+    score += Number(identityPopularity?.tmdb || 0) * 500
   }
 
   if (entity.metadataResult?.gamePopularity) {
@@ -364,9 +462,23 @@ export function getEntityPopularityScore(entity: HeaderSearchEntity): number {
   const rankScore = Math.max(0, 12000 - entity.rank * 1000)
   score += rankScore
 
-  // Keep first-class people discoverable without privileging a hardcoded list.
-  if (entity.type === 'artist' || entity.type === 'author' || entity.type === 'director') {
-    score += 5000
+  // Only grant a person popularity boost if the person has verified popularity signals
+  // (e.g. a curated profile, an explicit cover image, or multiple source evidence).
+  // Unverified/obscure synthesized people with 0-1 evidence sources do not receive an artificial boost.
+  const isPerson = ['human', 'music_group', 'artist', 'author', 'director', 'creator', 'actor', 'game_studio'].includes(entity.type)
+  if (isPerson) {
+    const hasCuratedProfile = Boolean(entity.universalEntity)
+    const hasMultipleEvidence = (entity.evidenceSourceCount || 0) > 1 || (entity.evidenceCount || 0) >= 3
+    const hasImage = Boolean(entity.artworkUrl)
+
+    if (hasCuratedProfile) {
+      score += 5000
+    } else if (hasMultipleEvidence && hasImage) {
+      score += 3000
+    } else if (!hasMultipleEvidence && !hasCuratedProfile && !hasImage) {
+      // Unpopular / low-evidence person entry — penalize slightly so real media items rank higher
+      score -= 3000
+    }
   }
 
   score += Math.min(entity.evidenceCount || 0, 20) * 250
@@ -419,26 +531,93 @@ export function getSearchEntityScore(entity: HeaderSearchEntity, normalizedQuery
     matchTier = 100000
   }
 
+  // If a person entity is NOT an exact title match AND has low popularity / no profile / no image,
+  // do not allow it to outrank media items whose creator exact-matches the search query.
+  const isPerson = ['human', 'artist', 'author', 'director', 'creator', 'actor', 'game_studio'].includes(entity.type)
+  if (isPerson && !titleExact) {
+    const isUnverifiedPerson = !entity.universalEntity && !entity.artworkUrl && (entity.evidenceCount || 0) < 2
+    if (isUnverifiedPerson && matchTier > 250000) {
+      matchTier = 250000
+    }
+  }
+
   const popularity = getEntityPopularityScore(entity)
-  const popularityBoost = Math.min(250000, popularity * 10)
+  const popularityBoost = Math.max(0, Math.min(250000, popularity * 10))
   const artworkBonus = entity.artworkUrl ? 3000 : 0
 
   return matchTier + popularityBoost + artworkBonus
 }
 
 export function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
-  const seen = new Set<string>()
-  return entities.filter((entity) => {
+  const groups = new Map<string, HeaderSearchEntity[]>()
+
+  for (const entity of entities) {
     const creatorKey = normalizeSearchText(entity.creatorValue.replace(/^[^:]+:\s*/, ''))
     const releaseYear = searchResultYear(entity)
     const usesReleaseIdentity = ['movie', 'film', 'tv', 'show', 'series', 'game'].includes(entity.type)
-    const key = usesReleaseIdentity
-      ? `${entity.type}:${normalizeSearchText(entity.title)}:${releaseYear || creatorKey}`
-      : `${entity.type}:${normalizeSearchText(entity.title)}:${creatorKey}`
-    const idKey = entity.id.toLowerCase()
-    if (seen.has(idKey) || seen.has(key)) return false
-    seen.add(idKey)
-    seen.add(key)
-    return true
+
+    let rawTitle = entity.title
+    if (entity.type === 'game' && isPatchOrUpdateTitle(rawTitle)) {
+      rawTitle = extractCanonicalGameTitle(rawTitle)
+    }
+
+    const cleanTitle = normalizeSearchText(rawTitle).replace(/\b(clean|clean version|edited)\b/g, '').trim()
+    const stableIdentityId = ['human', 'music_group'].includes(entity.type) && entity.universalEntity?.identity
+      ? entity.universalEntity.identity.canonicalId
+      : ''
+    const key = stableIdentityId
+      ? `${entity.type}:${stableIdentityId}`
+      : usesReleaseIdentity
+      ? `${entity.type}:${cleanTitle}:${releaseYear || creatorKey}`
+      : `${entity.type}:${cleanTitle}:${creatorKey}`
+
+    const group = groups.get(key) || []
+    const normalizedEntity = (entity.type === 'game' && isPatchOrUpdateTitle(entity.title))
+      ? { ...entity, title: rawTitle }
+      : entity
+
+    group.push(normalizedEntity)
+    groups.set(key, group)
+  }
+
+  const result: HeaderSearchEntity[] = []
+  for (const group of groups.values()) {
+    const preferred =
+      group.find((e) => e.explicit) ||
+      group.find((e) => !/\bclean\b/i.test(e.title)) ||
+      group[0]
+    result.push(preferred)
+  }
+
+  const portraitTypes = new Set(['human', 'music_group', 'artist', 'author', 'director', 'creator', 'actor'])
+  const peopleByName = new Map<string, HeaderSearchEntity[]>()
+  result.forEach((entity) => {
+    if (!portraitTypes.has(entity.type)) return
+    const key = normalizeSearchText(entity.title)
+    const group = peopleByName.get(key) || []
+    group.push(entity)
+    peopleByName.set(key, group)
   })
+
+  const peopleToKeep = new Set<HeaderSearchEntity>()
+  for (const sameNamePeople of peopleByName.values()) {
+    const ranked = [...sameNamePeople].sort((left, right) => (
+      getEntityPopularityScore(right) - getEntityPopularityScore(left)
+    ))
+    const primary = ranked[0]
+    if (!primary) continue
+    peopleToKeep.add(primary)
+    const primaryIdentity = primary.universalEntity?.identity
+    if (!primaryIdentity) continue
+
+    ranked.slice(1).forEach((candidate) => {
+      const candidateIdentity = candidate.universalEntity?.identity
+      if (!candidateIdentity || candidateIdentity.canonicalId === primaryIdentity.canonicalId) return
+      if (areHumanIdentitiesComparableForDisambiguation(primaryIdentity, candidateIdentity)) {
+        peopleToKeep.add(candidate)
+      }
+    })
+  }
+
+  return result.filter((entity) => !portraitTypes.has(entity.type) || peopleToKeep.has(entity))
 }

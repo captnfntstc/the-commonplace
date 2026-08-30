@@ -60,10 +60,12 @@ export async function fetchLastFmSimilarArtists(
   limit = DEFAULT_RESULT_LIMIT,
   env = process.env,
   fetchImpl = fetch,
+  musicBrainzId = '',
 ) {
   const cleanName = String(artistName || '').trim()
-  if (!cleanName) {
-    const error = new Error('An artist name is required.')
+  const cleanMusicBrainzId = String(musicBrainzId || '').trim()
+  if (!cleanName && !cleanMusicBrainzId) {
+    const error = new Error('A verified artist identity is required.')
     error.statusCode = 400
     throw error
   }
@@ -76,7 +78,8 @@ export async function fetchLastFmSimilarArtists(
   try {
     const url = new URL(LASTFM_API_URL)
     url.searchParams.set('method', 'artist.getsimilar')
-    url.searchParams.set('artist', cleanName)
+    if (cleanMusicBrainzId) url.searchParams.set('mbid', cleanMusicBrainzId)
+    else url.searchParams.set('artist', cleanName)
     url.searchParams.set('api_key', apiKey)
     url.searchParams.set('format', 'json')
     url.searchParams.set('autocorrect', '1')
@@ -114,12 +117,125 @@ export async function fetchLastFmSimilarArtists(
   }
 }
 
+export async function fetchLastFmSimilarAlbums(
+  albumName,
+  artistName,
+  limit = DEFAULT_RESULT_LIMIT,
+  env = process.env,
+  fetchImpl = fetch,
+) {
+  const cleanAlbum = String(albumName || '').trim()
+  const cleanArtist = String(artistName || '').trim()
+  if (!cleanAlbum) {
+    const error = new Error('An album name is required.')
+    error.statusCode = 400
+    throw error
+  }
+
+  const apiKey = getLastFmApiKey(env)
+  const safeLimit = requestedLimit(limit)
+  const timeoutController = new AbortController()
+  const timeout = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS)
+
+  try {
+    const url = new URL(LASTFM_API_URL)
+    url.searchParams.set('method', 'album.getsimilar')
+    url.searchParams.set('album', cleanAlbum)
+    if (cleanArtist) url.searchParams.set('artist', cleanArtist)
+    url.searchParams.set('api_key', apiKey)
+    url.searchParams.set('format', 'json')
+    url.searchParams.set('autocorrect', '1')
+    url.searchParams.set('limit', String(safeLimit))
+
+    const response = await fetchImpl(url, {
+      headers: { Accept: 'application/json' },
+      signal: timeoutController.signal,
+    })
+
+    if (response.ok) {
+      const data = await response.json()
+      const rawAlbums = data?.similaralbums?.album || []
+      const albums = rawAlbums.map((item) => ({
+        title: String(item.name || '').trim(),
+        artist: String(item.artist?.name || item.artist || '').trim(),
+        url: typeof item.url === 'string' ? item.url : '',
+      })).filter((item) => item.title && item.artist)
+
+      if (albums.length > 0) {
+        return {
+          album: cleanAlbum,
+          artist: cleanArtist,
+          source: 'Last.fm',
+          albums: albums.slice(0, safeLimit),
+        }
+      }
+    }
+  } catch {
+    // If album.getsimilar is unavailable, try fallback below
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  // Fallback: fetch similar artists from Last.fm and return their top albums
+  try {
+    if (cleanArtist) {
+      const similarArtistRes = await fetchLastFmSimilarArtists(cleanArtist, 6, env, fetchImpl)
+      const topAlbums = []
+      for (const simArtist of (similarArtistRes.artists || []).slice(0, 5)) {
+        const url = new URL(LASTFM_API_URL)
+        url.searchParams.set('method', 'artist.gettopalbums')
+        url.searchParams.set('artist', simArtist.name)
+        url.searchParams.set('api_key', apiKey)
+        url.searchParams.set('format', 'json')
+        url.searchParams.set('limit', '3')
+
+        const res = await fetchImpl(url, { signal: timeoutController.signal })
+        if (res.ok) {
+          const data = await res.json()
+          const items = data?.topalbums?.album || []
+          for (const item of items) {
+            const title = String(item.name || '').trim()
+            if (title && !/null|undefined/i.test(title)) {
+              topAlbums.push({ title, artist: simArtist.name })
+            }
+          }
+        }
+      }
+
+      if (topAlbums.length > 0) {
+        return {
+          album: cleanAlbum,
+          artist: cleanArtist,
+          source: 'Last.fm',
+          albums: topAlbums.slice(0, safeLimit),
+        }
+      }
+    }
+  } catch {
+    // Ignore fallback errors
+  }
+
+  return { album: cleanAlbum, artist: cleanArtist, source: 'Last.fm', albums: [] }
+}
+
 export async function handleLastFmApiRequest(requestUrl, env = process.env) {
   const url = new URL(requestUrl, 'http://localhost')
-  if (!/^\/api\/lastfm\/similar-artists\/?$/.test(url.pathname)) return undefined
-  return fetchLastFmSimilarArtists(
-    url.searchParams.get('artist') || '',
-    url.searchParams.get('limit') || DEFAULT_RESULT_LIMIT,
-    env,
-  )
+  if (/^\/api\/lastfm\/similar-artists\/?$/.test(url.pathname)) {
+    return fetchLastFmSimilarArtists(
+      url.searchParams.get('artist') || '',
+      url.searchParams.get('limit') || DEFAULT_RESULT_LIMIT,
+      env,
+      undefined,
+      url.searchParams.get('mbid') || '',
+    )
+  }
+  if (/^\/api\/lastfm\/similar-albums\/?$/.test(url.pathname)) {
+    return fetchLastFmSimilarAlbums(
+      url.searchParams.get('album') || '',
+      url.searchParams.get('artist') || '',
+      url.searchParams.get('limit') || DEFAULT_RESULT_LIMIT,
+      env,
+    )
+  }
+  return undefined
 }

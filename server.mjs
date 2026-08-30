@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { handleFanartApiRequest } from './server/fanart.mjs'
 import { handleIgdbApiRequest } from './server/igdb.mjs'
 import { handleLastFmApiRequest } from './server/lastfm.mjs'
+import { handleIdentityApiRequest } from './server/identities.mjs'
+import { handleOpenLibraryApiRequest } from './server/openlibrary.mjs'
 
 const root = fileURLToPath(new URL('.', import.meta.url))
 const distRoot = join(root, 'dist')
@@ -59,6 +61,18 @@ createServer(async (request, response) => {
 
     if (request.method === 'GET' && request.url?.startsWith('/api/lastfm/')) {
       const payload = await handleLastFmApiRequest(request.url)
+      if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
+      return sendJson(response, 200, payload)
+    }
+
+    if (request.method === 'GET' && request.url?.startsWith('/api/identities/')) {
+      const payload = await handleIdentityApiRequest(request.url)
+      if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
+      return sendJson(response, 200, payload)
+    }
+
+    if (request.method === 'GET' && request.url?.startsWith('/api/openlibrary/')) {
+      const payload = await handleOpenLibraryApiRequest(request.url)
       if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
       return sendJson(response, 200, payload)
     }

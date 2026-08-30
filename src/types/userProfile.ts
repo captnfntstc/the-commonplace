@@ -11,4 +11,5 @@ export type UserProfileState = {
   showFollowLists?: boolean
   allowComments?: boolean
   isPrivate?: boolean
+  showSavedActivity?: boolean
 }

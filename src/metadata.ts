@@ -29,6 +29,7 @@ export type MetadataResult = {
   /** Publisher, label, year, studio, or genre */
   provider: string
   providerId: string
+  providerArtistId?: string
   genre?: string
   genres?: string[]
   language?: string
@@ -44,6 +45,17 @@ export type MetadataResult = {
   gameMetadata?: GameMetadata
   /** Only populated by fetchLyrics — not present in search results */
   lyrics?: string
+}
+
+export function sanitizeYearRange(value?: string | null): string {
+  if (!value) return ''
+  const trimmed = value.trim()
+  const rangeMatch = trimmed.match(/^(\d{4})\s*[-–—]\s*(\d{4}|present)$/i)
+  if (rangeMatch) {
+    return `${rangeMatch[1]}–${rangeMatch[2].toLowerCase() === 'present' ? 'present' : rangeMatch[2]}`
+  }
+  const yearMatch = trimmed.match(/\b\d{4}\b/)
+  return yearMatch ? yearMatch[0] : trimmed
 }
 
 export function getMetadataProviderQuery(query: string, currentYear = new Date().getUTCFullYear()) {
@@ -74,7 +86,42 @@ type GoogleBooksVolume = {
     }
     categories?: string[]
     language?: string
+    industryIdentifiers?: Array<{ type?: string; identifier?: string }>
   }
+}
+
+export type OpenLibraryWorkDocument = {
+  key?: string
+  title?: string
+  author_key?: string[]
+  author_name?: string[]
+  publisher?: string[]
+  subtitle?: string | string[]
+  first_publish_year?: number
+  cover_i?: number
+  edition_count?: number
+  language?: string[]
+  subject?: string[]
+}
+
+export type CanonicalAuthoredWork = {
+  id: string
+  title: string
+  publicationDate?: string
+  imageUrl?: string
+}
+
+export type OpenLibraryEditionDocument = {
+  key?: string
+  title?: string
+  subtitle?: string
+  publish_date?: string
+  publishers?: string[]
+  languages?: Array<{ key?: string }>
+  covers?: number[]
+  isbn_10?: string[]
+  isbn_13?: string[]
+  physical_format?: string
 }
 
 type TmdbItem = {
@@ -202,34 +249,20 @@ export function preloadImages(urls: string[]) {
   for (const url of urls) preloadImage(url)
 }
 
-/**
- * Staggered portrait pre-warm for similar artists.
- * Fires portrait fetches with a 80ms jitter between each artist so they all
- * begin resolving before the user scrolls to the section, without hammering
- * external APIs in a simultaneous burst.
- */
+/** Starts every Similar Artists portrait request immediately. */
 export function warmSimilarArtistPortraits(
   artists: Array<{ id: string; name: string; type?: string }>,
   signal?: AbortSignal,
 ) {
-  artists.forEach((artist, i) => {
-    const delay = i * 80
-    const timer = window.setTimeout(async () => {
-      if (signal?.aborted) return
-      const cacheKey = `fanart-v3:${artist.name.toLowerCase().trim()}`
-      const wikiKey = `wiki-portrait-v6:${artist.name.toLowerCase().trim()}`
-      if (entityImageCacheMap.has(cacheKey) || entityImageCacheMap.has(wikiKey)) return
-      try {
-        const personType = artist.type === 'author' ? 'author' : 'artist'
-        const url = personType === 'artist'
-          ? await fetchArtistPortrait(artist.name, signal)
-          : await fetchWikipediaPortrait(artist.name, signal, personType as WikipediaPersonType)
-        if (url) preloadImage(url)
-      } catch {
-        // Ignore — this is a best-effort pre-warm
-      }
-    }, delay)
-    signal?.addEventListener('abort', () => clearTimeout(timer), { once: true })
+  artists.forEach((artist) => {
+    if (signal?.aborted) return
+    const personType = artist.type === 'author' ? 'author' : 'artist'
+    const request = personType === 'artist'
+      ? fetchSimilarArtistPortrait(artist.name)
+      : fetchWikipediaPortrait(artist.name, undefined, personType as WikipediaPersonType)
+    void request.then((url) => {
+      if (url) preloadImage(url)
+    }).catch(() => {})
   })
 }
 
@@ -538,6 +571,40 @@ export async function fetchArtistPortrait(
   }
 
   return ''
+}
+
+export function getSimilarArtistPortraitCacheKey(name: string) {
+  return `similar-artist-portrait-v1:${name.trim().toLowerCase()}`
+}
+
+/**
+ * Resolves the quickest verified portrait for a Similar Artists card. The
+ * request is shared by the pre-warmer and mounted card to prevent duplicates.
+ */
+export async function fetchSimilarArtistPortrait(name: string): Promise<string> {
+  const cleanName = name.trim().toLowerCase()
+  const cacheKey = getSimilarArtistPortraitCacheKey(name)
+  const existing = entityImageCacheMap.get(cacheKey)
+    || entityImageCacheMap.get(getArtistPortraitCacheKey(name))
+    || entityImageCacheMap.get(`wiki-portrait-v6:${cleanName}`)
+  if (existing) return existing
+
+  return sessionCachedApiRequest(cacheKey, undefined, async () => {
+    const requirePortrait = (request: Promise<string>) => request.then((url) => {
+      if (!url) throw new Error('Portrait source returned no image.')
+      return url
+    })
+    const url = await Promise.any([
+      requirePortrait(fetchWikipediaPortrait(name, undefined, 'artist')),
+      requirePortrait(fetchArtistPortrait(name)),
+    ]).catch(() => '')
+
+    if (url) {
+      entityImageCacheMap.set(cacheKey, url)
+      preloadImage(url)
+    }
+    return url
+  })
 }
 
 export interface DiscographyItem {
@@ -1313,11 +1380,87 @@ function extractItunesSingleCollections(
 }
 
 
-export async function fetchItunesDiscography(artistName: string, signal?: AbortSignal): Promise<DiscographyItem[]> {
-  const cacheKey = `itunes-discography-v4:${normalizeAlbumTitleForMatch(artistName)}`
+const NON_MUSIC_ITUNES_GENRES = new Set([
+  'spoken word',
+  'audiobooks',
+  'audiobook',
+  'speech',
+  'podcast',
+  'podcasts',
+  'poetry',
+  'non-fiction',
+  'educational',
+  'sound effects',
+  'hörbuch',
+  'hörspiele',
+  'radio play',
+  'audio drama',
+])
+
+const SPOKEN_WORD_KEYWORDS = [
+  'tribute',
+  'karaoke',
+  'instrumental',
+  'lullaby',
+  'string quartet',
+  'piano cover',
+  'piano tribute',
+  'relaxing',
+  'sleep music',
+  'workout mix',
+  'soundalike',
+  'various artists',
+  'party mix',
+  'ringtone',
+  'commentary',
+  'audiobook',
+  'audio book',
+  'hörbuch',
+  'hoerbuch',
+  'hörspiel',
+  'hoerspiel',
+  'podcasts',
+  'guided meditation',
+  'spoken word',
+  'radio play',
+  'dramatic reading',
+  'audio drama',
+  'essay',
+  'essays',
+  'lecture',
+  'lectures',
+  'gedichte',
+  'unabridged',
+  'abridged',
+]
+
+export function isNonMusicItunesRelease(item: ITunesSearchResult): boolean {
+  const genre = (item.primaryGenreName || '').toLowerCase().trim()
+  if (NON_MUSIC_ITUNES_GENRES.has(genre)) return true
+  if (/\b(?:spoken word|audiobooks?|speech|podcasts?|lecture|hörbuch|hörspiel|audio drama)\b/i.test(genre)) return true
+
+  const title = (item.collectionName || item.trackName || '').toLowerCase().trim()
+  const artist = (item.artistName || '').toLowerCase().trim()
+  if (SPOKEN_WORD_KEYWORDS.some((kw) => title.includes(kw) || artist.includes(kw))) {
+    return true
+  }
+
+  return false
+}
+
+export async function fetchItunesDiscography(
+  artistName: string,
+  signal?: AbortSignal,
+  verifiedArtistId?: string,
+): Promise<DiscographyItem[]> {
+  const cacheKey = verifiedArtistId
+    ? `itunes-discography-v4:id:${verifiedArtistId}`
+    : `itunes-discography-v4:${normalizeAlbumTitleForMatch(artistName)}`
   return cachedApiRequest(cacheKey, signal, async () => {
     try {
-      const artistId = await fetchItunesExactArtistId(artistName, signal)
+      const artistId = verifiedArtistId && /^\d+$/.test(verifiedArtistId)
+        ? Number(verifiedArtistId)
+        : await fetchItunesExactArtistId(artistName, signal)
       const albumsUrl = artistId
         ? `https://itunes.apple.com/lookup?id=${encodeURIComponent(String(artistId))}&entity=album&limit=200`
         : `https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=album&attribute=artistTerm&limit=200`
@@ -1344,33 +1487,10 @@ export async function fetchItunesDiscography(artistName: string, signal?: AbortS
       let results = [...albumResults, ...singleResults]
 
       results = results.filter((album: ITunesSearchResult) => {
-        const albumArtist = (album.artistName || '').toLowerCase().trim()
         const title = (album.collectionName || '').toLowerCase().trim()
         if (!title) return false
         if (!isStrictDiscographyArtistMatch(album, artistName, artistId)) return false
-        const junkKeywords = [
-          'tribute',
-          'karaoke',
-          'instrumental',
-          'lullaby',
-          'string quartet',
-          'piano cover',
-          'piano tribute',
-          'relaxing',
-          'sleep music',
-          'workout mix',
-          'soundalike',
-          'various artists',
-          'party mix',
-          'ringtone',
-          'commentary',
-          'audiobook',
-          'podcasts',
-          'guided meditation',
-        ]
-        if (junkKeywords.some((kw) => title.includes(kw) || albumArtist.includes(kw))) {
-          return false
-        }
+        if (isNonMusicItunesRelease(album)) return false
         return true
       })
 
@@ -1446,6 +1566,10 @@ export async function fetchItunesTopSongs(artistName: string, signal?: AbortSign
         const chartsData = (await chartsRes.json()) as any
         const chartEntries: any[] = chartsData?.feed?.entry || []
         const artistMatches = chartEntries.filter((entry: any) => {
+          const genre = (entry?.category?.attributes?.label || '').toLowerCase()
+          if (NON_MUSIC_ITUNES_GENRES.has(genre) || /\b(?:spoken word|audiobooks?|speech|podcast)\b/i.test(genre)) return false
+          const title = (entry?.['im:name']?.label || '').toLowerCase()
+          if (SPOKEN_WORD_KEYWORDS.some((kw) => title.includes(kw))) return false
           const artist = normalizeAlbumTitleForMatch(
             entry?.['im:artist']?.label || entry?.['im:name']?.label || ''
           )
@@ -1491,6 +1615,7 @@ export async function fetchItunesTopSongs(artistName: string, signal?: AbortSign
       const tracks = (data.results || [])
         .filter((item: any) => {
           if (item.wrapperType !== 'track' || item.kind !== 'song') return false
+          if (isNonMusicItunesRelease(item)) return false
           const trackArtist = normalizeAlbumTitleForMatch(item.artistName || '')
           if (artistId && Number(item.artistId) === artistId) return true
           return trackArtist === normalizedArtist
@@ -1719,62 +1844,29 @@ function mapItunesRelatedAlbum(item: ITunesSearchResult, language?: string): Dis
   }
 }
 
-type MusicBrainzReleaseLanguage = {
-  title?: string
-  'artist-credit'?: MBArtistCredit
-  'text-representation'?: { language?: string }
-}
-
-async function fetchAlbumLanguageMap(
-  albums: Array<{ title: string; artist?: string }>,
-  signal?: AbortSignal,
-) {
-  const uniqueAlbums = Array.from(new Map(
-    albums
-      .filter((album) => album.title.trim())
-      .map((album) => [
-        `${normalizeAlbumTitleForMatch(album.title)}:${normalizeAlbumTitleForMatch(album.artist || '')}`,
-        album,
-      ]),
-  ).values()).slice(0, 8)
-  if (uniqueAlbums.length === 0) return new Map<string, string>()
-
-  const cacheKey = `musicbrainz-album-languages-v1:${uniqueAlbums
-    .map((album) => `${normalizeAlbumTitleForMatch(album.title)}:${normalizeAlbumTitleForMatch(album.artist || '')}`)
-    .join('|')}`
-  return cachedApiRequest(cacheKey, signal, async () => {
-    try {
-      const query = uniqueAlbums.map((album) => {
-        const release = `release:"${escapeMusicBrainzSearchValue(album.title)}"`
-        const artist = album.artist?.trim()
-          ? ` AND artist:"${escapeMusicBrainzSearchValue(album.artist)}"`
-          : ''
-        return `(${release}${artist})`
-      }).join(' OR ')
-      const data = await mbGet<{ releases?: MusicBrainzReleaseLanguage[] }>(
-        'release',
-        { query, limit: '100' },
-        signal,
-      )
-      const languages = new Map<string, string>()
-      ;(data.releases || []).forEach((release) => {
-        const language = release['text-representation']?.language?.trim().toLowerCase()
-        if (!language || !release.title) return
-        const artist = artistsFrom(release['artist-credit'])
-        const key = `${normalizeAlbumTitleForMatch(release.title)}:${normalizeAlbumTitleForMatch(artist)}`
-        if (!languages.has(key)) languages.set(key, language)
-      })
-      return languages
-    } catch (error) {
-      if ((error as Error)?.name === 'AbortError') throw error
-      return new Map<string, string>()
-    }
-  })
-}
-
 export function isDerivativeRelatedAlbum(name: string, artist: string) {
-  return /\b(?:tribute|karaoke|lullab(?:y|ies)|music box|string quartet|instrumental (?:cover|version)|piano (?:cover|tribute)|covers? of|performs?|renditions?)\b/i
+  return /\b(?:tribute|tribute band|karaoke|lullab(?:y|ies)|music box|string quartet|string ensemble|instrumental (?:cover|version)|piano (?:cover|covers|tribute|tributes|version|versions)|orchestral (?:cover|covers|tribute|tributes|version|versions)|symphonic (?:cover|covers|tribute|version|versions)|covers? of|performs?|renditions?|soundalike|rockabye|sing[- ]along)\b/i
     .test(`${name} ${artist}`)
+}
+
+export function isVerifiedPeerAlbumCandidate(
+  item: ITunesSearchResult,
+  expectedArtistName: string,
+  expectedArtistId?: number,
+) {
+  if (!item.collectionName || !item.collectionId) return false
+  if (expectedArtistId && Number(item.artistId) !== expectedArtistId) return false
+  if (
+    normalizeAlbumTitleForMatch(item.artistName || item.collectionArtistName || '') !==
+    normalizeAlbumTitleForMatch(expectedArtistName)
+  ) return false
+  if (item.collectionType && item.collectionType !== 'Album') return false
+  if (isNonMusicItunesRelease(item)) return false
+  if (isDerivativeRelatedAlbum(item.collectionName, item.artistName || item.collectionArtistName || '')) return false
+  if (/\b(?:various artists?|various)\b/i.test(item.collectionArtistName || '')) return false
+  if (/\b(?:ep|single|sngle)\b/i.test(item.collectionName)) return false
+  if (Number(item.trackCount || 0) < 6) return false
+  return true
 }
 
 export function isSameAlbumVersionTitle(
@@ -1800,7 +1892,7 @@ export async function fetchRelatedAlbums(
   selectedYear?: string,
 ): Promise<DiscographyItem[]> {
   const cacheKey = [
-    'itunes-related-albums-v8',
+    'itunes-related-albums-v10',
     normalizeAlbumTitleForMatch(albumName),
     normalizeAlbumTitleForMatch(artistName || ''),
     normalizeAlbumTitleForMatch(genre || ''),
@@ -1814,29 +1906,46 @@ export async function fetchRelatedAlbums(
       const cleanArtist = artistName && artistName !== 'Artist' ? artistName.trim() : ''
       const cleanGenre = genre && genre !== 'Genre' ? genre.trim() : ''
 
-      const terms = Array.from(
-        new Set(
-          [
-            cleanArtist ? `${albumName} ${cleanArtist}` : albumName,
-            cleanGenre ? `${cleanGenre} album` : '',
-            cleanArtist ? `${cleanArtist} albums` : '',
-            cleanArtist && cleanGenre ? `${cleanArtist} ${cleanGenre}` : '',
-          ].filter((term) => term.length >= 2),
-        ),
-      ).slice(0, 4)
+      // Similar Albums must come from verified peer artists, never from a
+      // broad title/genre search that can surface piano covers or tributes.
+      if (!cleanArtist) return []
+      const peerArtists = await fetchSimilarArtistsByGenreAndLocation(
+        cleanArtist,
+        cleanGenre ? [cleanGenre] : [],
+        signal,
+      ).catch((error) => {
+        if ((error as Error)?.name === 'AbortError') throw error
+        return []
+      })
+      if (peerArtists.length === 0) return []
 
-      if (terms.length === 0) return []
-
-      const responses = await Promise.all(
-        terms.map(async (term) => {
-          const url = new URL('https://itunes.apple.com/search')
-          url.searchParams.set('term', term)
-          url.searchParams.set('entity', 'album')
-          url.searchParams.set('limit', '40')
-          const res = await fetch(url, { signal })
-          if (!res.ok) return []
-          const data = (await res.json()) as { results?: ITunesSearchResult[] }
-          return data.results ?? []
+      const peerCatalogs = await Promise.all(
+        peerArtists.slice(0, 6).map(async (peer, peerIndex) => {
+          try {
+            // An artist-filtered album search returns the artist id with every
+            // collection, so one request can both identify and load the peer's
+            // catalog. The old artist-search + lookup sequence took two.
+            const url = new URL('https://itunes.apple.com/search')
+            url.searchParams.set('term', peer.name)
+            url.searchParams.set('entity', 'album')
+            url.searchParams.set('attribute', 'artistTerm')
+            url.searchParams.set('limit', '50')
+            const response = await fetch(url, { signal })
+            if (!response.ok) return []
+            const data = (await response.json()) as { results?: ITunesSearchResult[] }
+            const requestedPeer = normalizeAlbumTitleForMatch(peer.name)
+            const exactArtistItems = (data.results || []).filter((item) =>
+              normalizeAlbumTitleForMatch(item.artistName || item.collectionArtistName || '') === requestedPeer,
+            )
+            const peerArtistId = exactArtistItems.find((item) => typeof item.artistId === 'number')?.artistId
+            if (!peerArtistId) return []
+            return exactArtistItems
+              .filter((item) => isVerifiedPeerAlbumCandidate(item, peer.name, peerArtistId))
+              .map((item) => ({ item, peerIndex, peerScore: peer.score }))
+          } catch (error) {
+            if ((error as Error)?.name === 'AbortError') throw error
+            return []
+          }
         }),
       )
 
@@ -1849,10 +1958,10 @@ export async function fetchRelatedAlbums(
       const selectedArtist = normalizeAlbumTitleForMatch(cleanArtist)
       const selectedReleaseYear = Number(selectedYear || selectedAlbumEntity?.year || 0)
       const seen = new Set<string>()
-      const artistCounts: Record<string, number> = {}
-      const filtered = responses
+      const filtered = peerCatalogs
         .flat()
-        .filter((item) => {
+        .filter((candidate) => {
+          const { item } = candidate
           if (!item.collectionName) return false
           if (excludeCollectionId && String(item.collectionId || '') === excludeCollectionId) return false
 
@@ -1865,13 +1974,6 @@ export async function fetchRelatedAlbums(
             return false
           }
 
-          // EXCLUDE EPs AND SINGLES STRICTLY (MUST BE ALBUMS ONLY)
-          const lowerName = item.collectionName.toLowerCase()
-          const isEpOrSingle =
-            /\b(ep|single|sngle)\b/i.test(lowerName) ||
-            (item.trackCount !== undefined && item.trackCount < 6)
-          if (isEpOrSingle) return false
-
           const key = item.collectionId
             ? String(item.collectionId)
             : `${resultTitle}:${normalizeAlbumTitleForMatch(item.artistName || '')}`
@@ -1880,83 +1982,74 @@ export async function fetchRelatedAlbums(
           return true
         })
 
-      const preferredAlbumVariants = new Map<string, ITunesSearchResult>()
-      for (const item of filtered) {
+      const preferredAlbumVariants = new Map<string, typeof filtered[number]>()
+      for (const candidate of filtered) {
+        const { item } = candidate
         const key = albumEditionBaseKey(
           item.collectionName || '',
           item.artistName || item.collectionArtistName || '',
           yearFrom(item.releaseDate) || '',
         )
         const existing = preferredAlbumVariants.get(key)
-        if (!existing || (!isExplicitItunesItem(existing) && isExplicitItunesItem(item))) {
-          preferredAlbumVariants.set(key, item)
+        if (!existing || (!isExplicitItunesItem(existing.item) && isExplicitItunesItem(item))) {
+          preferredAlbumVariants.set(key, candidate)
         }
       }
 
-      const rankedRelatedItems = [...preferredAlbumVariants.values()]
-        .map((item, index) => {
+      const rankedCandidates = [...preferredAlbumVariants.values()]
+        .map(({ item, peerIndex, peerScore }) => {
           const resultGenre = normalizeAlbumTitleForMatch(item.primaryGenreName || '')
-          const resultArtist = normalizeAlbumTitleForMatch(item.artistName || '')
           const sameGenre =
             selectedGenre.length > 0 &&
             (resultGenre === selectedGenre || resultGenre.includes(selectedGenre) || selectedGenre.includes(resultGenre))
-          const sameArtist = selectedArtist.length > 0 && resultArtist === selectedArtist
           const year = Number(yearFrom(item.releaseDate) || 0)
           const yearProximity = selectedReleaseYear > 0 && year > 0
             ? Math.max(0, 80 - Math.abs(selectedReleaseYear - year) * 4)
             : 0
 
-          const artistCount = artistCounts[resultArtist] || 0
-          artistCounts[resultArtist] = artistCount + 1
-
           return {
             item,
             score:
-              (sameGenre ? 320 : 0) +
-              (sameArtist ? 240 : 0) +
+              (peerScore * 20) +
+              (sameGenre ? 500 : 0) +
               yearProximity -
-              (artistCount * 120) +
-              Math.max(0, 60 - index) +
+              (peerIndex * 80) +
+              Math.min(Number(item.trackCount || 0), 20) * 8 +
               (item.artworkUrl100 ? 10 : 0) +
               Math.min(year, 2100) / 1000,
-            relevant: selectedGenre
-              ? sameGenre
-              : selectedArtist
-                ? sameArtist
-                : true,
           }
         })
-        .filter(({ score, relevant }) => relevant && score > 0)
+        .filter(({ score }) => score > 0)
         .sort((a, b) => b.score - a.score)
-        .slice(0, 4)
-        .map(({ item }) => item)
+      // Prefer one album per peer for variety, then fill any empty slots with
+      // the next-best verified albums. A peer with a smaller Apple catalog no
+      // longer reduces the whole section to one or two cards.
+      const rankedRelatedItems: ITunesSearchResult[] = []
+      const selectedCollectionIds = new Set<string>()
+      const selectedPeerArtists = new Set<string>()
+      for (const { item } of rankedCandidates) {
+        const artistKey = normalizeAlbumTitleForMatch(item.artistName || item.collectionArtistName || '')
+        const collectionKey = String(item.collectionId || '')
+        if (!artistKey || selectedPeerArtists.has(artistKey) || selectedCollectionIds.has(collectionKey)) continue
+        selectedPeerArtists.add(artistKey)
+        selectedCollectionIds.add(collectionKey)
+        rankedRelatedItems.push(item)
+        if (rankedRelatedItems.length >= 4) break
+      }
+      if (rankedRelatedItems.length < 4) {
+        for (const { item } of rankedCandidates) {
+          const collectionKey = String(item.collectionId || '')
+          if (!collectionKey || selectedCollectionIds.has(collectionKey)) continue
+          selectedCollectionIds.add(collectionKey)
+          rankedRelatedItems.push(item)
+          if (rankedRelatedItems.length >= 4) break
+        }
+      }
 
-      const languageLookup = await fetchAlbumLanguageMap([
-        { title: albumName, artist: cleanArtist },
-        ...rankedRelatedItems.map((item) => ({
-          title: item.collectionName || '',
-          artist: item.artistName || item.collectionArtistName,
-        })),
-      ], signal)
-      const albumLanguageKey = (title: string, artist?: string) =>
-        `${normalizeAlbumTitleForMatch(title)}:${normalizeAlbumTitleForMatch(artist || '')}`
-      const sourceLanguage = languageLookup.get(albumLanguageKey(albumName, cleanArtist))
-      const hasCandidateLanguage = rankedRelatedItems.some((item) =>
-        languageLookup.has(albumLanguageKey(item.collectionName || '', item.artistName || item.collectionArtistName)),
-      )
-      const languageMatchedItems = sourceLanguage && hasCandidateLanguage
-        ? rankedRelatedItems.filter((item) =>
-            languageLookup.get(albumLanguageKey(item.collectionName || '', item.artistName || item.collectionArtistName)) === sourceLanguage,
-          )
-        : rankedRelatedItems
-      const related = languageMatchedItems.map((item) =>
-        mapItunesRelatedAlbum(
-          item,
-          languageLookup.get(albumLanguageKey(item.collectionName || '', item.artistName || item.collectionArtistName)),
-        ),
-      )
-
-      return related
+      // Language enrichment used to add another blocking MusicBrainz request.
+      // Similarity is already anchored to verified peer artists and exact Apple
+      // catalogs, so return the cards as soon as those catalogs are ready.
+      return rankedRelatedItems.map((item) => mapItunesRelatedAlbum(item))
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') throw err
       return []
@@ -2608,6 +2701,7 @@ type ITunesSearchResult = {
   artistName?: string
   trackName?: string
   collectionName?: string
+  collectionType?: string
   collectionArtistName?: string
   artworkUrl100?: string
   releaseDate?: string
@@ -3193,7 +3287,10 @@ export function classifyHumanScreenCredit(
   const isMusic = genres.has(10402)
   const isDocumentary = genres.has(99)
 
-  if (credit.job && /^(?:director|creator|screenplay|writer)$/i.test(credit.job.trim())) return 'directing'
+  const crewJob = credit.job?.trim() || ''
+  if (/^(?:director|co-director|series director|creator)$/i.test(crewJob)) return 'directing'
+  if (/\b(?:producer|production)\b/i.test(crewJob)) return 'producing'
+  if (/^(?:screenplay|writer|writing|story|teleplay|adaptation)$/i.test(crewJob)) return 'writing'
   if (!credit.character) return undefined
   if (excludedSelfAppearancePattern.test(role) || excludedSelfAppearancePattern.test(title)) return undefined
   if (!isSelf) return 'acting'
@@ -3309,6 +3406,118 @@ export async function fetchHumanScreenCredits(
 const thirdPartyBiographyTitlePattern =
   /\b(?:unauthorized|biograph(?:y|ies|ical)?|biog\b|little golden book|who is\b|who was\b|100 facts|unofficial|fan book|official fan|behind the music|all about|the (?:rise|story|life|world) of|a (?:story|life) of)\b/i
 
+// Artist catalogs frequently credit the performer as an "author" on commercial
+// sheet-music products. These are music folios, not authored literary works, so
+// they never belong in a person's Books/Published Works catalog.
+const songbookTitlePattern =
+  /\b(?:songbooks?|sheet[ -]?music|piano\s*(?:\/|&|and)\s*vocal\s*(?:\/|&|and)\s*guitar|piano vocal guitar|pvg\b|easy piano|big[- ]note piano|piano solo|vocal selections?|(?:really\s+)?easy guitar|strum\s*(?:&|and)\s*sing guitar|guitar play[- ]along|guitar (?:tabs?|tablature|chords?)|chord books?|music folios?|lyrics?\s*(?:\/|&|and)\s*chords?|musical scores?)\b/i
+
+const songbookDescriptorPattern =
+  /\b(?:printed music|sheet music|vocal scores?|piano[- ]vocal scores?|music scores?|music folios?|tablature|piano music,? arranged|guitar music,? arranged|artist songbook|personality songbook|piano chord songbook|guitar play[- ]along|strum\s*(?:&|and)\s*sing|easy guitar|really easy guitar|guitar transcriptions?|piano arrangements?|guitar arrangements?|piano notation|guitar chords? and lyrics?|hal leonard(?: corporation| publishing corporation)?|leonard corporation,? hal|alfred music)\b/i
+
+const periodicalTitlePattern =
+  /\b(?:magazines?|periodicals?|special issues?|collector'?s issues?)\b/i
+
+const periodicalDescriptorPattern =
+  /\b(?:magazines?|periodicals?|serial publications?|special issues?|monthly publication|weekly publication|quarterly publication)\b/i
+
+const nonAuthoredBookProductTitlePattern =
+  /\b(?:notebooks?|journals?|diar(?:y|ies)|planners?|composition books?|activity books?|coloring books?|fan books?)\b/i
+
+const nonAuthoredBookProductDescriptorPattern =
+  /\b(?:lined journals?|lined pages?|fan clubs?|gift notebooks?|composition notebooks?|matte cover)\b/i
+
+export function isSongbookPublication(
+  title: string,
+  descriptors: Iterable<string | undefined> = [],
+): boolean {
+  if (songbookTitlePattern.test(String(title || ''))) return true
+  return [...descriptors].some((value) => songbookDescriptorPattern.test(String(value || '')))
+}
+
+export function isPeriodicalPublication(
+  title: string,
+  descriptors: Iterable<string | undefined> = [],
+): boolean {
+  if (periodicalTitlePattern.test(String(title || ''))) return true
+  return [...descriptors].some((value) => periodicalDescriptorPattern.test(String(value || '')))
+}
+
+function isExcludedPublishedWork(
+  title: string,
+  descriptors: Iterable<string | undefined> = [],
+) {
+  const values = [...descriptors]
+  return isSongbookPublication(title, values) ||
+    isPeriodicalPublication(title, values) ||
+    nonAuthoredBookProductTitlePattern.test(title) ||
+    values.some((value) => nonAuthoredBookProductDescriptorPattern.test(String(value || '')))
+}
+
+const bookEditionQualifierPattern =
+  /\b(?:annotated|illustrated|unabridged|abridged|collector'?s|deluxe|special|complete|revised|large print|facsimile|study guide|critical edition|classic edition|timeless classic|with notes|with illustrations|modern edition|official edition)\b/i
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+export function publishedBookWorkTitle(title: string, personName: string): string {
+  let value = String(title || '').replace(/\s+/g, ' ').trim()
+  const author = personName.replace(/\s+/g, ' ').trim()
+  if (!value || !author) return value
+
+  const authorPattern = escapeRegExp(author).replace(/\s+/g, '\\s+')
+  value = value
+    .replace(new RegExp(`^${authorPattern}(?:'s)?\\s*[:\-–—]\\s*`, 'i'), '')
+    .replace(new RegExp(`^${authorPattern}'s\\s+`, 'i'), '')
+    .replace(new RegExp(`\\s+(?:by\\s+|[:\-–—]\\s*)${authorPattern}\\s*$`, 'i'), '')
+    .trim()
+
+  value = value.replace(/^the\s+annotated\s+/i, '').trim()
+
+  let previous = ''
+  while (value && value !== previous) {
+    previous = value
+    value = value
+      .replace(/\s*[([{]\s*([^\])}]+)\s*[\])}]\s*$/, (match, qualifier: string) =>
+        bookEditionQualifierPattern.test(qualifier) ? '' : match)
+      .trim()
+
+    const suffix = value.match(/^(.*?)\s*[:\-–—]\s*(.+)$/)
+    if (suffix && bookEditionQualifierPattern.test(suffix[2])) value = suffix[1].trim()
+  }
+
+  return value.replace(/\s*&\s*/g, ' and ').replace(/[,:;\-–—]+\s*$/, '').trim()
+}
+
+function publishedBookWorkKey(title: string, personName: string) {
+  return normalizePersonName(publishedBookWorkTitle(title, personName))
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function googleBookArtwork(info: NonNullable<GoogleBooksVolume['volumeInfo']>) {
+  return info.imageLinks?.extraLarge ??
+    info.imageLinks?.large ??
+    info.imageLinks?.medium ??
+    info.imageLinks?.thumbnail ??
+    info.imageLinks?.smallThumbnail
+}
+
+function googleBookRepresentativeScore(book: GoogleBooksVolume, personName: string) {
+  const info = book.volumeInfo ?? {}
+  const fullTitle = [info.title, info.subtitle].filter(Boolean).join(': ')
+  const workTitle = publishedBookWorkTitle(fullTitle, personName)
+  const titleIsCanonical = normalizePersonName(fullTitle.replace(/\s*&\s*/g, ' and ')) === normalizePersonName(workTitle)
+  const artworkScore = info.imageLinks?.extraLarge ? 50
+    : info.imageLinks?.large ? 40
+      : info.imageLinks?.medium ? 30
+        : info.imageLinks?.thumbnail ? 20
+          : info.imageLinks?.smallThumbnail ? 10
+            : 0
+  return Number(titleIsCanonical) * 100 + artworkScore - Math.min(fullTitle.length, 100) / 100
+}
+
 function canonicalPersonNameKey(value: string) {
   return normalizePersonName(value).split(' ').filter(Boolean).sort().join(' ')
 }
@@ -3330,16 +3539,433 @@ export function isPersonAuthoredBook(book: GoogleBooksVolume, personName: string
   // Even when Google's metadata lists the person in the author field, a
   // biography-framed title means the person is the subject, not the author.
   if (thirdPartyBiographyTitlePattern.test(title)) return false
+  if (isExcludedPublishedWork(title, [
+    ...(info.categories || []),
+    info.publisher,
+    info.description,
+  ])) return false
+
+  // Sparse retailer records can omit every useful category and description.
+  // These person-name wrappers identify compilations or spiral-bound music
+  // products rather than a standalone authored work.
+  const normalizedTitle = normalizePersonName(title)
+  if (normalizedTitle === `best of ${expectedName}`) return false
+  if (
+    normalizedTitle.startsWith(`${expectedName} `) &&
+    normalizedTitle.includes(` by ${expectedName} `) &&
+    /\bspiral bound\b/.test(normalizedTitle)
+  ) return false
+
+  // Exact author strings alone are not sufficient: music products and retail
+  // placeholders are frequently credited to the performer. Require actual
+  // publication context or an ISBN before accepting a Google volume.
+  const hasIsbn = (info.industryIdentifiers || []).some((identifier) =>
+    /^ISBN_(?:10|13)$/i.test(identifier.type || '') && Boolean(identifier.identifier),
+  )
+  if (!info.publisher && !info.description && !(info.categories || []).length && !hasIsbn) return false
   return true
+}
+
+function openLibraryWorkDescriptors(document: OpenLibraryWorkDocument) {
+  const subtitles = Array.isArray(document.subtitle)
+    ? document.subtitle
+    : document.subtitle ? [document.subtitle] : []
+  return [
+    ...(document.subject || []),
+    ...(document.publisher || []),
+    ...subtitles,
+  ]
+}
+
+export function consolidatePublishedBookVariants(
+  books: GoogleBooksVolume[],
+  personName: string,
+): CollectionItem[] {
+  const groups = new Map<string, GoogleBooksVolume[]>()
+
+  books.forEach((book) => {
+    const info = book.volumeInfo ?? {}
+    const fullTitle = [info.title, info.subtitle].filter(Boolean).join(': ')
+    if (!fullTitle || !isPersonAuthoredBook(book, personName)) return
+    const workKey = publishedBookWorkKey(fullTitle, personName)
+    if (!workKey) return
+    const group = groups.get(workKey) || []
+    if (!group.some((variant) => variant.id === book.id)) group.push(book)
+    groups.set(workKey, group)
+  })
+
+  const works = [...groups.values()].map((variants) => {
+    const representative = [...variants].sort((left, right) =>
+      googleBookRepresentativeScore(right, personName) - googleBookRepresentativeScore(left, personName))[0]
+    const info = representative.volumeInfo ?? {}
+    const fullTitle = [info.title, info.subtitle].filter(Boolean).join(': ')
+    const title = publishedBookWorkTitle(fullTitle, personName)
+    const year = variants
+      .map((variant) => yearFrom(variant.volumeInfo?.publishedDate))
+      .filter(Boolean)
+      .sort()[0] || yearFrom(info.publishedDate)
+    const variantIds = variants.map((variant) => `googlebooks:book:${variant.id}`)
+
+    return {
+      id: `googlebooks:book:${representative.id}`,
+      title,
+      subtitle: [personName, year ? `Earliest cataloged ${year}` : 'Published work'].join(' · '),
+      artworkUrl: normalizeHttps(googleBookArtwork(info)) || '',
+      year,
+      genre: info.categories?.[0] || 'Book',
+      language: info.language,
+      category: undefined,
+      variantIds,
+      variantCount: variantIds.length,
+    } satisfies CollectionItem
+  })
+
+  return works.sort((left, right) =>
+    (right.year || '').localeCompare(left.year || '') || left.title.localeCompare(right.title))
+}
+
+function openLibraryWorkId(key?: string) {
+  return String(key || '').replace(/^\/works\//i, '').trim()
+}
+
+function validFirstPublicationYear(value?: number) {
+  if (!Number.isInteger(value)) return ''
+  const currentYear = new Date().getUTCFullYear()
+  return value! >= 1000 && value! <= currentYear + 1 ? String(value) : ''
+}
+
+function mostSupportedFirstPublicationYear(documents: OpenLibraryWorkDocument[]) {
+  const support = new Map<string, number>()
+  documents.forEach((document) => {
+    const year = validFirstPublicationYear(document.first_publish_year)
+    if (year) support.set(year, (support.get(year) || 0) + 1)
+  })
+  return [...support.entries()]
+    .sort(([leftYear, leftCount], [rightYear, rightCount]) =>
+      rightCount - leftCount || leftYear.localeCompare(rightYear))[0]?.[0] || ''
+}
+
+/**
+ * Open Library search documents are work-level records, so editions of the
+ * same classic do not become separate cards. A small title grouping pass also
+ * absorbs duplicate work records and annotated/illustrated wrappers.
+ */
+export function openLibraryWorksToCollectionItems(
+  documents: OpenLibraryWorkDocument[],
+  personName: string,
+  openLibraryAuthorId?: string,
+): CollectionItem[] {
+  const expectedAuthorId = String(openLibraryAuthorId || '').replace(/^\/authors\//i, '').toUpperCase()
+  const expectedAuthorName = canonicalPersonNameKey(personName)
+  const groups = new Map<string, OpenLibraryWorkDocument[]>()
+
+  documents.forEach((document) => {
+    const workId = openLibraryWorkId(document.key)
+    const title = publishedBookWorkTitle(document.title || '', personName)
+    if (!workId || !title) return
+
+    const authorIds = (document.author_key || []).map((id) => id.toUpperCase())
+    const authorNames = (document.author_name || []).map(canonicalPersonNameKey)
+    const idMatches = expectedAuthorId ? authorIds.includes(expectedAuthorId) : true
+    // A provider ID alone is not enough. If Open Library supplies author names,
+    // require the person's exact normalized name too so a stale/cross-linked ID
+    // can never put somebody else's works on this profile.
+    const nameMatches = authorNames.length > 0
+      ? authorNames.includes(expectedAuthorName)
+      : Boolean(expectedAuthorId)
+    const authoredByPerson = idMatches && nameMatches
+    if (
+      !authoredByPerson ||
+      thirdPartyBiographyTitlePattern.test(title) ||
+      isExcludedPublishedWork(title, openLibraryWorkDescriptors(document))
+    ) return
+
+    const key = publishedBookWorkKey(title, personName)
+    const group = groups.get(key) || []
+    if (!group.some((candidate) => openLibraryWorkId(candidate.key) === workId)) group.push(document)
+    groups.set(key, group)
+  })
+
+  const works = [...groups.values()].map((variants) => {
+    const representative = [...variants].sort((left, right) => {
+      const coverDifference = Number(Boolean(right.cover_i)) - Number(Boolean(left.cover_i))
+      if (coverDifference !== 0) return coverDifference
+      return (right.edition_count || 0) - (left.edition_count || 0)
+    })[0]
+    const workId = openLibraryWorkId(representative.key)
+    const title = publishedBookWorkTitle(representative.title || '', personName)
+    const year = mostSupportedFirstPublicationYear(variants)
+    const editionCount = Math.max(1, ...variants.map((variant) => variant.edition_count || 1))
+
+    return {
+      id: `openlibrary:book:${workId}`,
+      providerId: workId,
+      title,
+      subtitle: [personName, year ? `First published ${year}` : 'Published work'].join(' · '),
+      artworkUrl: representative.cover_i
+        ? `https://covers.openlibrary.org/b/id/${representative.cover_i}-L.jpg`
+        : '',
+      artist: personName,
+      year,
+      genre: representative.subject?.[0] || 'Book',
+      language: representative.language?.[0],
+      category: undefined,
+      variantIds: variants.map((variant) => `openlibrary:book:${openLibraryWorkId(variant.key)}`),
+      variantCount: editionCount,
+    } satisfies CollectionItem
+  })
+
+  return works.sort((left, right) =>
+    (right.year || '').localeCompare(left.year || '') || left.title.localeCompare(right.title))
+}
+
+export function canonicalAuthoredWorksToCollectionItems(
+  canonicalWorks: CanonicalAuthoredWork[],
+  openLibraryDocuments: OpenLibraryWorkDocument[],
+  personName: string,
+): CollectionItem[] {
+  const expectedAuthorName = canonicalPersonNameKey(personName)
+  // Wikidata's P50 (author) statements are editable assertions and can be
+  // stale or vandalized. Only expose a canonical work when Open Library also
+  // credits this exact person for the same title. This prevents an unrelated
+  // work from becoming a clickable book card with a different author.
+  const corroboratedDocuments = openLibraryDocuments.filter((document) =>
+    (document.author_name || []).some((authorName) =>
+      canonicalPersonNameKey(authorName) === expectedAuthorName),
+  )
+  const corroboratedWorkKeys = new Set(
+    corroboratedDocuments
+      .map((document) => publishedBookWorkKey(document.title || '', personName))
+      .filter(Boolean),
+  )
+  const excludedWorkKeys = new Set(
+    corroboratedDocuments
+      .filter((document) => isExcludedPublishedWork(document.title || '', openLibraryWorkDescriptors(document)))
+      .map((document) => publishedBookWorkKey(document.title || '', personName))
+      .filter(Boolean),
+  )
+  const groups = new Map<string, CanonicalAuthoredWork[]>()
+  canonicalWorks.forEach((work) => {
+    if (!/^Q\d+$/i.test(work.id) || !work.title || /^Q\d+$/i.test(work.title)) return
+    const key = publishedBookWorkKey(work.title, personName)
+    if (
+      !key ||
+      !corroboratedWorkKeys.has(key) ||
+      isExcludedPublishedWork(work.title) ||
+      excludedWorkKeys.has(key)
+    ) return
+    const group = groups.get(key) || []
+    if (!group.some((candidate) => candidate.id === work.id)) group.push(work)
+    groups.set(key, group)
+  })
+
+  const openLibraryByTitle = new Map<string, OpenLibraryWorkDocument[]>()
+  corroboratedDocuments.forEach((document) => {
+    const key = publishedBookWorkKey(document.title || '', personName)
+    if (!key || isExcludedPublishedWork(document.title || '', openLibraryWorkDescriptors(document))) return
+    const group = openLibraryByTitle.get(key) || []
+    group.push(document)
+    openLibraryByTitle.set(key, group)
+  })
+
+  return [...groups.entries()].map(([key, variants]) => {
+    const datedVariants = variants.filter((work) => yearFrom(work.publicationDate))
+    const representative = [...(datedVariants.length ? datedVariants : variants)].sort((left, right) =>
+      (yearFrom(left.publicationDate) || '').localeCompare(yearFrom(right.publicationDate) || '') ||
+      Number(Boolean(right.imageUrl)) - Number(Boolean(left.imageUrl)))[0]!
+    const year = variants.map((work) => yearFrom(work.publicationDate)).filter(Boolean).sort()[0] || ''
+    const coverCandidates = (openLibraryByTitle.get(key) || []).sort((left, right) =>
+      (right.edition_count || 0) - (left.edition_count || 0))
+    const workDocument = coverCandidates[0]
+    const coverDocument = coverCandidates.find((document) => document.cover_i)
+    const editionCount = Math.max(1, ...coverCandidates.map((document) => document.edition_count || 1))
+
+    return {
+      id: `wikidata:book:${representative.id}`,
+      providerId: workDocument ? openLibraryWorkId(workDocument.key) : representative.id,
+      title: publishedBookWorkTitle(representative.title, personName),
+      subtitle: [personName, year ? `First published ${year}` : 'Published work'].join(' · '),
+      artworkUrl: normalizeHttps(representative.imageUrl) || (coverDocument?.cover_i
+        ? `https://covers.openlibrary.org/b/id/${coverDocument.cover_i}-L.jpg`
+        : ''),
+      artist: personName,
+      year,
+      genre: 'Book',
+      language: coverDocument?.language?.[0],
+      variantIds: variants.map((work) => `wikidata:book:${work.id}`),
+      variantCount: editionCount,
+    } satisfies CollectionItem
+  }).sort((left, right) =>
+    (right.year || '').localeCompare(left.year || '') || left.title.localeCompare(right.title))
+}
+
+const openLibraryLanguageNames: Record<string, string> = {
+  eng: 'English', spa: 'Spanish', fre: 'French', ger: 'German', deu: 'German',
+  ita: 'Italian', por: 'Portuguese', dut: 'Dutch', nld: 'Dutch', rus: 'Russian',
+  chi: 'Chinese', zho: 'Chinese', jpn: 'Japanese', kor: 'Korean', ara: 'Arabic',
+  hin: 'Hindi', tur: 'Turkish', pol: 'Polish', swe: 'Swedish', dan: 'Danish',
+  nor: 'Norwegian', fin: 'Finnish', gre: 'Greek', ell: 'Greek', lat: 'Latin',
+}
+
+function openLibraryEditionId(key?: string) {
+  return String(key || '').replace(/^\/books\//i, '').trim().toUpperCase()
+}
+
+function openLibraryEditionLanguage(edition: OpenLibraryEditionDocument) {
+  const code = String(edition.languages?.[0]?.key || '').replace(/^\/languages\//i, '').toLowerCase()
+  return openLibraryLanguageNames[code] || (code ? code.toUpperCase() : '')
+}
+
+/** Only edition records attached to the canonical work and carrying publication evidence are shown. */
+export function openLibraryEditionsToCollectionItems(
+  editions: OpenLibraryEditionDocument[],
+  canonicalTitle: string,
+  author = '',
+): CollectionItem[] {
+  const unique = new Map<string, CollectionItem>()
+  editions.forEach((edition) => {
+    const editionId = openLibraryEditionId(edition.key)
+    const isbn = edition.isbn_13?.[0] || edition.isbn_10?.[0] || ''
+    const publisher = String(edition.publishers?.[0] || '').trim()
+    const year = String(edition.publish_date || '').match(/\b(?:1[0-9]{3}|20[0-9]{2})\b/)?.[0] || ''
+    if (!/^OL\d+M$/.test(editionId) || (!year && !isbn && !publisher)) return
+
+    const title = [edition.title || canonicalTitle, edition.subtitle].filter(Boolean).join(': ')
+    const language = openLibraryEditionLanguage(edition)
+    const coverId = edition.covers?.find((cover) => Number.isInteger(cover) && cover > 0)
+    const evidenceKey = isbn || [
+      normalizePersonName(title),
+      normalizePersonName(publisher),
+      year,
+      language,
+      normalizePersonName(edition.physical_format || ''),
+    ].join('|')
+    if (!evidenceKey || unique.has(evidenceKey)) return
+
+    unique.set(evidenceKey, {
+      id: `openlibrary:edition:${editionId}`,
+      providerId: editionId,
+      title,
+      subtitle: [language, publisher, year, edition.physical_format].filter(Boolean).join(' · '),
+      artworkUrl: coverId ? `https://covers.openlibrary.org/b/id/${coverId}-L.jpg` : '',
+      artist: author,
+      year,
+      genre: edition.physical_format || 'Edition',
+      language,
+    })
+  })
+  return [...unique.values()].sort((left, right) =>
+    (right.year || '').localeCompare(left.year || '') || left.title.localeCompare(right.title))
+}
+
+export async function fetchBookEditions(
+  title: string,
+  author: string,
+  openLibraryWorkIdValue?: string,
+  signal?: AbortSignal,
+): Promise<CollectionItem[]> {
+  const workId = String(openLibraryWorkIdValue || '').toUpperCase()
+  const cacheKey = `book-editions-v1:${workId}:${normalizePersonName(title)}:${normalizePersonName(author)}`
+  return cachedApiRequest(cacheKey, signal, async () => {
+    if (/^OL\d+W$/.test(workId)) {
+      const url = new URL('/api/openlibrary/work-editions', window.location.origin)
+      url.searchParams.set('workId', workId)
+      url.searchParams.set('limit', '100')
+      const response = await fetch(url, { signal })
+      if (response.ok) {
+        const data = await response.json() as { entries?: OpenLibraryEditionDocument[] }
+        const editions = openLibraryEditionsToCollectionItems(data.entries ?? [], title, author)
+        if (editions.length > 0) return editions
+      }
+    }
+
+    if (!googleBooksApiKey) return []
+    const query = [title, author].filter(Boolean).join(' ')
+    const results = await searchBooks(query, signal)
+    return results
+      .filter((result) => publishedBookWorkKey(result.title, author) === publishedBookWorkKey(title, author))
+      .map((result) => ({
+        id: result.id,
+        providerId: result.providerId,
+        title: result.title,
+        subtitle: [result.language?.toUpperCase(), result.provider].filter(Boolean).join(' · '),
+        artworkUrl: result.coverUrl || '',
+        artist: result.creator,
+        year: result.year,
+        genre: result.genre || 'Edition',
+        language: result.language,
+      }))
+  })
 }
 
 export async function fetchHumanPublishedBooks(
   name: string,
   signal?: AbortSignal,
+  openLibraryAuthorId?: string,
+  wikidataId?: string,
 ): Promise<CollectionItem[]> {
-  if (!googleBooksApiKey) return []
-  const cacheKey = `google-books-human-works-v2:${normalizePersonName(name)}`
+  const normalizedOpenLibraryAuthorId = String(openLibraryAuthorId || '')
+    .replace(/^\/authors\//i, '')
+    .toUpperCase()
+  const cacheKey = `human-published-works-v12:${normalizePersonName(name)}:${normalizedOpenLibraryAuthorId}:${wikidataId || ''}`
   return cachedApiRequest(cacheKey, signal, async () => {
+    const openLibraryStart = performance.now()
+    const openLibraryUrl = new URL('/api/openlibrary/author-works', window.location.origin)
+    openLibraryUrl.searchParams.set('author', name)
+    if (normalizedOpenLibraryAuthorId) {
+      openLibraryUrl.searchParams.set('authorId', normalizedOpenLibraryAuthorId)
+    }
+    if (wikidataId) openLibraryUrl.searchParams.set('wikidataId', wikidataId)
+    openLibraryUrl.searchParams.set('limit', '100')
+
+    try {
+      const openLibraryResponse = await fetch(openLibraryUrl, { signal })
+      const latencyMs = Math.round(performance.now() - openLibraryStart)
+      if (openLibraryResponse.ok) {
+        const data = await openLibraryResponse.json() as {
+          docs?: OpenLibraryWorkDocument[]
+          canonicalWorks?: CanonicalAuthoredWork[]
+        }
+        const works = data.canonicalWorks?.length
+          ? canonicalAuthoredWorksToCollectionItems(data.canonicalWorks, data.docs ?? [], name)
+          : openLibraryWorksToCollectionItems(data.docs ?? [], name, normalizedOpenLibraryAuthorId)
+        logApiCall({
+          provider: 'Open Library',
+          queryOrUrl: normalizedOpenLibraryAuthorId || name,
+          status: openLibraryResponse.status,
+          latencyMs,
+          resultCount: works.length,
+          cacheStatus: 'MISS',
+        })
+        // A Wikidata catalog was available, so its corroborated result (even
+        // when empty) is authoritative. Do not fall through to a looser Google
+        // query and resurrect rejected songbooks or periodicals.
+        if (data.canonicalWorks?.length || data.docs?.length || works.length > 0) return works
+      } else {
+        logApiCall({
+          provider: 'Open Library',
+          queryOrUrl: normalizedOpenLibraryAuthorId || name,
+          status: openLibraryResponse.status,
+          latencyMs,
+          resultCount: 0,
+          cacheStatus: 'MISS',
+          error: `Open Library API HTTP ${openLibraryResponse.status}`,
+        })
+      }
+    } catch (error) {
+      if (signal?.aborted) throw error
+      logApiCall({
+        provider: 'Open Library',
+        queryOrUrl: normalizedOpenLibraryAuthorId || name,
+        status: 0,
+        latencyMs: Math.round(performance.now() - openLibraryStart),
+        resultCount: 0,
+        cacheStatus: 'MISS',
+        error: error instanceof Error ? error.message : 'Open Library request failed',
+      })
+    }
+
+    if (!googleBooksApiKey) return []
     const startTime = performance.now()
     const url = new URL('https://www.googleapis.com/books/v1/volumes')
     url.searchParams.set('q', `inauthor:"${name}"`)
@@ -3361,40 +3987,7 @@ export async function fetchHumanPublishedBooks(
       return []
     }
     const data = await response.json() as { items?: GoogleBooksVolume[] }
-    const works: CollectionItem[] = []
-    const seenIds = new Set<string>()
-    const seenTitles = new Set<string>()
-    ;(data.items ?? []).forEach((book) => {
-      const info = book.volumeInfo ?? {}
-      const title = [info.title, info.subtitle].filter(Boolean).join(': ')
-      if (!title || seenIds.has(book.id)) return
-      if (!isPersonAuthoredBook(book, name)) return
-      seenIds.add(book.id)
-      const editionKey = `${normalizePersonName(title)}:${yearFrom(info.publishedDate) || ''}`
-      if (seenTitles.has(editionKey)) return
-      seenTitles.add(editionKey)
-      const rawCover =
-        info.imageLinks?.extraLarge ??
-        info.imageLinks?.large ??
-        info.imageLinks?.medium ??
-        info.imageLinks?.thumbnail ??
-        info.imageLinks?.smallThumbnail
-      works.push({
-        id: `googlebooks:book:${book.id}`,
-        title,
-        subtitle: [(info.authors || []).join(', '), yearFrom(info.publishedDate)]
-          .filter(Boolean)
-          .join(' · '),
-        artworkUrl: normalizeHttps(rawCover) || '',
-        year: yearFrom(info.publishedDate),
-        genre: info.categories?.[0] || 'Book',
-        language: info.language,
-        category: undefined,
-      })
-    })
-    works.sort((left, right) =>
-      (right.year || '').localeCompare(left.year || '') || left.title.localeCompare(right.title),
-    )
+    const works = consolidatePublishedBookVariants(data.items ?? [], name)
     logApiCall({
       provider: 'Google Books',
       queryOrUrl: `inauthor:"${name}"`,
@@ -3591,7 +4184,7 @@ async function fetchLastFmSimilarArtists(artistName: string, signal?: AbortSigna
             return true
           })
           .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
-          .slice(0, 4)
+          .slice(0, 8)
           .map(({ normalizedName: _normalizedName, ...artist }) => artist)
 
         logApiCall({
@@ -3616,6 +4209,7 @@ export async function fetchSimilarArtistsByGenreAndLocation(
   artistName: string,
   genres: string[],
   signal?: AbortSignal,
+  _musicBrainzId?: string,
 ): Promise<SimilarArtistMatch[]> {
   try {
     return await fetchLastFmSimilarArtists(artistName, signal)
