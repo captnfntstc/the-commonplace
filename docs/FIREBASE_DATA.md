@@ -1,6 +1,6 @@
 # Firebase data layer
 
-The app uses Firebase Authentication for identity and Cloud Firestore for account data and compressed uploaded images. Firebase Storage is intentionally not used, so no Blaze billing plan is required. When Firebase is not configured, the demo keeps using browser state.
+The app uses Firebase Authentication for identity and Cloud Firestore for account data and compressed uploaded images. Firebase Storage is intentionally not used, so no Blaze billing plan is required. When Firebase is not configured, account access remains logged out and the app shows a configuration error if someone attempts to sign in or register.
 
 ## Setup
 
@@ -48,7 +48,26 @@ Because the old browser data was not account-scoped, the first Firebase account 
 
 ## Intentionally device-local
 
-Recent searches, metadata/image caches, the demo-auth session, and the composer’s “warn about unrated entries” preference remain in local storage or IndexedDB. They are device preferences/cache rather than account content.
+Recent searches, metadata/image caches, the Firebase Auth persistence record, and the composer’s “warn about unrated entries” preference remain in local storage or IndexedDB. They are device preferences/cache rather than account content.
+
+## Clean email verification links
+
+When the server mail settings are configured, the app sends its own one-time verification URL in this form:
+
+```text
+https://YOUR_PUBLIC_APP_DOMAIN/v/Ab3xK9...
+```
+
+The emailed URL contains no Firebase API key or `oobCode`. The random token is stored in the server-only `authActionLinks` Firestore collection, expires after 24 hours, and is deleted when redeemed. Resending is limited to once per minute. Client access to this collection is denied by the default Firestore rules.
+
+Configure these server-only values in Render (never prefix them with `VITE_`):
+
+1. Set `APP_BASE_URL` to the deployed site origin.
+2. In Firebase Console → Project settings → Service accounts, generate a private key. Copy its `project_id`, `client_email`, and `private_key` into the matching `FIREBASE_ADMIN_*` environment variables. Keep the downloaded JSON out of the repository.
+3. For the Gmail SMTP example, enable two-step verification on the sender account, create a Google App Password, and set `SMTP_USER`, `SMTP_PASS`, and `EMAIL_FROM` in Render.
+4. Redeploy the Render service after saving the variables.
+
+The app does not fall back to Firebase's built-in verification email. If any server value is missing, sending fails visibly so the branded template and clean `/v/...` link cannot be silently replaced by Firebase's raw action URL.
 
 ## Verification checklist
 

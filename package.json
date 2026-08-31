@@ -16,8 +16,10 @@
   "dependencies": {
     "clsx": "^2.1.1",
     "firebase": "^12.18.0",
+    "firebase-admin": "^14.3.0",
     "framer-motion": "^12.42.2",
     "lucide-react": "^1.25.0",
+    "nodemailer": "^9.0.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-hook-form": "^7.82.0",

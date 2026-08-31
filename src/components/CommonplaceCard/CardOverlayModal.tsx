@@ -114,10 +114,8 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   onToggleSave,
   onOpenProfile,
 }) => {
-  const { currentUser, isDemoMode } = useAuth()
-  const cloudUserId = !isDemoMode && currentUser && !currentUser.uid.startsWith('demo-')
-    ? currentUser.uid
-    : null
+  const { currentUser } = useAuth()
+  const cloudUserId = currentUser?.uid || null
   const currentAuthor = currentUser?.displayName || currentUser?.email?.split('@')[0] || CURRENT_USER
   const currentInitials = currentAuthor
     .split(/\s+/)

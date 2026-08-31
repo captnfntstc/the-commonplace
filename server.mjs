@@ -7,6 +7,7 @@ import { handleIgdbApiRequest } from './server/igdb.mjs'
 import { handleLastFmApiRequest } from './server/lastfm.mjs'
 import { handleIdentityApiRequest } from './server/identities.mjs'
 import { handleOpenLibraryApiRequest } from './server/openlibrary.mjs'
+import { handleAuthApiRequest } from './server/auth-links.mjs'
 
 const root = fileURLToPath(new URL('.', import.meta.url))
 const distRoot = join(root, 'dist')
@@ -27,10 +28,10 @@ const mimeTypes = {
   '.woff2': 'font/woff2',
 }
 
-function sendJson(response, status, payload) {
+function sendJson(response, status, payload, cacheControl) {
   response.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': status === 200 ? 'private, max-age=300' : 'no-store',
+    'Cache-Control': cacheControl || (status === 200 ? 'private, max-age=300' : 'no-store'),
     'X-Content-Type-Options': 'nosniff',
   })
   response.end(JSON.stringify(payload))
@@ -47,6 +48,12 @@ function serveFile(response, filePath) {
 
 createServer(async (request, response) => {
   try {
+    if (request.url?.startsWith('/api/auth/')) {
+      const payload = await handleAuthApiRequest(request)
+      if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
+      return sendJson(response, 200, payload, 'no-store')
+    }
+
     if (request.method === 'GET' && request.url?.startsWith('/api/igdb/')) {
       const payload = await handleIgdbApiRequest(request.url)
       if (!payload) return sendJson(response, 404, { error: 'API route not found.' })

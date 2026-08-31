@@ -10,6 +10,10 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
+    function hasVerifiedEmail() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+
     function canReadProfileContent(userId) {
       return isOwner(userId)
         || get(/databases/$(database)/documents/users/$(userId)).data.isPrivate != true
@@ -68,6 +72,7 @@ service cloud.firestore {
       match /entries/{entryId} {
         allow read: if canReadProfileContent(userId);
         allow create, update: if isOwner(userId)
+          && hasVerifiedEmail()
           && request.resource.data.ownerId == userId;
         allow delete: if isOwner(userId);
       }
@@ -130,8 +135,9 @@ service cloud.firestore {
     match /posts/{postId} {
       // The index contains only ownership metadata; content remains under users/{uid}/entries.
       allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update: if signedIn()
+      allow create: if hasVerifiedEmail()
+        && request.resource.data.ownerId == request.auth.uid;
+      allow update: if hasVerifiedEmail()
         && resource.data.ownerId == request.auth.uid
         && request.resource.data.ownerId == request.auth.uid;
       allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;

@@ -32,7 +32,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
     confirmPassword?: string
     agreed?: string
   }>({})
-  const [submitted, setSubmitted] = useState(false)
 
   const validate = () => {
     const next: typeof errors = {}
@@ -57,8 +56,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
       try {
         setLoading(true)
         await signup(email.trim(), password, name.trim())
-        setSubmitted(true)
-        setToastMessage('✦ Account created successfully!')
+        setToastMessage('✦ Account created! Check your email to verify it before posting.')
         setTimeout(() => {
           navigate('/')
         }, 600)
@@ -71,52 +69,19 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
   }
 
   const handleSelectProvider = async (provider: string) => {
-    if (provider === 'Google') {
-      try {
-        setLoading(true)
-        await loginWithGoogle()
-        setToastMessage('✦ Signed up with Google successfully!')
-        setTimeout(() => {
-          navigate('/')
-        }, 600)
-      } catch (err: unknown) {
-        setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Google sign up failed.')
-      } finally {
-        setLoading(false)
-      }
-    } else {
-      setToastMessage(`✦ ${provider} sign-up simulation selected.`)
+    if (provider !== 'Google') return
+    try {
+      setLoading(true)
+      await loginWithGoogle()
+      setToastMessage('✦ Signed up with Google successfully!')
+      setTimeout(() => {
+        navigate('/')
+      }, 600)
+    } catch (err: unknown) {
+      setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Google sign up failed.')
+    } finally {
+      setLoading(false)
     }
-  }
-
-  if (submitted) {
-    return (
-      <>
-        <div className="auth-success-state">
-          <div className="auth-success-icon">✦</div>
-          <p className="auth-success-text">Your collection begins.</p>
-          <p style={{ fontSize: 13, color: 'rgba(223, 194, 161, 0.50)', marginTop: 4 }}>
-            Simulation complete — account initialized.
-          </p>
-          <button
-            type="button"
-            className="auth-success-reset"
-            onClick={() => {
-              setSubmitted(false)
-              setName('')
-              setEmail('')
-              setPassword('')
-              setConfirmPassword('')
-              setAgreed(false)
-            }}
-            style={{ marginTop: 12 }}
-          >
-            Try again
-          </button>
-        </div>
-        <AuthToast message={toastMessage} onClose={() => setToastMessage(null)} />
-      </>
-    )
   }
 
   return (
@@ -264,7 +229,6 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
         onClose={() => setLegalModalType(null)}
       />
 
-      {/* Simulated Toast Notification */}
       <AuthToast message={toastMessage} onClose={() => setToastMessage(null)} />
     </>
   )

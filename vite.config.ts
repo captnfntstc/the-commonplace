@@ -1,6 +1,5 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
-import { resolve } from 'path'
 // @ts-expect-error This JavaScript plugin runs only inside Vite's Node process.
 import { createIgdbDevPlugin } from './server/vite-plugin.mjs'
 
@@ -86,14 +85,6 @@ export default defineConfig(({ mode }) => {
         changeOrigin: true,
         secure: true,
         rewrite: (path) => path.replace(/^\/shopify-images/, ''),
-      },
-    },
-  },
-  build: {
-    rollupOptions: {
-      input: {
-        main: resolve(__dirname, 'index.html'),
-        authPreview: resolve(__dirname, 'auth-preview.html'),
       },
     },
   },

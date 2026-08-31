@@ -1,9 +1,8 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Mail, Lock, AlertCircle, Info } from 'lucide-react'
+import { Mail, Lock, AlertCircle } from 'lucide-react'
 import { FormInput } from './FormInput'
 import { PasswordInput } from './PasswordInput'
-import { AuthDivider } from './Divider'
 import { AuthToast } from './AuthToast'
 import { SocialSignIn } from './SocialSignIn'
 import { useAuth } from '../../context/AuthContext'
@@ -17,9 +16,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   const { login, resetPassword, loginWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [rememberMe, setRememberMe] = useState(false)
   const [genericError, setGenericError] = useState<string | null>(null)
-  const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
 
@@ -42,7 +39,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
     try {
       setLoading(true)
       await login(trimmedInput, password)
-      setSubmitted(true)
       setToastMessage('✦ Logged in successfully!')
       setTimeout(() => {
         navigate('/')
@@ -72,13 +68,12 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
       return
     }
 
-    const resolvedEmail = trimmed.includes('@') ? trimmed : `${trimmed}@commonplace.app`
     try {
       setLoading(true)
-      await resetPassword(resolvedEmail)
-      setSentEmailTarget(resolvedEmail)
+      await resetPassword(trimmed)
+      setSentEmailTarget(trimmed)
       setViewMode('reset-sent')
-      setToastMessage(`✦ Reset email dispatched to ${resolvedEmail}`)
+      setToastMessage(`✦ Reset email dispatched to ${trimmed}`)
     } catch (err: unknown) {
       setResetError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Failed to send reset link.')
     } finally {
@@ -87,58 +82,19 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   }
 
   const handleSelectProvider = async (provider: string) => {
-    if (provider === 'Google') {
-      try {
-        setLoading(true)
-        await loginWithGoogle()
-        setToastMessage('✦ Logged in with Google successfully!')
-        setTimeout(() => {
-          navigate('/')
-        }, 600)
-      } catch (err: unknown) {
-        setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Google login failed.')
-      } finally {
-        setLoading(false)
-      }
-    } else {
-      setToastMessage(`✦ ${provider} login simulation selected.`)
+    if (provider !== 'Google') return
+    try {
+      setLoading(true)
+      await loginWithGoogle()
+      setToastMessage('✦ Logged in with Google successfully!')
+      setTimeout(() => {
+        navigate('/')
+      }, 600)
+    } catch (err: unknown) {
+      setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Google login failed.')
+    } finally {
+      setLoading(false)
     }
-  }
-
-  const handleGuestClick = () => {
-    setToastMessage('✦ Continuing as Guest reader...')
-    setTimeout(() => {
-      navigate('/')
-    }, 400)
-  }
-
-
-  if (submitted) {
-    return (
-      <>
-        <div className="auth-success-state">
-          <div className="auth-success-icon">✦</div>
-          <p className="auth-success-text">Welcome back, Admin.</p>
-          <p style={{ fontSize: 13, color: 'rgba(223, 194, 161, 0.50)', marginTop: 4 }}>
-            Simulation complete — zero credentials stored.
-          </p>
-          <button
-            type="button"
-            className="auth-success-reset"
-            onClick={() => {
-              setSubmitted(false)
-              setEmail('')
-              setPassword('')
-              setGenericError(null)
-            }}
-            style={{ marginTop: 12 }}
-          >
-            Try again
-          </button>
-        </div>
-        <AuthToast message={toastMessage} onClose={() => setToastMessage(null)} />
-      </>
-    )
   }
 
   // RENDER: Step 2 - Check Email Confirmation Screen
@@ -193,15 +149,15 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
           </div>
 
           <p className="auth-reset-prompt-desc">
-            Enter your email or username below. If an account matches, we'll send you a link to reset your password.
+            Enter your email address below. If an account matches, we'll send you a link to reset your password.
           </p>
 
           <div className="auth-fields-stack" style={{ marginTop: 20 }}>
             <FormInput
               id="reset-input"
-              label="Email or Username"
-              type="text"
-              placeholder="admin or you@example.com"
+              label="Email address"
+              type="email"
+              placeholder="you@example.com"
               value={resetInput}
               onChange={(e) => {
                 setResetInput(e.target.value)
@@ -252,12 +208,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
           </div>
         </div>
 
-        {/* Test Credential Hint Banner */}
-        <div className="auth-test-credentials-box">
-          <Info size={14} className="test-cred-icon" />
-          <span>Test login — <strong>User:</strong> jimb0iii | <strong>Password:</strong> password</span>
-        </div>
-
         {/* Unified Generic Error Message */}
         {genericError && (
           <div className="auth-generic-error-banner" role="alert">
@@ -270,10 +220,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
         <div className="auth-fields-stack">
           <FormInput
             id="login-email"
-            label="Email or Username"
-            type="text"
-            autoComplete="username"
-            placeholder="jimb0iii or you@example.com"
+            label="Email address"
+            type="email"
+            autoComplete="email"
+            placeholder="you@example.com"
             value={email}
             onChange={(e) => {
               setEmail(e.target.value)
@@ -297,18 +247,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
             leadingIcon={<Lock size={16} strokeWidth={1.75} />}
           />
 
-          {/* Remember me + Forgot password row */}
-          <div className="auth-remember-row">
-            <label className="auth-checkbox-label" htmlFor="login-remember">
-              <input
-                id="login-remember"
-                type="checkbox"
-                className="auth-checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-              />
-              <span>Remember me</span>
-            </label>
+          <div className="auth-remember-row" style={{ justifyContent: 'flex-end' }}>
             <button
               type="button"
               className="auth-link-btn auth-forgot-btn"
@@ -332,18 +271,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
           mode="login"
           onSelectProvider={handleSelectProvider}
         />
-
-        <AuthDivider label="OR" />
-
-        {/* Guest CTA */}
-        <button
-          type="button"
-          id="btn-guest"
-          className="auth-outline-btn"
-          onClick={handleGuestClick}
-        >
-          Continue as Guest
-        </button>
 
         {/* Switch to Register */}
         <p className="auth-switch-text">

@@ -1,14 +1,29 @@
-import { fireEvent, render, screen, waitForElementToBeRemoved } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { fireEvent, render, screen, waitFor, waitForElementToBeRemoved } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BrowserRouter } from 'react-router-dom'
+import type { User } from 'firebase/auth'
 import AppController from './app/AppController'
 import { ExpansionProvider } from './context/ExpansionContext'
 import { AuthProvider } from './context/AuthContext'
 
-function renderApplication() {
+const TEST_USER = {
+  uid: '',
+  email: 'jimmy@example.com',
+  displayName: 'Jimmy Boy',
+  photoURL: null,
+  emailVerified: true,
+  getIdToken: vi.fn().mockResolvedValue('test-id-token'),
+} as unknown as User
+
+function renderApplication({
+  authenticated = true,
+  verified = true,
+}: { authenticated?: boolean; verified?: boolean } = {}) {
   return render(
     <BrowserRouter>
-      <AuthProvider>
+      <AuthProvider
+        initialUser={authenticated ? { ...TEST_USER, emailVerified: verified } as User : undefined}
+      >
         <ExpansionProvider>
           <AppController />
         </ExpansionProvider>
@@ -23,6 +38,28 @@ describe('application shell', () => {
     window.history.replaceState({}, '', '/')
   })
 
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('starts logged out when there is no Firebase session', async () => {
+    renderApplication({ authenticated: false })
+
+    expect(await screen.findByRole('heading', { name: 'Welcome back.' })).toBeInTheDocument()
+    expect(screen.queryByText(/Test login/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Continue as Guest/i })).not.toBeInTheDocument()
+    await waitFor(() => expect(window.location.pathname).toBe('/login'))
+  })
+
+  it('hides Firebase email-action parameters from the address bar', async () => {
+    window.history.replaceState({}, '', '/verify-email?mode=verifyEmail&apiKey=visible-key')
+    renderApplication()
+
+    expect(await screen.findByRole('heading', { name: 'Verification link unavailable.' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/verify-email')
+    expect(window.location.search).toBe('')
+  })
+
   it('renders the feed and opens the entry composer', async () => {
     renderApplication()
     expect(await screen.findByText('The Commonplace.')).toBeInTheDocument()
@@ -30,6 +67,56 @@ describe('application shell', () => {
     expect(screen.queryByRole('button', { name: 'Go home' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Add new entry' }))
     expect(await screen.findByText('New Margin')).toBeInTheDocument()
+  })
+
+  it('blocks posting until the signed-in email is verified', async () => {
+    renderApplication({ verified: false })
+
+    expect(await screen.findByText(/Email hasn't been verified/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dismiss email verification reminder' })).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Add new entry' }))
+    expect(await screen.findByRole('dialog', { name: 'Verify your email first' })).toBeInTheDocument()
+    expect(screen.getByText('jimmy@example.com')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Okay' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resend email' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Email hasn't been verified/i)).toBeInTheDocument()
+    expect(screen.queryByText('New Margin')).not.toBeInTheDocument()
+  })
+
+  it('sends verification directly from the banner and starts the resend timer', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ sent: true, retryAfter: 60 }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderApplication({ verified: false })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Verify now' }))
+
+    expect(await screen.findByRole('button', { name: /Resend in (1:00|0:59)/ })).toBeDisabled()
+    expect(await screen.findByText(/Sent to jimmy@example\.com/i)).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/verification-links', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('restores the verification resend timer after a refresh', async () => {
+    localStorage.setItem(
+      'the-commonplace.verification-email-cooldown.jimmy@example.com',
+      String(Date.now() + 60_000),
+    )
+    renderApplication({ verified: false })
+
+    expect(await screen.findByRole('button', { name: /Resend in (1:00|0:59)/ })).toBeDisabled()
+  })
+
+  it('does not show the verification banner in settings', async () => {
+    window.history.replaceState({}, '', '/settings')
+    renderApplication({ verified: false })
+
+    expect(await screen.findByRole('heading', { name: 'Profile Information' })).toBeInTheDocument()
+    expect(screen.queryByText(/Email hasn't been verified/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Verify now' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Check status' })).not.toBeInTheDocument()
   })
 
   it('renders a direct user profile route without an undefined profile callback', async () => {
@@ -119,7 +206,10 @@ describe('application shell', () => {
     window.history.replaceState({}, '', '/settings')
     renderApplication()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Privacy & Visibility' }))
+    expect(await screen.findByRole('button', { name: 'Privacy & Visibility' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Developer Tools' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Email Verification')).toHaveTextContent('Verified')
+    fireEvent.click(screen.getByRole('button', { name: 'Privacy & Visibility' }))
     const savedVisibility = screen.getByRole('switch', { name: 'Show Saved Catalog & Collections' })
     expect(savedVisibility).toHaveAttribute('aria-checked', 'false')
 

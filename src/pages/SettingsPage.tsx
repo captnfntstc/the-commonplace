@@ -21,8 +21,7 @@ import { SettingsSection } from '../components/Settings/SettingsSection'
 import { SettingsField } from '../components/Settings/SettingsField'
 import { SettingsToggle } from '../components/Settings/SettingsToggle'
 import type { UserProfileState } from '../types/userProfile'
-import { ApiUsageTracker } from '../components/DeveloperTools/ApiUsageTracker'
-import type { AppNotification } from '../types/notification'
+import { useAuth } from '../context/AuthContext'
 
 
 const PROVIDERS: ProviderInfo[] = [
@@ -103,7 +102,6 @@ interface SettingsPageProps {
   showLocalNavigation?: boolean
   userProfile: UserProfileState
   onSaveProfile: (updated: UserProfileState) => void | Promise<void>
-  onAddNotification: (notification: AppNotification) => void
 }
 
 const TAKEN_USERNAMES = new Set(['admin', 'commonplace', 'system', 'root', 'collector', 'superuser', 'official'])
@@ -114,9 +112,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   showLocalNavigation = true,
   userProfile,
   onSaveProfile,
-  onAddNotification,
 }) => {
+  const {
+    currentUser,
+    resendVerificationEmail,
+    verificationEmailCooldownSeconds,
+    verificationEmailSent,
+  } = useAuth()
   const [activeTab, setActiveTab] = useState<SettingsNavTab>('profile')
+  const [verificationLoading, setVerificationLoading] = useState<'send' | null>(null)
+  const [verificationNotice, setVerificationNotice] = useState('')
+  const verificationCooldownLabel = `${Math.floor(verificationEmailCooldownSeconds / 60)}:${String(verificationEmailCooldownSeconds % 60).padStart(2, '0')}`
 
   // Form State
   const [firstName, setFirstName] = useState(userProfile.firstName)
@@ -130,6 +136,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [privateProfile, setPrivateProfile] = useState(userProfile.isPrivate ?? false)
   const [showSavedActivity, setShowSavedActivity] = useState(userProfile.showSavedActivity ?? false)
   const [savedNotice, setSavedNotice] = useState(false)
+
+  const handleSendVerification = async () => {
+    try {
+      setVerificationLoading('send')
+      setVerificationNotice('')
+      await resendVerificationEmail()
+      setVerificationNotice(`Verification email sent to ${currentUser?.email || email}.`)
+    } catch (error: unknown) {
+      setVerificationNotice(
+        (error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to send verification email.',
+      )
+    } finally {
+      setVerificationLoading(null)
+    }
+  }
 
   // Activity Modals State
   const [activeActivityModal, setActiveActivityModal] = useState<'likes' | 'comments' | null>(null)
@@ -437,6 +458,41 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       placeholder="jimboii@commonplace.app"
                     />
                   </SettingsField>
+
+                  <div className="email-verification-setting" aria-label="Email Verification">
+                    <div className="email-verification-setting-copy">
+                      <span className="toggle-label">Email Verification</span>
+                      <span className="toggle-description">
+                        {currentUser?.emailVerified
+                          ? 'Your account email has been confirmed.'
+                          : 'Confirm your account email to unlock posting.'}
+                      </span>
+                      {verificationNotice && <span className="email-verification-setting-notice">{verificationNotice}</span>}
+                    </div>
+                    {currentUser?.emailVerified ? (
+                      <span className="email-verification-status verified">
+                        <CheckCircle2 aria-hidden="true" />
+                        Verified
+                      </span>
+                    ) : (
+                      <div className="email-verification-setting-actions">
+                        <button
+                          type="button"
+                          className="secondary-action-btn"
+                          onClick={handleSendVerification}
+                          disabled={verificationLoading !== null || verificationEmailCooldownSeconds > 0}
+                        >
+                          {verificationLoading === 'send'
+                            ? 'Sending...'
+                            : verificationEmailCooldownSeconds > 0
+                              ? `Resend in ${verificationCooldownLabel}`
+                              : verificationEmailSent
+                                ? 'Resend email'
+                                : 'Verify now'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </SettingsSection>
 
@@ -699,19 +755,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
           )}
 
-          {/* PAGE 7: DEVELOPER TOOLS */}
-          {activeTab === 'developer' && (
-            <div className="settings-page-content">
-              <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Developer Tools</h1>
-                <p className="settings-page-desc">Inspect metadata calls, test search providers, and simulate notifications.</p>
-              </div>
-
-              <SettingsSection title="Diagnostics">
-                <ApiUsageTracker onAddNotification={onAddNotification} />
-              </SettingsSection>
-            </div>
-          )}
         </main>
       </div>
 

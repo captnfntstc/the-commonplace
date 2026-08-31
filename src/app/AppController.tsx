@@ -8,10 +8,10 @@ import {
   Plus,
   Settings,
   LogOut,
-  Wrench,
-  X,
   CircleUserRound,
   Home,
+  MailCheck,
+  X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -31,6 +31,7 @@ import { UserProfilePage } from '../pages/UserProfilePage'
 import { SettingsPage } from '../pages/SettingsPage'
 import { LoginPage } from '../pages/LoginPage'
 import { RegisterPage } from '../pages/RegisterPage'
+import { EmailVerificationPage } from '../pages/EmailVerificationPage'
 import { useAuth } from '../context/AuthContext'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { NotificationBell } from '../components/Notifications/NotificationPanel'
@@ -39,7 +40,6 @@ import { UniversalMediaProfilePage } from '../pages/UniversalMediaProfilePage'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../data/universalMediaEntities'
 import type { MediaEntityType, UniversalMediaEntity } from '../types/mediaEntity'
 import { resolveArtworkUrl } from '../utils/artwork'
-import { ApiUsageTracker } from '../components/DeveloperTools/ApiUsageTracker'
 import { CollectionPickerModal } from '../components/Collections/CollectionPickerModal'
 import {
   cacheIdentityAlias,
@@ -179,10 +179,15 @@ export default function AppController() {
   const [typeFilter, setTypeFilter] = useState<EntryType | 'all'>('all')
   const { expandedCardId, setExpandedCardId, toggleCardExpanded } = useCardExpansion()
 
-  const { logout, currentUser, isDemoMode } = useAuth()
-  const cloudUserId = !isDemoMode && currentUser && !currentUser.uid.startsWith('demo-')
-    ? currentUser.uid
-    : null
+  const {
+    logout,
+    currentUser,
+    loading: authLoading,
+    resendVerificationEmail,
+    verificationEmailCooldownSeconds,
+    verificationEmailSent,
+  } = useAuth()
+  const cloudUserId = currentUser?.uid || null
   const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings' | 'entity' | 'login' | 'register'>('feed')
   const [selectedProfileHandle, setSelectedProfileHandle] = useState<string | null>(null)
   const [selectedProfileCollectionId, setSelectedProfileCollectionId] = useState<string | null>(null)
@@ -512,11 +517,30 @@ export default function AppController() {
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [composerInitialDraft, setComposerInitialDraft] = useState<EntryDraft | null>(null)
   const [composerInitialLyrics, setComposerInitialLyrics] = useState<string>('')
+  const [verificationPromptOpen, setVerificationPromptOpen] = useState(false)
+  const [verificationBannerDismissed, setVerificationBannerDismissed] = useState(false)
+  const [bannerSendingEmail, setBannerSendingEmail] = useState(false)
+  const [bannerEmailNotice, setBannerEmailNotice] = useState('')
+  const verificationCooldownLabel = `${Math.floor(verificationEmailCooldownSeconds / 60)}:${String(verificationEmailCooldownSeconds % 60).padStart(2, '0')}`
+
+  const handleBannerVerifyNow = async () => {
+    if (verificationEmailCooldownSeconds > 0 || bannerSendingEmail) return
+    try {
+      setBannerSendingEmail(true)
+      setBannerEmailNotice('')
+      await resendVerificationEmail()
+      setBannerEmailNotice(`Sent to ${currentUser?.email ?? 'your email'}.`)
+    } catch (error: unknown) {
+      setBannerEmailNotice(
+        (error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Could not send verification email.',
+      )
+    } finally {
+      setBannerSendingEmail(false)
+    }
+  }
   const [overlayEntry, setOverlayEntry] = useState<Entry | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
-  const [isLoggedOut, setIsLoggedOut] = useState(false)
-  const [quickDevToolsOpen, setQuickDevToolsOpen] = useState(false)
   const [collectionTarget, setCollectionTarget] = useState<ProfileCollectionItem | null>(null)
   const gridRef = useRef<HTMLElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
@@ -560,6 +584,26 @@ export default function AppController() {
       .map(decodeRouteSegment)
 
     const [section, rawId, nestedSection, nestedId] = segments
+
+    if (section === 'verify-email' || (section === 'v' && rawId)) return
+    if (authLoading) return
+    const isAuthRoute = section === 'login' || section === 'register'
+    if (!currentUser) {
+      if (section === 'register') {
+        setActiveView('register')
+      } else {
+        setActiveView('login')
+        if (section !== 'login') navigate('/login', { replace: true })
+      }
+      setSelectedProfileHandle(null)
+      setSelectedEntityId(null)
+      setSelectedEntityType(null)
+      return
+    }
+    if (isAuthRoute) {
+      navigate('/', { replace: true })
+      return
+    }
 
     if (!section) {
       setActiveView('feed')
@@ -618,7 +662,7 @@ export default function AppController() {
     }
 
     navigate('/', { replace: true })
-  }, [location.pathname, navigate, userProfile.handle])
+  }, [authLoading, currentUser, location.pathname, navigate, userProfile.handle])
 
   useEffect(() => {
     setSearchLimit(SEARCH_INITIAL_RESULT_LIMIT)
@@ -930,15 +974,6 @@ export default function AppController() {
     })
   }
 
-  const addNotification = (n: AppNotification) => {
-    setNotifications((prev) => {
-      const next = [n, ...prev]
-      localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
-      persistCloudState({ notifications: next })
-      return next
-    })
-  }
-
   const markAllNotificationsRead = () => {
     setNotifications((prev) => {
       const next = prev.map((n) => ({ ...n, read: true }))
@@ -1029,7 +1064,6 @@ export default function AppController() {
       } catch {
         // ignore
       }
-      setIsLoggedOut(true)
       setProfileMenuOpen(false)
       navigate('/login')
     }
@@ -1042,44 +1076,6 @@ export default function AppController() {
       onClearAll={clearAllNotifications}
       onDismiss={dismissNotification}
     />
-  )
-
-  const renderQuickDevTools = () => (
-    <div className="quick-devtools">
-      {quickDevToolsOpen && (
-        <div className="quick-devtools-panel">
-          <div className="quick-devtools-panel-header">
-            <div className="quick-devtools-title">
-              <Wrench aria-hidden="true" />
-              <span>Developer Tools</span>
-            </div>
-            <button
-              type="button"
-              className="quick-devtools-close"
-              onClick={() => setQuickDevToolsOpen(false)}
-              aria-label="Close developer tools"
-              title="Close"
-            >
-              <X aria-hidden="true" />
-            </button>
-          </div>
-          <ApiUsageTracker onAddNotification={addNotification} />
-        </div>
-      )}
-
-      <div className="quick-devtools-dock" aria-label="Developer quick access">
-        <button
-          type="button"
-          className={`quick-devtools-btn ${quickDevToolsOpen ? 'active' : ''}`}
-          onClick={() => setQuickDevToolsOpen((open) => !open)}
-          aria-label="Developer tools"
-          title="Open developer tools"
-        >
-          <Wrench aria-hidden="true" />
-          <span>Developer Tools</span>
-        </button>
-      </div>
-    </div>
   )
 
   const handleOpenUserFromSearch = (handle: string) => {
@@ -1111,6 +1107,7 @@ export default function AppController() {
     const isHomeHeader = activeView === 'feed'
 
     return (
+    <>
     <header className={`global-app-header ${isHomeHeader ? 'is-home-page' : 'is-inner-page'}`}>
       <div className="global-app-header-layout">
         <div className="global-header-navigation">
@@ -1206,6 +1203,42 @@ export default function AppController() {
         </div>
       </div>
     </header>
+    {(activeView === 'feed' || activeView === 'profile')
+      && !currentUser?.emailVerified
+      && !verificationBannerDismissed && (
+      <div className="email-verification-banner" role="status">
+        <div className="email-verification-banner-message">
+          <MailCheck aria-hidden="true" />
+          <span className="email-verification-banner-copy">
+            <span>Email hasn&apos;t been verified. Confirm your address to unlock posting and protect your account.</span>
+            {bannerEmailNotice && <span className="email-verification-banner-notice">{bannerEmailNotice}</span>}
+          </span>
+        </div>
+        <button
+          type="button"
+          className="email-verification-banner-action"
+          onClick={handleBannerVerifyNow}
+          disabled={verificationEmailCooldownSeconds > 0 || bannerSendingEmail}
+        >
+          {bannerSendingEmail
+            ? 'Sending...'
+            : verificationEmailCooldownSeconds > 0
+              ? `Resend in ${verificationCooldownLabel}`
+              : verificationEmailSent
+                ? 'Resend email'
+                : 'Verify now'}
+        </button>
+        <button
+          type="button"
+          className="email-verification-banner-close"
+          onClick={() => setVerificationBannerDismissed(true)}
+          aria-label="Dismiss email verification reminder"
+        >
+          <X aria-hidden="true" />
+        </button>
+      </div>
+    )}
+    </>
     )
   }
 
@@ -1218,6 +1251,10 @@ export default function AppController() {
     initialDraft: EntryDraft | null = null,
     initialLyrics = '',
   ) => {
+    if (!currentUser?.emailVerified) {
+      setVerificationPromptOpen(true)
+      return
+    }
     setEditingEntry(entry)
     setComposerInitialDraft(entry ? null : initialDraft)
     setComposerInitialLyrics(entry ? '' : initialLyrics)
@@ -1276,6 +1313,11 @@ export default function AppController() {
   }
 
   const handleSave = (draft: EntryDraft, disableComments?: boolean) => {
+    if (!currentUser?.emailVerified) {
+      closeComposer()
+      setVerificationPromptOpen(true)
+      return
+    }
     const timestamp = new Date().toISOString()
 
     if (editingEntry) {
@@ -1334,7 +1376,68 @@ export default function AppController() {
     if (expandedCardId === entryId) setExpandedCardId('')
   }
 
+  const renderEmailVerificationPrompt = () => (
+    <AnimatePresence>
+      {verificationPromptOpen && (
+        <div
+          className="modal-backdrop"
+          style={{ zIndex: 180 }}
+          onClick={() => setVerificationPromptOpen(false)}
+        >
+          <motion.div
+            className="settings-modal"
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="email-verification-title"
+          >
+            <div className="settings-header">
+              <div className="settings-header-title">
+                <MailCheck aria-hidden="true" />
+                <h2 id="email-verification-title">Verify your email first</h2>
+              </div>
+            </div>
+            <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 12 }}>
+              You haven&apos;t confirmed your email yet. To publish entries and access all posting features,
+              verify <strong>{currentUser?.email || 'your email address'}</strong> first.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => setVerificationPromptOpen(false)}
+              >
+                Okay
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  )
+
   // Render Standalone Pages
+  if (location.pathname === '/verify-email' || location.pathname.startsWith('/v/')) {
+    return <EmailVerificationPage />
+  }
+
+  if (authLoading || (currentUser && (location.pathname === '/login' || location.pathname === '/register'))) {
+    return (
+      <div className="auth-page" role="status" aria-label="Checking account session">
+        <span className="auth-loading-copy">Checking your account...</span>
+      </div>
+    )
+  }
+
+  if (!currentUser) {
+    return location.pathname === '/register'
+      ? <RegisterPage onSwitchToLogin={() => navigate('/login')} />
+      : <LoginPage onSwitchToRegister={() => navigate('/register')} />
+  }
+
   if (activeView === 'profile') {
     const isViewingOwn = selectedProfileHandle === null || selectedProfileHandle === userProfile.handle
     const externalProfileData = isViewingOwn
@@ -1454,7 +1557,7 @@ export default function AppController() {
             />
           ) : null}
         </AnimatePresence>
-        {renderQuickDevTools()}
+        {renderEmailVerificationPrompt()}
       </>
     )
   }
@@ -1634,18 +1737,10 @@ export default function AppController() {
               />
             )}
           </AnimatePresence>
-          {renderQuickDevTools()}
+          {renderEmailVerificationPrompt()}
         </>
       )
     }
-  }
-
-  if (activeView === 'login') {
-    return <LoginPage onSwitchToRegister={() => navigate('/register')} />
-  }
-
-  if (activeView === 'register') {
-    return <RegisterPage onSwitchToLogin={() => navigate('/login')} />
   }
 
   if (activeView === 'settings') {
@@ -1657,9 +1752,8 @@ export default function AppController() {
           showLocalNavigation={false}
           userProfile={userProfile}
           onSaveProfile={persistUserProfile}
-          onAddNotification={addNotification}
         />
-        {renderQuickDevTools()}
+        {renderEmailVerificationPrompt()}
       </>
     )
   }
@@ -1878,38 +1972,6 @@ export default function AppController() {
           )}
         </AnimatePresence>
 
-        {/* Logged Out Dialog */}
-        <AnimatePresence>
-          {isLoggedOut && (
-            <div className="modal-backdrop" onClick={() => setIsLoggedOut(false)}>
-              <motion.div
-                className="settings-modal"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="settings-header">
-                  <div className="settings-header-title">
-                    <LogOut aria-hidden="true" />
-                    <h2>Signed Out</h2>
-                  </div>
-                </div>
-                <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 20 }}>
-                  You have logged out of your session. Your local catalog entries remain safely preserved.
-                </p>
-                <button
-                  type="button"
-                  className="primary-btn"
-                  style={{ width: '100%', justifyContent: 'center' }}
-                  onClick={() => setIsLoggedOut(false)}
-                >
-                  Log back in as jimboii
-                </button>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
       </main>
 
       {/* Floating action buttons stack */}
@@ -1948,7 +2010,7 @@ export default function AppController() {
           />
         ) : null}
       </AnimatePresence>
-      {renderQuickDevTools()}
+      {renderEmailVerificationPrompt()}
     </div>
   )
 }

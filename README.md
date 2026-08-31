@@ -16,6 +16,8 @@ npx firebase-tools deploy --only firestore
 
 See [docs/FIREBASE_DATA.md](docs/FIREBASE_DATA.md) for the schema, migration behavior, and rollout checklist.
 
+Optional clean verification links (`/v/<token>`, without Firebase parameters) require the server-only Firebase Admin and SMTP variables documented there.
+
 ## Development
 
 ```bash
