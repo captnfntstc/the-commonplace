@@ -26,9 +26,14 @@ export function CardSkeleton() {
   )
 }
 
-export function CardSkeletonGrid({ count = 6 }: { count?: number }) {
+export function CardSkeletonGrid({ count = 8 }: { count?: number }) {
   return (
-    <div className="skeleton-grid" aria-label="Loading entries...">
+    <div
+      className="skeleton-grid"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading home entries"
+    >
       {Array.from({ length: count }, (_, i) => (
         <CardSkeleton key={i} />
       ))}

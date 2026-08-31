@@ -3,11 +3,11 @@ import {
   addItemToProfileCollection,
   buildPopularCollectionRecommendations,
   createProfileCollection,
-  createDefaultProfileCollections,
   loadProfileCollections,
   loadSavedProfileCollections,
   saveProfileCollections,
   saveSavedProfileCollections,
+  profileCollectionItemFromEntry,
   profileCollectionItemIdentity,
 } from './profileCollections'
 import type { Entry } from '../entries/model'
@@ -30,23 +30,19 @@ const entry: Entry = {
 describe('profile collections', () => {
   beforeEach(() => localStorage.clear())
 
-  it('creates attributed default collections for encoded profiles', () => {
-    const [collection] = createDefaultProfileCollections('Elena Rostova', 'elena_r', [entry])
-
-    expect(collection.creatorName).toBe('Elena Rostova')
-    expect(collection.creatorHandle).toBe('elena_r')
-    expect(collection.items?.[0].title).toBe(entry.title)
-  })
-
   it('keeps created and saved collections in separate account stores', () => {
-    const [collection] = createDefaultProfileCollections('Elena Rostova', 'elena_r', [entry])
+    const collection = createProfileCollection('Mina\'s Highlights', ['book'], {
+      creatorName: 'Mina Reyes',
+      creatorHandle: 'minareads',
+      items: [profileCollectionItemFromEntry(entry)],
+    })
 
-    saveProfileCollections('elena_r', [collection])
+    saveProfileCollections('minareads', [collection])
     saveSavedProfileCollections('jimboii', [collection])
 
-    expect(loadProfileCollections('elena_r')).toEqual([collection])
+    expect(loadProfileCollections('minareads')).toEqual([collection])
     expect(loadSavedProfileCollections('jimboii')).toEqual([collection])
-    expect(loadSavedProfileCollections('elena_r')).toEqual([])
+    expect(loadSavedProfileCollections('minareads')).toEqual([])
   })
 
   it('deduplicates popular recommendations across reviews and provider IDs', () => {
@@ -113,7 +109,7 @@ describe('profile collections', () => {
   })
 
   it('only adds an existing item again after explicit duplicate confirmation', () => {
-    const [item] = createDefaultProfileCollections('Elena Rostova', 'elena_r', [entry])[0].items ?? []
+    const item = profileCollectionItemFromEntry(entry)
     const collection = createProfileCollection('Favorites', [entry.type], { items: [item] })
 
     expect(addItemToProfileCollection(collection, item).items).toHaveLength(1)

@@ -1,5 +1,6 @@
 import type { MetadataResult } from '../../metadata'
 import { getDefaultCoverTone, type Entry, type EntryType } from '../entries/model'
+import { isLegacySeedCollection } from '../../utils/legacySeedCleanup'
 
 export type ProfileCollectionItem = {
   id: string
@@ -114,6 +115,7 @@ function readCollections(key: string, fallback: ProfileCollection[] = []): Profi
     return parsed.filter(
       (collection) =>
         collection &&
+        !isLegacySeedCollection(collection) &&
         typeof collection.id === 'string' &&
         typeof collection.name === 'string' &&
         Array.isArray(collection.types) &&
@@ -141,26 +143,6 @@ export function saveSavedProfileCollections(handle: string, collections: Profile
     `${SAVED_STORAGE_PREFIX}:${handle.replace(/^@/, '').toLowerCase()}`,
     JSON.stringify(collections),
   )
-}
-
-export function createDefaultProfileCollections(
-  creatorName: string,
-  creatorHandle: string,
-  entries: Entry[],
-): ProfileCollection[] {
-  if (entries.length === 0) return []
-  const items = entries.map(profileCollectionItemFromEntry)
-  return [{
-    id: `collection-${creatorHandle.replace(/^@/, '').toLowerCase()}-highlights`,
-    name: `${creatorName.split(' ')[0]}'s Highlights`,
-    creatorName,
-    creatorHandle: creatorHandle.replace(/^@/, ''),
-    description: `A selection of media gathered by ${creatorName}.`,
-    types: [...new Set(items.map((item) => item.type))],
-    entryIds: entries.map((entry) => entry.id),
-    items,
-    coverMode: 'auto',
-  }]
 }
 
 export function createProfileCollection(

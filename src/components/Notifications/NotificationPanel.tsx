@@ -1,18 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import {
-  Bell,
-  Heart,
-  MessageSquare,
-  UserPlus,
-  Users,
-  Trophy,
-  X,
-  Zap,
-} from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { Bell, Heart, MessageSquare, Trophy, UserPlus, Users, X } from 'lucide-react'
 import type { AppNotification as Notification, NotificationType } from '../../types/notification'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
 interface NotificationPanelProps {
   notifications: Notification[]
   onMarkAllRead: () => void
@@ -46,33 +36,32 @@ function notifColor(type: NotificationType): string {
   return '#c9a96e'
 }
 
-function notifText(n: Notification): React.ReactNode {
-  switch (n.type) {
+function notifText(notification: Notification): React.ReactNode {
+  switch (notification.type) {
     case 'like':
-      return <><strong>{n.actorName || n.actorHandle}</strong> liked your entry <em>"{n.entryTitle}"</em></>
+      return <><strong>{notification.actorName || notification.actorHandle}</strong> liked your entry <em>&quot;{notification.entryTitle}&quot;</em></>
     case 'like_milestone':
-      return <>Your entry <em>"{n.entryTitle}"</em> reached <strong>{n.milestoneCount} likes</strong></>
+      return <>Your entry <em>&quot;{notification.entryTitle}&quot;</em> reached <strong>{notification.milestoneCount} likes</strong></>
     case 'comment':
-      return <><strong>{n.actorName || n.actorHandle}</strong> commented: <em>"{n.commentSnippet}"</em></>
+      return <><strong>{notification.actorName || notification.actorHandle}</strong> commented: <em>&quot;{notification.commentSnippet}&quot;</em></>
     case 'follow_request':
-      return <><strong>{n.actorName || n.actorHandle}</strong> sent you a follow request</>
+      return <><strong>{notification.actorName || notification.actorHandle}</strong> sent you a follow request</>
     case 'friend_recommendation':
-      return <>You may know <strong>{n.actorName || n.actorHandle}</strong> — they share your reading taste</>
+      return <>You may know <strong>{notification.actorName || notification.actorHandle}</strong> — they share your reading taste</>
     case 'people_you_may_know':
-      return <><strong>{n.actorName || n.actorHandle}</strong> is on The Commonplace — people you may know</>
+      return <><strong>{notification.actorName || notification.actorHandle}</strong> is on The Commonplace — people you may know</>
     default:
       return null
   }
 }
 
-// ── Panel ─────────────────────────────────────────────────────────────────────
 export const NotificationPanel: React.FC<NotificationPanelProps> = ({
   notifications,
   onMarkAllRead,
   onClearAll,
   onDismiss,
 }) => {
-  const unread = notifications.filter((n) => !n.read).length
+  const unread = notifications.filter((notification) => !notification.read).length
 
   return (
     <div className="notif-panel">
@@ -95,37 +84,47 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
       {notifications.length === 0 ? (
         <div className="notif-empty">
           <Bell size={28} opacity={0.35} />
-          <p>You're all caught up!</p>
+          <p>You&apos;re all caught up!</p>
         </div>
       ) : (
         <div className="notif-list">
           <AnimatePresence initial={false}>
-            {notifications.map((n) => (
+            {notifications.map((notification) => (
               <motion.div
-                key={n.id}
-                className={`notif-item ${n.read ? 'read' : 'unread'}`}
+                key={notification.id}
+                className={`notif-item ${notification.read ? 'read' : 'unread'}`}
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, x: 40, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
                 transition={{ duration: 0.22 }}
                 layout
               >
-                <div className="notif-icon-wrap" style={{ color: notifColor(n.type), background: `${notifColor(n.type)}18` }}>
-                  <NotifIcon type={n.type} />
+                <div
+                  className="notif-icon-wrap"
+                  style={{
+                    color: notifColor(notification.type),
+                    background: `${notifColor(notification.type)}18`,
+                  }}
+                >
+                  <NotifIcon type={notification.type} />
                 </div>
-                {n.actorAvatarUrl && (
+                {notification.actorAvatarUrl && (
                   <div className="notif-avatar">
-                    <img src={n.actorAvatarUrl} alt={n.actorName} referrerPolicy="no-referrer" />
+                    <img
+                      src={notification.actorAvatarUrl}
+                      alt={notification.actorName}
+                      referrerPolicy="no-referrer"
+                    />
                   </div>
                 )}
                 <div className="notif-body">
-                  <p className="notif-text">{notifText(n)}</p>
-                  <span className="notif-time">{timeAgo(n.createdAt)} ago</span>
+                  <p className="notif-text">{notifText(notification)}</p>
+                  <span className="notif-time">{timeAgo(notification.createdAt)} ago</span>
                 </div>
                 <button
                   type="button"
                   className="notif-dismiss-btn"
-                  onClick={() => onDismiss(n.id)}
+                  onClick={() => onDismiss(notification.id)}
                   aria-label="Dismiss"
                 >
                   <X size={12} />
@@ -139,13 +138,7 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
   )
 }
 
-// ── Bell Trigger ─────────────────────────────────────────────────────────────
-interface NotificationBellProps {
-  notifications: Notification[]
-  onMarkAllRead: () => void
-  onClearAll: () => void
-  onDismiss: (id: string) => void
-}
+type NotificationBellProps = NotificationPanelProps
 
 export const NotificationBell: React.FC<NotificationBellProps> = ({
   notifications,
@@ -155,11 +148,11 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
 }) => {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  const unread = notifications.filter((n) => !n.read).length
+  const unread = notifications.filter((notification) => !notification.read).length
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    const handler = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -170,7 +163,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
       <button
         type="button"
         className="hdr-icon-btn notif-bell-btn"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen((value) => !value)}
         aria-label="Notifications"
         title="Notifications"
       >
@@ -205,110 +198,6 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
               onClearAll={onClearAll}
               onDismiss={onDismiss}
             />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
-// ── Dev Simulator ─────────────────────────────────────────────────────────────
-interface NotifSimulatorProps {
-  onAddNotification: (n: Notification) => void
-}
-
-const MOCK_PEOPLE = [
-  { name: 'Elena Rostova', handle: 'elena_r', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop' },
-  { name: 'Marcus Vance', handle: 'marcus_v', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop' },
-  { name: 'Aria Sterling', handle: 'aria_s', avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop' },
-  { name: 'Sofia Chen', handle: 'sofiac', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop' },
-]
-const MOCK_ENTRIES = ['War and Peace', 'In Rainbows', 'The Book of Disquiet', 'Rachmaninoff: Piano Concerto No. 2']
-const MILESTONES = [10, 25, 50, 100, 250, 500]
-
-function uid() { return Math.random().toString(36).slice(2) }
-
-export const NotifSimulator: React.FC<NotifSimulatorProps> = ({ onAddNotification }) => {
-  const [open, setOpen] = useState(false)
-
-  const spawn = (type: NotificationType) => {
-    const person = MOCK_PEOPLE[Math.floor(Math.random() * MOCK_PEOPLE.length)]
-    const entry = MOCK_ENTRIES[Math.floor(Math.random() * MOCK_ENTRIES.length)]
-    const milestone = MILESTONES[Math.floor(Math.random() * MILESTONES.length)]
-
-    const base: Notification = {
-      id: uid(),
-      type,
-      read: false,
-      createdAt: new Date().toISOString(),
-      actorName: person.name,
-      actorHandle: person.handle,
-      actorAvatarUrl: person.avatar,
-    }
-
-    switch (type) {
-      case 'like':
-        onAddNotification({ ...base, entryTitle: entry })
-        break
-      case 'like_milestone':
-        onAddNotification({ ...base, entryTitle: entry, milestoneCount: milestone, actorAvatarUrl: undefined })
-        break
-      case 'comment':
-        onAddNotification({ ...base, entryTitle: entry, commentSnippet: 'This entry resonates deeply with me...' })
-        break
-      case 'follow_request':
-        onAddNotification({ ...base })
-        break
-      case 'friend_recommendation':
-        onAddNotification({ ...base })
-        break
-      case 'people_you_may_know':
-        onAddNotification({ ...base })
-        break
-    }
-  }
-
-  return (
-    <div className="notif-simulator-wrapper">
-      <button
-        type="button"
-        className="notif-simulator-toggle"
-        onClick={() => setOpen((v) => !v)}
-        title="Dev: Notification Simulator"
-      >
-        <Zap size={13} />
-        <span>Dev</span>
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            className="notif-simulator-panel"
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.16 }}
-          >
-            <div className="notif-sim-header">
-              <Zap size={13} />
-              <span>Notification Simulator</span>
-            </div>
-            {([
-              ['like', '❤️ Like'],
-              ['like_milestone', '🏆 Milestone'],
-              ['comment', '💬 Comment'],
-              ['follow_request', '👤 Follow Request'],
-              ['friend_recommendation', '🤝 Recommendation'],
-              ['people_you_may_know', '👥 People You May Know'],
-            ] as [NotificationType, string][]).map(([type, label]) => (
-              <button
-                key={type}
-                type="button"
-                className="notif-sim-btn"
-                onClick={() => spawn(type)}
-              >
-                {label}
-              </button>
-            ))}
           </motion.div>
         )}
       </AnimatePresence>

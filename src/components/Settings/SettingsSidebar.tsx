@@ -5,7 +5,6 @@ import {
   Bell,
   Shield,
   Lock,
-  Database,
 } from 'lucide-react'
 
 export type SettingsNavTab =
@@ -14,8 +13,6 @@ export type SettingsNavTab =
   | 'reading'
   | 'privacy'
   | 'security'
-  | 'storage'
-  | 'export'
 
 interface SettingsSidebarProps {
   activeTab: SettingsNavTab
@@ -46,7 +43,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'privacy', label: 'Privacy & Visibility', Icon: Shield },
       { id: 'security', label: 'Account & Security', Icon: Lock },
-      { id: 'storage', label: 'Data & Storage', Icon: Database },
     ],
   },
 ]

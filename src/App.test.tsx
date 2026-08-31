@@ -66,7 +66,9 @@ describe('application shell', () => {
     expect(screen.getByRole('banner')).toHaveClass('global-app-header', 'is-home-page')
     expect(screen.queryByRole('button', { name: 'Go home' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Add new entry' }))
-    expect(await screen.findByText('New Margin')).toBeInTheDocument()
+    const composerTitle = await screen.findByText('New Margin')
+    expect(composerTitle).toBeInTheDocument()
+    expect(composerTitle.closest('.modal-backdrop')).toBeInTheDocument()
   })
 
   it('blocks posting until the signed-in email is verified', async () => {
@@ -134,33 +136,30 @@ describe('application shell', () => {
     expect(screen.getByRole('textbox', { name: 'Search' })).toBeInTheDocument()
   })
 
-  it('renders a collection route as a standalone page with a real save action', async () => {
-    window.history.replaceState({}, '', '/users/elena_r/collections/collection-elena_r-highlights')
+  it('removes legacy demo content instead of rendering it on home', async () => {
+    localStorage.setItem('the-commonplace.entries', JSON.stringify([{
+      id: 'ext-elena-book-1',
+      type: 'book',
+      title: 'Legacy demo book',
+      creator: 'Demo author',
+      provider: 'demo',
+      providerId: 'demo-book',
+      rating: 5,
+      favoritePassage: '',
+      reflection: '',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      coverTone: 'gold',
+      authorHandle: 'elena_r',
+    }]))
+    localStorage.setItem('the-commonplace.following-users', JSON.stringify(['elena_r']))
+    localStorage.setItem('the-commonplace.profile-collections.v1:elena_r', '[]')
+
     renderApplication()
 
-    expect(await screen.findByRole('heading', { name: "Elena's Highlights" })).toBeInTheDocument()
-    expect(screen.getByRole('status', { name: 'Loading collection media' })).toBeInTheDocument()
-    await waitForElementToBeRemoved(() => screen.queryByRole('status', { name: 'Loading collection media' }))
-    expect(screen.queryByRole('heading', { name: 'Elena Rostova' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Back to collections' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Save collection' }))
-    expect(await screen.findByRole('button', { name: 'Saved' })).toBeInTheDocument()
-    expect(screen.getByText('Created by Elena Rostova')).toBeInTheDocument()
-    expect(localStorage.getItem('the-commonplace.saved-profile-collections.v1:jimboii')).toContain('collection-elena_r-highlights')
-  })
-
-  it('keeps saved activity hidden on profiles that have not shared it', async () => {
-    window.history.replaceState({}, '', '/users/elena_r')
-    renderApplication()
-
-    expect(await screen.findByRole('heading', { name: 'Created Catalog (3)' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: 'Catalogs' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.queryByRole('tab', { name: /^Saved/ })).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('tab', { name: /^Collections/ }))
-    await waitForElementToBeRemoved(() => screen.queryByRole('status', { name: 'Loading collections' }))
-    expect(screen.getByRole('heading', { name: 'Created Collections (1)' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Created Catalog (3)' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Your commonplace is waiting.' })).toBeInTheDocument()
+    expect(screen.queryByText('Legacy demo book')).not.toBeInTheDocument()
+    expect(localStorage.getItem('the-commonplace.profile-collections.v1:elena_r')).toBeNull()
   })
 
   it('keeps a private Saved tab accessible to its owner and marks it with a lock', async () => {
@@ -179,35 +178,13 @@ describe('application shell', () => {
     expect(screen.getByRole('heading', { name: /Saved Catalog/ })).toBeInTheDocument()
   })
 
-  it('opens shared profiles on Created and lets visitors switch to their public Saved activity', async () => {
-    window.history.replaceState({}, '', '/users/marcus_v')
-    renderApplication()
-
-    expect(await screen.findByRole('tab', { name: 'Catalogs' })).toHaveAttribute('aria-selected', 'true')
-    const savedTab = screen.getByRole('tab', { name: /^Saved Catalog/ })
-    expect(savedTab).toHaveAttribute('aria-selected', 'false')
-    expect(screen.queryByLabelText('Saved catalog is private')).not.toBeInTheDocument()
-
-    fireEvent.click(savedTab)
-    await waitForElementToBeRemoved(() => screen.queryByRole('status', { name: 'Loading saved catalog' }))
-
-    expect(screen.getByRole('heading', { name: 'Saved Catalog (2)' })).toBeInTheDocument()
-    expect(screen.queryByText("Elena's Highlights")).not.toBeInTheDocument()
-
-    const savedCollectionsTab = screen.getByRole('tab', { name: /^Saved Collections/ })
-    fireEvent.click(savedCollectionsTab)
-    await waitForElementToBeRemoved(() => screen.queryByRole('status', { name: 'Loading collections' }))
-
-    expect(screen.getByRole('heading', { name: 'Saved Collections (1)' })).toBeInTheDocument()
-    expect(screen.getByText("Elena's Highlights")).toBeInTheDocument()
-  })
-
   it('keeps saved activity private by default and exposes an opt-in privacy setting', async () => {
     window.history.replaceState({}, '', '/settings')
     renderApplication()
 
     expect(await screen.findByRole('button', { name: 'Privacy & Visibility' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Developer Tools' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Data & Storage' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Email Verification')).toHaveTextContent('Verified')
     fireEvent.click(screen.getByRole('button', { name: 'Privacy & Visibility' }))
     const savedVisibility = screen.getByRole('switch', { name: 'Show Saved Catalog & Collections' })

@@ -8,10 +8,11 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { USER_DIRECTORY } from '../../data/userDirectory'
 import { createArtworkPlaceholder } from '../../utils/artwork'
 import { AdaptiveGameArtwork } from '../GameArtwork/AdaptiveGameArtwork'
 import { getEntryTypeIcon } from '../../utils/mediaIcons'
+import { loadPublicUserByHandle } from '../../services/cloudData'
+import { isLegacySeedHandle } from '../../utils/legacySeedCleanup'
 
 type SearchMode = 'media' | 'users'
 
@@ -41,12 +42,16 @@ function loadRecentSearches(mode: SearchMode): RecentSearchItem[] {
   try {
     const raw = localStorage.getItem(RECENT_SEARCHES_KEYS[mode])
     if (raw !== null) {
-      return (JSON.parse(raw) as RecentSearchItem[]).filter((item) => belongsToSearchMode(item, mode))
+      return (JSON.parse(raw) as RecentSearchItem[]).filter(
+        (item) => belongsToSearchMode(item, mode) && !isLegacySeedHandle(item.handle),
+      )
     }
 
     const legacyRaw = localStorage.getItem(LEGACY_RECENT_SEARCHES_KEY)
     const migrated = legacyRaw
-      ? (JSON.parse(legacyRaw) as RecentSearchItem[]).filter((item) => belongsToSearchMode(item, mode))
+      ? (JSON.parse(legacyRaw) as RecentSearchItem[]).filter(
+          (item) => belongsToSearchMode(item, mode) && !isLegacySeedHandle(item.handle),
+        )
       : []
     saveRecentSearches(mode, migrated)
     return migrated
@@ -174,10 +179,6 @@ const PORTRAIT_TYPES = new Set<SearchResultType>([
   'actor',
   'game_creator',
 ])
-
-function normalizeSearchText(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-}
 
 function isSquareThumb(type: SearchResultType) {
   return PORTRAIT_TYPES.has(type) || type === 'album' || type === 'song'
@@ -322,6 +323,11 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
     users: loadRecentSearches('users'),
   }))
   const [iconExpanded, setIconExpanded] = useState(false)
+  const [userSearchState, setUserSearchState] = useState<{
+    key: string
+    results: SearchUser[]
+    loading: boolean
+  }>({ key: '', results: [], loading: false })
   const containerRef = useRef<HTMLDivElement>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -410,22 +416,56 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
     }
   }
 
-  const userResults = useMemo<SearchUser[]>(() => {
-    const normalizedQuery = normalizeSearchText(query)
-    if (!normalizedQuery) return []
+  useEffect(() => {
+    const handle = query.replace(/^@/, '').trim()
+    if (mode !== 'users' || !handle || isLegacySeedHandle(handle)) return
 
-    return USER_DIRECTORY.filter((user) => {
-      return (
-        normalizeSearchText(user.name).includes(normalizedQuery) ||
-        normalizeSearchText(user.handle).includes(normalizedQuery)
-      )
-    }).map((user) => ({
-      handle: user.handle,
-      name: user.name,
-      avatar: user.avatar || '',
-      isPrivate: user.isPrivate,
-    }))
-  }, [query])
+    let cancelled = false
+    const searchKey = handle.toLowerCase()
+    const timer = window.setTimeout(() => {
+      setUserSearchState({ key: searchKey, results: [], loading: true })
+      void loadPublicUserByHandle(handle)
+        .then((data) => {
+          if (cancelled) return
+          if (!data) {
+            setUserSearchState({ key: searchKey, results: [], loading: false })
+            return
+          }
+          const profile = data.profile
+          const name = profile.showFullName
+            ? `${profile.firstName} ${profile.lastName}`.trim()
+            : profile.firstName
+          setUserSearchState({
+            key: searchKey,
+            loading: false,
+            results: [{
+              handle: profile.handle,
+              name: name || `@${profile.handle}`,
+              avatar: profile.avatarUrl || '',
+              isPrivate: profile.isPrivate,
+            }],
+          })
+        })
+        .catch(() => {
+          if (!cancelled) setUserSearchState({ key: searchKey, results: [], loading: false })
+        })
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [mode, query])
+
+  const userSearchKey = query.replace(/^@/, '').trim().toLowerCase()
+  const userSearchIsValid = mode === 'users'
+    && Boolean(userSearchKey)
+    && !isLegacySeedHandle(userSearchKey)
+  const userResults = userSearchIsValid && userSearchState.key === userSearchKey
+    ? userSearchState.results
+    : []
+  const userLoading = userSearchIsValid
+    && (userSearchState.key !== userSearchKey || userSearchState.loading)
 
   const mediaResultsFiltered = useMemo(() => {
     if (mediaFilter === 'all') return mediaResults
@@ -433,6 +473,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
   }, [mediaFilter, mediaResults])
 
   const results = mode === 'media' ? mediaResultsFiltered : userResults
+  const resultsLoading = mode === 'users' ? userLoading : mediaLoading
   const visibleResults = useMemo(() => results.slice(0, resultLimit), [resultLimit, results])
 
   // Clicking outside closes the dropdown and returns search to its icon.
@@ -747,7 +788,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
                   {mode === 'users' ? 'Start typing to search users.' : 'Start typing to search media.'}
                 </div>
               )
-            ) : mediaLoading && results.length === 0 ? (
+            ) : resultsLoading && results.length === 0 ? (
               <SearchSkeleton />
             ) : results.length === 0 ? (
               <div className="alt-search-empty">{emptyLabel}</div>

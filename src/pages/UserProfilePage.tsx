@@ -34,12 +34,10 @@ import {
   ProfileCatalogSkeleton,
 } from '../components/Collections/ProfileCollectionSkeletons'
 import type { UserProfileState } from '../types/userProfile'
-import { USER_DIRECTORY } from '../data/userDirectory'
 import { getEntryTypeIcon } from '../utils/mediaIcons'
 import {
   buildPopularCollectionRecommendations,
   createProfileCollection,
-  createDefaultProfileCollections,
   duplicateProfileCollectionItem,
   entriesForProfileCollection,
   loadProfileCollections,
@@ -213,10 +211,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     : userProfile.firstName
   const currentUserHandle = (currentUserProfile?.handle || userProfile.handle).replace(/^@/, '')
   const [profileCollections, setProfileCollections] = useState<ProfileCollection[]>(() =>
-    loadProfileCollections(
-      userProfile.handle,
-      isOwnProfile ? [] : createDefaultProfileCollections(profileDisplayName, userProfile.handle, entries),
-    ),
+    loadProfileCollections(userProfile.handle),
   )
   const [viewerSavedProfileCollections, setViewerSavedProfileCollections] = useState<ProfileCollection[]>(() =>
     loadSavedProfileCollections(currentUserHandle),
@@ -321,21 +316,18 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const isSavedCollectionsMode = catalogMode === 'saved-collections'
 
   // ── Dynamic Followers & Following lists ─────────────────────────────────────
-  const dynamicFollowersList = useMemo(() => {
-    const cleanHandle = userProfile.handle.replace(/^@/, '')
-    if (cleanHandle === 'jimboii') {
-      return USER_DIRECTORY.filter((u) => u.handle !== 'jimboii')
-    }
-    return USER_DIRECTORY.filter((u) => u.handle !== cleanHandle && u.handle !== 'aria_s')
-  }, [userProfile.handle])
+  const dynamicFollowersList = useMemo(() => [], [])
 
   const dynamicFollowingList = useMemo(() => {
-    const cleanHandle = userProfile.handle.replace(/^@/, '')
-    if (cleanHandle === 'jimboii') {
-      return USER_DIRECTORY.filter((u) => followedUserHandles.includes(u.handle))
-    }
-    return USER_DIRECTORY.filter((u) => u.handle !== cleanHandle && u.handle !== 'aria_s')
-  }, [userProfile.handle, followedUserHandles])
+    return followedUserHandles.map((handle) => ({
+      id: handle,
+      name: `@${handle}`,
+      handle,
+      avatar: '',
+      reviews: 0,
+      isPrivate: false,
+    }))
+  }, [followedUserHandles])
 
   const activeFollowList = activeFollowModal === 'followers' ? dynamicFollowersList : dynamicFollowingList
 
@@ -2548,12 +2540,16 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         }}
                       >
                         <div className="follow-person-avatar-wrapper">
-                          <img
-                            src={person.avatar}
-                            alt={person.name}
-                            className="follow-person-avatar-img"
-                            referrerPolicy="no-referrer"
-                          />
+                          {person.avatar ? (
+                            <img
+                              src={person.avatar}
+                              alt={person.name}
+                              className="follow-person-avatar-img"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <User aria-hidden="true" />
+                          )}
                         </div>
                         <div className="follow-person-info">
                           <span className="follow-person-name">{person.name}</span>

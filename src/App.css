@@ -1467,7 +1467,7 @@ textarea {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 10000;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -4089,7 +4089,7 @@ code.detail-value {
 .overlay-modal-root {
   position: fixed;
   inset: 0;
-  z-index: 99999;
+  z-index: 10000;
   display: grid;
   place-items: center;
   padding: 24px 16px;
@@ -7841,7 +7841,7 @@ code.detail-value {
 .collection-composer-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: 10000;
   display: grid;
   place-items: center;
   padding: 16px;
@@ -8233,7 +8233,7 @@ code.detail-value {
 .collection-inline-remove-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1400;
+  z-index: 10000;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -9279,7 +9279,7 @@ code.detail-value {
 .collection-picker-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1500;
+  z-index: 10000;
   display: grid;
   place-items: center;
   padding: 20px;
@@ -10548,7 +10548,7 @@ code.detail-value {
 .avatar-cropper-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1800;
+  z-index: 10000;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -12458,7 +12458,7 @@ code.detail-value {
 .auth-legal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 10000;
   display: flex;
   align-items: center;
   justify-content: center;

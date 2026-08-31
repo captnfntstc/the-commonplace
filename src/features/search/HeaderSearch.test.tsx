@@ -121,7 +121,7 @@ describe('recent search functionality', () => {
   it('renders only media recent searches in the Media tab', () => {
     const mockRecent = [
       { id: 'book-1', name: 'Dune', subtitle: 'Frank Herbert', type: 'book', timestamp: Date.now() },
-      { id: 'user:elena_r', name: '@elena_r', subtitle: 'Elena Rostova', type: 'user', handle: 'elena_r', timestamp: Date.now() },
+      { id: 'user:minareads', name: '@minareads', subtitle: 'Mina Reyes', type: 'user', handle: 'minareads', timestamp: Date.now() },
     ]
     localStorage.setItem(RECENT_KEY, JSON.stringify(mockRecent))
 
@@ -144,13 +144,13 @@ describe('recent search functionality', () => {
 
     expect(screen.getByText('Recent Searches')).toBeInTheDocument()
     expect(screen.getByText('Dune')).toBeInTheDocument()
-    expect(screen.queryByText('@elena_r')).not.toBeInTheDocument()
+    expect(screen.queryByText('@minareads')).not.toBeInTheDocument()
   })
 
   it('renders only user recent searches in the Users tab', () => {
     const mockRecent = [
       { id: 'book-1', name: 'Dune', subtitle: 'Frank Herbert', type: 'book', timestamp: Date.now() },
-      { id: 'user:elena_r', name: '@elena_r', subtitle: 'Elena Rostova', type: 'user', handle: 'elena_r', timestamp: Date.now() },
+      { id: 'user:minareads', name: '@minareads', subtitle: 'Mina Reyes', type: 'user', handle: 'minareads', timestamp: Date.now() },
     ]
     localStorage.setItem(RECENT_KEY, JSON.stringify(mockRecent))
 
@@ -172,7 +172,7 @@ describe('recent search functionality', () => {
     )
 
     expect(screen.getByText('Recent Searches')).toBeInTheDocument()
-    expect(screen.getByText('@elena_r')).toBeInTheDocument()
+    expect(screen.getByText('@minareads')).toBeInTheDocument()
     expect(screen.queryByText('Dune')).not.toBeInTheDocument()
   })
 

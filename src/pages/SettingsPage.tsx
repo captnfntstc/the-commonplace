@@ -5,7 +5,6 @@ import {
   AlertCircle,
   Clock,
   ShieldCheck,
-  Download,
   Lock,
 } from 'lucide-react'
 import {
@@ -730,27 +729,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     )
                   })}
                 </div>
-              </SettingsSection>
-            </div>
-          )}
-
-          {/* PAGE 6: DATA & STORAGE */}
-          {activeTab === 'storage' && (
-            <div className="settings-page-content">
-              <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Data & Storage</h1>
-                <p className="settings-page-desc">Export backups of your library archive.</p>
-              </div>
-
-              <SettingsSection title="Export Library Archive">
-                <button
-                  type="button"
-                  className="secondary-action-btn"
-                  onClick={() => alert('Catalog export JSON downloaded successfully.')}
-                >
-                  <Download aria-hidden="true" />
-                  <span>Download JSON Archive</span>
-                </button>
               </SettingsSection>
             </div>
           )}

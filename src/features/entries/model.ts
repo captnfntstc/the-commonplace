@@ -4,6 +4,7 @@ import { stripHtmlAlignment } from '../../components/CommonplaceCard/FormattedTe
 import type { MetadataResult, MetadataType } from '../../metadata'
 import { resolveArtworkUrl } from '../../utils/artwork'
 import { getEntryTypeIcon } from '../../utils/mediaIcons'
+import { isLegacySeedEntry } from '../../utils/legacySeedCleanup'
 
 export type EntryType = MetadataType
 export type CoverTone = 'gold' | 'rose' | 'sage' | 'blue' | 'violet' | 'ember'
@@ -90,7 +91,7 @@ export function loadEntries(): Entry[] {
     const parsed = JSON.parse(stored) as Entry[]
     if (!Array.isArray(parsed)) return []
     return parsed
-      .filter((entry) => !sampleEntryIds.has(entry.id))
+      .filter((entry) => !sampleEntryIds.has(entry.id) && !isLegacySeedEntry(entry))
       .map((entry) => {
         const { cleanText: cleanRef, align: refAlign } = stripHtmlAlignment(entry.reflection || '')
         const { cleanText: cleanPas, align: pasAlign } = stripHtmlAlignment(entry.favoritePassage || '')

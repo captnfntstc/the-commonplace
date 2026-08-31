@@ -126,38 +126,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   const activeEntryId = entry?.id || ''
   const [commentState, setCommentState] = useState<{ entryId: string; items: CommentItem[] }>({
     entryId: activeEntryId,
-    items: cloudUserId ? [] : [
-    {
-      id: 'c1',
-      author: 'Elena Rostova',
-      initials: 'ER',
-      text: 'Beautiful reflection! This passage resonated deeply with me as well.',
-      createdAt: '2h ago',
-      likesCount: 4,
-      isLiked: false,
-      replies: [
-        {
-          id: 'r1',
-          author: 'Marcus Vance',
-          initials: 'MV',
-          text: '@Elena Rostova Agreed! The phrasing here is timeless.',
-          createdAt: '1h ago',
-          likesCount: 2,
-          isLiked: false,
-        },
-      ],
-    },
-    {
-      id: 'c2',
-      author: 'Marcus Vance',
-      initials: 'MV',
-      text: 'Stunning review. Added to my personal reading list!',
-      createdAt: '5h ago',
-      likesCount: 1,
-      isLiked: false,
-      replies: [],
-    },
-    ],
+    items: [],
   })
   const comments = commentState.entryId === activeEntryId ? commentState.items : []
   const setComments = (update: React.SetStateAction<CommentItem[]>) => {
