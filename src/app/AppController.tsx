@@ -1022,7 +1022,12 @@ export default function AppController() {
     return allHomepageEntries
   }, [allHomepageEntries, typeFilter])
 
-  const masonryLayout = useMasonryLayout(gridRef, filteredEntries.length, expandedCardId, activeView)
+  const masonryLayout = useMasonryLayout(
+    gridRef,
+    filteredEntries.length,
+    expandedCardId,
+    `${activeView}:${authLoading ? 'loading' : 'ready'}`,
+  )
   const [isInitialRender, setIsInitialRender] = useState(true)
   const [isFilterSwitching, setIsFilterSwitching] = useState(false)
 
