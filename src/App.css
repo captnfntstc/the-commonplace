@@ -11812,6 +11812,7 @@ code.detail-value {
 /* ─── Form heading block ──────────────────────────────────── */
 .auth-form-heading-block {
   margin-bottom: 16px;
+  text-align: center;
 }
 
 .auth-form-heading {

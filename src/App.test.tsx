@@ -73,6 +73,20 @@ describe('application shell', () => {
     }))
   })
 
+  it('shows a stable message when the password reset service cannot be reached', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('NetworkError when attempting to fetch resource.')))
+    renderApplication({ authenticated: false })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Forgot password?' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email or username' }), {
+      target: { value: 'reader@example.com' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send reset link' }))
+
+    expect(await screen.findByText('The password reset service is unavailable. Please try again shortly.')).toBeInTheDocument()
+    expect(screen.queryByText(/NetworkError/i)).not.toBeInTheDocument()
+  })
+
   it('renders invalid password reset tokens in the app without requiring a session', async () => {
     window.history.replaceState({}, '', '/reset-password/abcdefghijklmnopqrst')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({

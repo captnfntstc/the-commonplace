@@ -71,11 +71,16 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
 
     try {
       setLoading(true)
-      const response = await fetch('/api/auth/password-reset-links', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: trimmed }),
-      })
+      let response: Response
+      try {
+        response = await fetch('/api/auth/password-reset-links', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: trimmed }),
+        })
+      } catch {
+        throw new Error('The password reset service is unavailable. Please try again shortly.')
+      }
       const payload = await response.json().catch(() => ({})) as { error?: string }
       if (!response.ok) throw new Error(payload.error || 'Failed to send reset link.')
       setViewMode('reset-sent')
