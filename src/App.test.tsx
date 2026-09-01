@@ -51,6 +51,40 @@ describe('application shell', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/login'))
   })
 
+  it('uses a generic two-step forgot-password flow for email or username', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ sent: true }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderApplication({ authenticated: false })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Forgot password?' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Email or username' }), {
+      target: { value: '@jimboii' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send reset link' }))
+
+    expect(await screen.findByRole('heading', { name: 'Check your email.' })).toBeInTheDocument()
+    expect(screen.getByText(/If an account matching those credentials exists/i)).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/password-reset-links', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ identifier: '@jimboii' }),
+    }))
+  })
+
+  it('renders invalid password reset tokens in the app without requiring a session', async () => {
+    window.history.replaceState({}, '', '/reset-password/abcdefghijklmnopqrst')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ valid: false }),
+    }))
+
+    renderApplication({ authenticated: false })
+    expect(await screen.findByRole('heading', { name: 'This link is invalid or expired.' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/reset-password/abcdefghijklmnopqrst')
+  })
+
   it('hides Firebase email-action parameters from the address bar', async () => {
     window.history.replaceState({}, '', '/verify-email?mode=verifyEmail&apiKey=visible-key')
     renderApplication()
@@ -69,6 +103,29 @@ describe('application shell', () => {
     const composerTitle = await screen.findByText('New Margin')
     expect(composerTitle).toBeInTheDocument()
     expect(composerTitle.closest('.modal-backdrop')).toBeInTheDocument()
+  })
+
+  it('opens an in-app sign-out confirmation instead of calling window.confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    renderApplication()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'User Profile & Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Logout' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Sign out?' })).toBeInTheDocument()
+    expect(screen.getByText("You'll be returned to the login screen.")).toBeInTheDocument()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitForElementToBeRemoved(() => screen.queryByRole('dialog', { name: 'Sign out?' }))
+
+    localStorage.setItem('the-commonplace.likes', '["entry-1"]')
+    localStorage.setItem('unrelated.preference', 'keep-me')
+    fireEvent.click(screen.getByRole('button', { name: 'Logout' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign Out' }))
+
+    expect(await screen.findByRole('heading', { name: 'Welcome back.' })).toBeInTheDocument()
+    expect(localStorage.getItem('the-commonplace.likes')).toBeNull()
+    expect(localStorage.getItem('unrelated.preference')).toBe('keep-me')
   })
 
   it('blocks posting until the signed-in email is verified', async () => {

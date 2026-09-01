@@ -32,6 +32,8 @@ import { SettingsPage } from '../pages/SettingsPage'
 import { LoginPage } from '../pages/LoginPage'
 import { RegisterPage } from '../pages/RegisterPage'
 import { EmailVerificationPage } from '../pages/EmailVerificationPage'
+import { ResetPasswordPage } from '../pages/ResetPasswordPage'
+import { LogoutConfirmModal } from '../components/auth/LogoutConfirmModal'
 import { useAuth } from '../context/AuthContext'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { NotificationBell } from '../components/Notifications/NotificationPanel'
@@ -580,6 +582,9 @@ export default function AppController() {
   const [overlayEntry, setOverlayEntry] = useState<Entry | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
+  const [logoutLoading, setLogoutLoading] = useState(false)
+  const [logoutError, setLogoutError] = useState('')
   const [collectionTarget, setCollectionTarget] = useState<ProfileCollectionItem | null>(null)
   const gridRef = useRef<HTMLElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
@@ -625,7 +630,7 @@ export default function AppController() {
 
     const [section, rawId, nestedSection, nestedId] = segments
 
-    if (section === 'verify-email' || (section === 'v' && rawId)) return
+    if (section === 'verify-email' || (section === 'v' && rawId) || (section === 'reset-password' && rawId)) return
     if (authLoading) return
     const isAuthRoute = section === 'login' || section === 'register'
     if (!currentUser) {
@@ -1139,14 +1144,22 @@ export default function AppController() {
   }
 
   const handleLogout = async () => {
-    if (window.confirm(`Log out of ${userProfileName} session?`)) {
-      try {
-        await logout()
-      } catch {
-        // ignore
-      }
+    setLogoutError('')
+    setLogoutConfirmOpen(true)
+  }
+
+  const confirmLogout = async () => {
+    try {
+      setLogoutLoading(true)
+      setLogoutError('')
+      await logout()
+      setLogoutConfirmOpen(false)
       setProfileMenuOpen(false)
       navigate('/login')
+    } catch (error) {
+      setLogoutError((error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to sign out. Please try again.')
+    } finally {
+      setLogoutLoading(false)
     }
   }
 
@@ -1319,6 +1332,16 @@ export default function AppController() {
         </button>
       </div>
     )}
+    <LogoutConfirmModal
+      open={logoutConfirmOpen}
+      loading={logoutLoading}
+      error={logoutError}
+      onCancel={() => {
+        setLogoutConfirmOpen(false)
+        setLogoutError('')
+      }}
+      onConfirm={confirmLogout}
+    />
     </>
     )
   }
@@ -1504,12 +1527,12 @@ export default function AppController() {
     return <EmailVerificationPage />
   }
 
+  if (location.pathname.startsWith('/reset-password/')) {
+    return <ResetPasswordPage />
+  }
+
   if (authLoading || (currentUser && (location.pathname === '/login' || location.pathname === '/register'))) {
-    return (
-      <div className="auth-page" role="status" aria-label="Checking account session">
-        <span className="auth-loading-copy">Checking your account...</span>
-      </div>
-    )
+    return <div className="auth-loading-blank" />
   }
 
   if (!currentUser) {

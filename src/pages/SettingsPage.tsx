@@ -114,6 +114,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 }) => {
   const {
     currentUser,
+    changeEmail,
     resendVerificationEmail,
     verificationEmailCooldownSeconds,
     verificationEmailSent,
@@ -121,14 +122,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [activeTab, setActiveTab] = useState<SettingsNavTab>('profile')
   const [verificationLoading, setVerificationLoading] = useState<'send' | null>(null)
   const [verificationNotice, setVerificationNotice] = useState('')
+  const [emailEditorOpen, setEmailEditorOpen] = useState(false)
+  const [newEmail, setNewEmail] = useState('')
+  const [emailChangeLoading, setEmailChangeLoading] = useState(false)
+  const [emailChangeNotice, setEmailChangeNotice] = useState('')
+  const [emailChangeError, setEmailChangeError] = useState('')
   const verificationCooldownLabel = `${Math.floor(verificationEmailCooldownSeconds / 60)}:${String(verificationEmailCooldownSeconds % 60).padStart(2, '0')}`
+  const currentEmail = currentUser?.email || userProfile.email
 
   // Form State
   const [firstName, setFirstName] = useState(userProfile.firstName)
   const [lastName, setLastName] = useState(userProfile.lastName)
   const [showFullName, setShowFullName] = useState(userProfile.showFullName)
   const [handleInput, setHandleInput] = useState(userProfile.handle.replace(/^@/, ''))
-  const [email, setEmail] = useState(userProfile.email)
   const [bio, setBio] = useState(userProfile.bio)
   const [showFollowLists, setShowFollowLists] = useState(userProfile.showFollowLists ?? true)
   const [allowComments, setAllowComments] = useState(userProfile.allowComments ?? true)
@@ -141,13 +147,42 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setVerificationLoading('send')
       setVerificationNotice('')
       await resendVerificationEmail()
-      setVerificationNotice(`Verification email sent to ${currentUser?.email || email}.`)
+      setVerificationNotice(`Verification email sent to ${currentEmail}.`)
     } catch (error: unknown) {
       setVerificationNotice(
         (error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to send verification email.',
       )
     } finally {
       setVerificationLoading(null)
+    }
+  }
+
+  const handleChangeEmail = async (event: React.FormEvent) => {
+    event.preventDefault()
+    const normalized = newEmail.trim().toLowerCase()
+    setEmailChangeError('')
+    setEmailChangeNotice('')
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+      setEmailChangeError('Enter a valid email address.')
+      return
+    }
+    if (normalized === currentEmail.toLowerCase()) {
+      setEmailChangeError('Enter a different email address.')
+      return
+    }
+
+    try {
+      setEmailChangeLoading(true)
+      await changeEmail(normalized)
+      setEmailChangeNotice(`A verification link has been sent to ${normalized}. Your email will update once verified.`)
+      setNewEmail('')
+      setEmailEditorOpen(false)
+    } catch (error) {
+      setEmailChangeError(
+        (error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to start the email change.',
+      )
+    } finally {
+      setEmailChangeLoading(false)
     }
   }
 
@@ -161,7 +196,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setLastName(userProfile.lastName)
     setShowFullName(userProfile.showFullName)
     setHandleInput(userProfile.handle.replace(/^@/, ''))
-    setEmail(userProfile.email)
     setBio(userProfile.bio)
     setShowFollowLists(userProfile.showFollowLists ?? true)
     setAllowComments(userProfile.allowComments ?? true)
@@ -233,7 +267,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     lastName.trim() !== userProfile.lastName ||
     showFullName !== userProfile.showFullName ||
     sanitizedHandle !== userProfile.handle.toLowerCase().replace(/^@/, '') ||
-    email.trim() !== userProfile.email ||
     bio.trim() !== userProfile.bio ||
     showFollowLists !== (userProfile.showFollowLists ?? true) ||
     allowComments !== (userProfile.allowComments ?? true) ||
@@ -263,7 +296,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setLastName(userProfile.lastName)
     setShowFullName(userProfile.showFullName)
     setHandleInput(userProfile.handle.replace(/^@/, ''))
-    setEmail(userProfile.email)
     setBio(userProfile.bio)
     setShowFollowLists(userProfile.showFollowLists ?? true)
     setAllowComments(userProfile.allowComments ?? true)
@@ -291,7 +323,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       lastName: lastName.trim() || 'Boy',
       showFullName,
       handle: sanitizedHandle || 'jimboii',
-      email: email.trim() || 'jimboii@commonplace.app',
+      email: currentEmail || 'jimboii@commonplace.app',
       bio: bio.trim(),
       avatarUrl: userProfile.avatarUrl,
       coverUrl: userProfile.coverUrl,
@@ -447,17 +479,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     </div>
                   </SettingsField>
 
-                  <SettingsField label="Email Address" htmlFor="email-address">
-                    <input
-                      id="email-address"
-                      type="email"
-                      className="dark-setting-input"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="jimboii@commonplace.app"
-                    />
-                  </SettingsField>
-
                   <div className="email-verification-setting" aria-label="Email Verification">
                     <div className="email-verification-setting-copy">
                       <span className="toggle-label">Email Verification</span>
@@ -492,6 +513,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       </div>
                     )}
                   </div>
+
                 </div>
               </SettingsSection>
 
@@ -648,6 +670,117 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   <span>{passwordNotice}</span>
                 </div>
               )}
+
+              <SettingsSection
+                title="Email Address"
+                description="Manage the email used to sign in and receive account messages."
+              >
+                <div className="settings-email-address-panel">
+                  <SettingsField label="Current email" htmlFor="security-current-email">
+                    <input
+                      id="security-current-email"
+                      type="email"
+                      className="dark-setting-input"
+                      value={currentEmail}
+                      readOnly
+                    />
+                  </SettingsField>
+
+                  {!emailEditorOpen && (
+                    <button
+                      type="button"
+                      className="secondary-action-btn"
+                      onClick={() => {
+                        setEmailEditorOpen(true)
+                        setEmailChangeError('')
+                        setEmailChangeNotice('')
+                      }}
+                    >
+                      Change Email
+                    </button>
+                  )}
+
+                  {emailEditorOpen && (
+                    <form className="settings-email-change-form" onSubmit={handleChangeEmail} noValidate>
+                      <SettingsField label="New email address" htmlFor="security-new-email">
+                        <input
+                          id="security-new-email"
+                          type="email"
+                          autoComplete="email"
+                          className={`dark-setting-input ${emailChangeError ? 'error' : ''}`}
+                          value={newEmail}
+                          onChange={(event) => {
+                            setNewEmail(event.target.value)
+                            setEmailChangeError('')
+                          }}
+                          placeholder="you@example.com"
+                          autoFocus
+                        />
+                      </SettingsField>
+                      {emailChangeError && <span className="settings-email-change-error" role="alert">{emailChangeError}</span>}
+                      <div className="settings-email-change-actions">
+                        <button
+                          type="button"
+                          className="save-bar-cancel-btn"
+                          onClick={() => {
+                            setEmailEditorOpen(false)
+                            setNewEmail('')
+                            setEmailChangeError('')
+                          }}
+                          disabled={emailChangeLoading}
+                        >
+                          Cancel
+                        </button>
+                        <button type="submit" className="secondary-action-btn" disabled={emailChangeLoading}>
+                          {emailChangeLoading ? 'Sending...' : 'Send verification link'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {emailChangeNotice && (
+                    <div className="settings-email-change-notice" role="status">
+                      <CheckCircle2 aria-hidden="true" />
+                      <span>{emailChangeNotice}</span>
+                    </div>
+                  )}
+
+                  <div className="email-verification-setting" aria-label="Email Verification">
+                    <div className="email-verification-setting-copy">
+                      <span className="toggle-label">Email Verification</span>
+                      <span className="toggle-description">
+                        {currentUser?.emailVerified
+                          ? 'Your account email has been confirmed.'
+                          : 'Confirm your account email to unlock posting.'}
+                      </span>
+                      {verificationNotice && <span className="email-verification-setting-notice">{verificationNotice}</span>}
+                    </div>
+                    {currentUser?.emailVerified ? (
+                      <span className="email-verification-status verified">
+                        <CheckCircle2 aria-hidden="true" />
+                        Verified
+                      </span>
+                    ) : (
+                      <div className="email-verification-setting-actions">
+                        <button
+                          type="button"
+                          className="secondary-action-btn"
+                          onClick={handleSendVerification}
+                          disabled={verificationLoading !== null || verificationEmailCooldownSeconds > 0}
+                        >
+                          {verificationLoading === 'send'
+                            ? 'Sending...'
+                            : verificationEmailCooldownSeconds > 0
+                              ? `Resend in ${verificationCooldownLabel}`
+                              : verificationEmailSent
+                                ? 'Resend email'
+                                : 'Verify now'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </SettingsSection>
 
               <SettingsSection
                 title="Two-Factor Authentication (2FA)"

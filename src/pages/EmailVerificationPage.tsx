@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { applyActionCode } from 'firebase/auth'
+import { doc, setDoc } from 'firebase/firestore'
 import { CheckCircle2, MailCheck, XCircle } from 'lucide-react'
 import { AuthHeader } from '../components/auth/AuthHeader'
-import { auth, isFirebaseConfigured } from '../services/firebase'
+import { auth, db, isFirebaseConfigured } from '../services/firebase'
 
 type VerificationState = 'checking' | 'success' | 'error'
 type VerificationRequest =
@@ -42,7 +43,8 @@ function getVerificationRequest(): VerificationRequest {
   if (shortToken) return { kind: 'short', token: shortToken }
   const parameters = new URLSearchParams(window.location.search)
   const actionCode = parameters.get('oobCode')
-  if (isFirebaseConfigured && parameters.get('mode') === 'verifyEmail' && actionCode) {
+  const mode = parameters.get('mode')
+  if (isFirebaseConfigured && (mode === 'verifyEmail' || mode === 'verifyAndChangeEmail') && actionCode) {
     return { kind: 'legacy', code: actionCode }
   }
   return { kind: 'invalid' }
@@ -71,6 +73,12 @@ export function EmailVerificationPage() {
         if (auth.currentUser) {
           await auth.currentUser.reload()
           await auth.currentUser.getIdToken(true)
+          if (auth.currentUser.email) {
+            await setDoc(doc(db, 'users', auth.currentUser.uid, 'private', 'settings'), {
+              email: auth.currentUser.email,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true }).catch(() => {})
+          }
         }
         if (!cancelled) setStatus('success')
       })

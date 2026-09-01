@@ -7,21 +7,22 @@ import {
   updateProfile,
   signInWithPopup,
   signOut,
-  sendPasswordResetEmail,
   reload,
   browserLocalPersistence,
+  browserSessionPersistence,
   setPersistence,
+  verifyBeforeUpdateEmail,
 } from 'firebase/auth'
 import { auth, googleProvider, isFirebaseConfigured } from '../services/firebase'
 
 interface AuthContextType {
   currentUser: User | null
   loading: boolean
-  login: (email: string, pass: string) => Promise<void>
+  login: (identifier: string, pass: string, keepSignedIn?: boolean) => Promise<void>
   signup: (email: string, pass: string, displayName?: string) => Promise<void>
-  loginWithGoogle: () => Promise<void>
+  loginWithGoogle: (keepSignedIn?: boolean) => Promise<void>
   logout: () => Promise<void>
-  resetPassword: (email: string) => Promise<void>
+  changeEmail: (newEmail: string) => Promise<void>
   resendVerificationEmail: () => Promise<void>
   refreshEmailVerification: () => Promise<boolean>
   verificationEmailCooldownSeconds: number
@@ -68,6 +69,39 @@ async function sendAccountVerification(user: User) {
   throw error
 }
 
+function isEmailIdentifier(identifier: string) {
+  return !identifier.startsWith('@') && (identifier.includes('@') || identifier.includes('.'))
+}
+
+async function resolveLoginEmail(identifier: string) {
+  const normalized = identifier.trim()
+  if (isEmailIdentifier(normalized)) return normalized
+
+  const handle = normalized.replace(/^@/, '').toLowerCase()
+  let response: Response
+  try {
+    response = await fetch(`/api/auth/user-by-handle?handle=${encodeURIComponent(handle)}`, {
+      headers: { Accept: 'application/json' },
+    })
+  } catch {
+    throw new Error('The sign-in service is unavailable. Please try again shortly.')
+  }
+
+  const payload = await response.json().catch(() => ({})) as { email?: string }
+  if (!response.ok || !payload.email) throw new Error('Invalid email or password.')
+  return payload.email
+}
+
+function clearCommonplaceStorage() {
+  const keysToRemove: string[] = []
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index)
+    if (key?.startsWith('the-commonplace.')) keysToRemove.push(key)
+  }
+  keysToRemove.forEach((key) => localStorage.removeItem(key))
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- The hook and provider intentionally share one context module.
 export const useAuth = () => {
   const context = useContext(AuthContext)
   if (!context) {
@@ -116,11 +150,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     }
   }
 
-  const login = async (emailInput: string, pass: string) => {
-    const raw = emailInput.trim()
+  const login = async (identifier: string, pass: string, keepSignedIn = false) => {
     requireFirebase()
-    await setPersistence(auth, browserLocalPersistence)
-    await signInWithEmailAndPassword(auth, raw, pass)
+    await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
+    const email = await resolveLoginEmail(identifier)
+    await signInWithEmailAndPassword(auth, email, pass)
   }
 
   const signup = async (email: string, pass: string, displayName?: string) => {
@@ -138,23 +172,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     setVerificationClock(Date.now())
   }
 
-  const loginWithGoogle = async () => {
+  const loginWithGoogle = async (keepSignedIn = false) => {
     requireFirebase()
-    await setPersistence(auth, browserLocalPersistence)
+    await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
     await signInWithPopup(auth, googleProvider)
   }
 
   const logout = async () => {
     if (!isFirebaseConfigured) {
       setCurrentUser(null)
+      clearCommonplaceStorage()
+      setVerificationCooldownUntil(0)
       return
     }
     await signOut(auth)
+    setCurrentUser(null)
+    clearCommonplaceStorage()
+    setVerificationCooldownUntil(0)
+    setVerificationClock(Date.now())
   }
 
-  const resetPassword = async (email: string) => {
+  const changeEmail = async (newEmail: string) => {
     requireFirebase()
-    await sendPasswordResetEmail(auth, email)
+    if (!currentUser) throw new Error('You need to log in before changing your email.')
+    const normalized = newEmail.trim().toLowerCase()
+    if (!normalized) throw new Error('Enter a new email address.')
+    await verifyBeforeUpdateEmail(currentUser, normalized, {
+      url: `${window.location.origin}/verify-email`,
+      handleCodeInApp: true,
+    })
   }
 
   const resendVerificationEmail = async () => {
@@ -195,7 +241,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     signup,
     loginWithGoogle,
     logout,
-    resetPassword,
+    changeEmail,
     resendVerificationEmail,
     refreshEmailVerification,
     verificationEmailCooldownSeconds: Math.max(0, Math.ceil((verificationCooldownUntil - verificationClock) / 1000)),

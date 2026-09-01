@@ -13,9 +13,10 @@ interface LoginFormProps {
 
 export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   const navigate = useNavigate()
-  const { login, resetPassword, loginWithGoogle } = useAuth()
+  const { login, loginWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [keepSignedIn, setKeepSignedIn] = useState(false)
   const [genericError, setGenericError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
@@ -24,7 +25,6 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   const [viewMode, setViewMode] = useState<'login' | 'forgot' | 'reset-sent'>('login')
   const [resetInput, setResetInput] = useState('')
   const [resetError, setResetError] = useState<string | null>(null)
-  const [sentEmailTarget, setSentEmailTarget] = useState('')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -38,7 +38,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
 
     try {
       setLoading(true)
-      await login(trimmedInput, password)
+      await login(trimmedInput, password, keepSignedIn)
       setToastMessage('✦ Logged in successfully!')
       setTimeout(() => {
         navigate('/')
@@ -62,18 +62,24 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
 
   const handleResetSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setResetError(null)
     const trimmed = resetInput.trim()
     if (!trimmed) {
-      setResetError('Please enter your email address.')
+      setResetError('Please enter your email or username.')
       return
     }
 
     try {
       setLoading(true)
-      await resetPassword(trimmed)
-      setSentEmailTarget(trimmed)
+      const response = await fetch('/api/auth/password-reset-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: trimmed }),
+      })
+      const payload = await response.json().catch(() => ({})) as { error?: string }
+      if (!response.ok) throw new Error(payload.error || 'Failed to send reset link.')
       setViewMode('reset-sent')
-      setToastMessage(`✦ Reset email dispatched to ${trimmed}`)
+      setToastMessage('✦ Password reset request received.')
     } catch (err: unknown) {
       setResetError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Failed to send reset link.')
     } finally {
@@ -85,7 +91,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
     if (provider !== 'Google') return
     try {
       setLoading(true)
-      await loginWithGoogle()
+      await loginWithGoogle(keepSignedIn)
       setToastMessage('✦ Logged in with Google successfully!')
       setTimeout(() => {
         navigate('/')
@@ -110,7 +116,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
           </div>
 
           <p className="auth-reset-sent-desc">
-            We sent a password reset link to <strong style={{ color: '#D6AE73' }}>{sentEmailTarget}</strong>. Please check your inbox and follow the link to reset your password.
+            If an account matching those credentials exists, a password reset link has been sent to the associated email address. Check your inbox and follow the link to reset your password.
           </p>
 
           <button
@@ -149,15 +155,16 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
           </div>
 
           <p className="auth-reset-prompt-desc">
-            Enter your email address below. If an account matches, we'll send you a link to reset your password.
+            Enter your email address or username. If an account matches, we&apos;ll send you a link to reset your password.
           </p>
 
           <div className="auth-fields-stack" style={{ marginTop: 20 }}>
             <FormInput
               id="reset-input"
-              label="Email address"
-              type="email"
-              placeholder="you@example.com"
+              label="Email or username"
+              type="text"
+              autoComplete="username"
+              placeholder="Email or username"
               value={resetInput}
               onChange={(e) => {
                 setResetInput(e.target.value)
@@ -168,8 +175,8 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
             />
           </div>
 
-          <button type="submit" className="auth-primary-btn">
-            Send reset link
+          <button type="submit" className="auth-primary-btn" disabled={loading}>
+            {loading ? 'Sending...' : 'Send reset link'}
           </button>
 
           <p className="auth-switch-text" style={{ marginTop: 16 }}>
@@ -220,10 +227,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
         <div className="auth-fields-stack">
           <FormInput
             id="login-email"
-            label="Email address"
-            type="email"
-            autoComplete="email"
-            placeholder="you@example.com"
+            label="Email or username"
+            type="text"
+            autoComplete="username"
+            placeholder="Email or username"
             value={email}
             onChange={(e) => {
               setEmail(e.target.value)
@@ -247,7 +254,17 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
             leadingIcon={<Lock size={16} strokeWidth={1.75} />}
           />
 
-          <div className="auth-remember-row" style={{ justifyContent: 'flex-end' }}>
+          <div className="auth-remember-row">
+            <label className="auth-checkbox-label" htmlFor="keep-signed-in">
+              <input
+                id="keep-signed-in"
+                type="checkbox"
+                className="auth-checkbox"
+                checked={keepSignedIn}
+                onChange={(event) => setKeepSignedIn(event.target.checked)}
+              />
+              <span>Keep me signed in</span>
+            </label>
             <button
               type="button"
               className="auth-link-btn auth-forgot-btn"

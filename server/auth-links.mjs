@@ -5,6 +5,7 @@ import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore'
 import nodemailer from 'nodemailer'
 
 const LINK_LIFETIME_MS = 24 * 60 * 60 * 1000
+const PASSWORD_RESET_LIFETIME_MS = 60 * 60 * 1000
 const RESEND_COOLDOWN_MS = 60 * 1000
 const MAX_BODY_BYTES = 16_384
 
@@ -170,6 +171,125 @@ function renderVerificationEmail({ email, verificationUrl }) {
 </html>`
 }
 
+function renderPasswordResetEmail({ email, resetUrl }) {
+  const safeEmail = escapeHtml(email)
+  const safeResetUrl = escapeHtml(resetUrl)
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="supported-color-schemes" content="dark">
+    <title>Reset your password</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#090806;color:#e7d6c2;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+      Use this private link to reset your password for The Commonplace.
+    </div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#090806;">
+      <tr>
+        <td align="center" style="padding:40px 16px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;">
+            <tr>
+              <td align="center" style="padding:0 12px 28px;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center">
+                  <tr>
+                    <td style="width:52px;border-top:1px solid #6f5237;font-size:1px;line-height:1px;">&nbsp;</td>
+                    <td style="padding:0 12px;color:#c99668;font-family:Georgia,'Times New Roman',serif;font-size:15px;line-height:15px;">&#10022;</td>
+                    <td style="width:52px;border-top:1px solid #6f5237;font-size:1px;line-height:1px;">&nbsp;</td>
+                  </tr>
+                </table>
+                <div style="padding-top:13px;color:#d5a275;font-family:Georgia,'Times New Roman',serif;font-size:32px;line-height:38px;letter-spacing:-0.5px;">
+                  The Commonplace.
+                </div>
+                <div style="padding-top:6px;color:#8f755d;font-family:Arial,Helvetica,sans-serif;font-size:10px;line-height:14px;letter-spacing:2.8px;text-transform:uppercase;">
+                  Read &nbsp;&bull;&nbsp; Reflect &nbsp;&bull;&nbsp; Remember
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="border:1px solid #3a2b1d;border-radius:16px;background-color:#14110d;padding:44px 46px 38px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    <td align="center">
+                      <div style="margin:0;color:#f0e1cf;font-family:Georgia,'Times New Roman',serif;font-size:27px;line-height:34px;">
+                        Reset your password.
+                      </div>
+                      <div style="margin:18px auto 0;max-width:440px;color:#b9a088;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:24px;">
+                        We received a password reset request for <strong style="color:#d9bea4;font-weight:600;">${safeEmail}</strong>.
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td align="center" style="padding:30px 0 28px;">
+                      <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center">
+                        <tr>
+                          <td align="center" bgcolor="#d2a16f" style="border-radius:10px;">
+                            <a href="${safeResetUrl}" style="display:inline-block;padding:14px 28px;color:#160f09;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:20px;font-weight:700;text-decoration:none;">Reset my password</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td align="center" style="border-top:1px solid #302419;padding-top:24px;color:#917963;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:19px;">
+                      This private, one-time link expires in 1 hour.<br>
+                      If you did not request a password reset, you can safely ignore this email.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:24px 20px 0;color:#6f5c4b;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:18px;">
+                Sent by The Commonplace &nbsp;&bull;&nbsp; A home for the things that stay with you.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`
+}
+
+function isUserNotFound(error) {
+  return error?.code === 'auth/user-not-found' || /no user record/i.test(String(error?.message || ''))
+}
+
+async function findUserByIdentifier(identifier, { adminAuth, adminDb }) {
+  const normalized = String(identifier || '').trim().toLowerCase()
+  if (!normalized || normalized.length > 254) return null
+
+  if (normalized.startsWith('@') || !normalized.includes('@')) {
+    const handle = normalized.replace(/^@/, '')
+    if (!/^[a-z0-9_]{3,20}$/.test(handle)) return null
+    const handleSnapshot = await adminDb.collection('handles').doc(handle).get()
+    const uid = String(handleSnapshot.data()?.uid || '')
+    if (!handleSnapshot.exists || !uid) return null
+    try {
+      return await adminAuth.getUser(uid)
+    } catch (error) {
+      if (isUserNotFound(error)) return null
+      throw error
+    }
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return null
+  try {
+    return await adminAuth.getUserByEmail(normalized)
+  } catch (error) {
+    if (isUserNotFound(error)) return null
+    throw error
+  }
+}
+
+function validActionToken(token) {
+  return typeof token === 'string' && /^[A-Za-z0-9_-]{20,64}$/.test(token)
+}
+
 async function sendVerificationLink(request, env) {
   const idToken = bearerToken(request)
   if (!idToken) {
@@ -227,7 +347,7 @@ async function sendVerificationLink(request, env) {
 
 async function redeemVerificationLink(request, env) {
   const { token } = await readJsonBody(request)
-  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{20,64}$/.test(token)) {
+  if (!validActionToken(token)) {
     const error = new Error('Invalid verification link.')
     error.statusCode = 400
     throw error
@@ -248,13 +368,141 @@ async function redeemVerificationLink(request, env) {
   return { verified: true }
 }
 
+async function findEmailByHandle(request, env) {
+  const handle = new URL(request.url || '/', 'http://localhost').searchParams.get('handle') || ''
+  const normalized = handle.replace(/^@/, '').trim().toLowerCase()
+  if (!/^[a-z0-9_]{3,20}$/.test(normalized)) {
+    const error = new Error('Invalid username.')
+    error.statusCode = 400
+    throw error
+  }
+
+  const services = getAdminServices(env)
+  const user = await findUserByIdentifier(`@${normalized}`, services)
+  if (!user?.email) {
+    const error = new Error('Account not found.')
+    error.statusCode = 404
+    throw error
+  }
+  return { email: user.email }
+}
+
+async function sendPasswordResetLink(request, env) {
+  const { identifier } = await readJsonBody(request)
+  if (typeof identifier !== 'string' || !identifier.trim() || identifier.length > 254) {
+    const error = new Error('Enter a valid email or username.')
+    error.statusCode = 400
+    throw error
+  }
+
+  const { adminAuth, adminDb } = getAdminServices(env)
+  const user = await findUserByIdentifier(identifier, { adminAuth, adminDb })
+  if (!user?.email) return { sent: true }
+
+  const cooldownRef = adminDb.collection('authPasswordResetCooldowns').doc(user.uid)
+  const cooldownSnapshot = await cooldownRef.get()
+  const lastSentAt = cooldownSnapshot.data()?.lastSentAt?.toMillis?.() || 0
+  if (Date.now() - lastSentAt < RESEND_COOLDOWN_MS) return { sent: true }
+
+  const token = randomBytes(32).toString('base64url')
+  const linkRef = adminDb.collection('authActionLinks').doc(token)
+  const expiresAt = Timestamp.fromMillis(Date.now() + PASSWORD_RESET_LIFETIME_MS)
+  await Promise.all([
+    linkRef.set({
+      uid: user.uid,
+      email: user.email,
+      type: 'reset-password',
+      expiresAt,
+      createdAt: FieldValue.serverTimestamp(),
+    }),
+    cooldownRef.set({ lastSentAt: FieldValue.serverTimestamp() }, { merge: true }),
+  ])
+
+  const resetUrl = `${cleanAppBaseUrl(env)}/reset-password/${token}`
+  const sender = env.EMAIL_FROM || `The Commonplace <${requireValue(env.SMTP_USER, 'SMTP_USER')}>`
+  try {
+    await getMailTransport(env).sendMail({
+      from: sender,
+      to: user.email,
+      subject: 'Reset your password — The Commonplace',
+      text: `Reset your password for The Commonplace:\n${resetUrl}\n\nThis private, one-time link expires in 1 hour. If you did not request this reset, you can safely ignore this email.`,
+      html: renderPasswordResetEmail({ email: user.email, resetUrl }),
+    })
+  } catch (error) {
+    await Promise.all([
+      linkRef.delete().catch(() => {}),
+      cooldownRef.delete().catch(() => {}),
+    ])
+    throw error
+  }
+
+  return { sent: true }
+}
+
+async function validatePasswordResetLink(request, env) {
+  const { token } = await readJsonBody(request)
+  if (!validActionToken(token)) return { valid: false }
+  const { adminDb } = getAdminServices(env)
+  const snapshot = await adminDb.collection('authActionLinks').doc(token).get()
+  const data = snapshot.data()
+  const valid = Boolean(
+    snapshot.exists
+    && data?.type === 'reset-password'
+    && data.expiresAt?.toMillis?.() > Date.now(),
+  )
+  return { valid }
+}
+
+async function redeemPasswordResetLink(request, env) {
+  const { token, newPassword } = await readJsonBody(request)
+  if (!validActionToken(token)) {
+    const error = new Error('This password reset link is invalid or expired.')
+    error.statusCode = 400
+    throw error
+  }
+  if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 128) {
+    const error = new Error('Your new password must be between 8 and 128 characters.')
+    error.statusCode = 400
+    throw error
+  }
+
+  const { adminAuth, adminDb } = getAdminServices(env)
+  const linkRef = adminDb.collection('authActionLinks').doc(token)
+  const data = await adminDb.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(linkRef)
+    const linkData = snapshot.data()
+    if (!snapshot.exists || linkData?.type !== 'reset-password' || linkData.expiresAt?.toMillis?.() <= Date.now()) {
+      const error = new Error('This password reset link is invalid or expired.')
+      error.statusCode = 400
+      throw error
+    }
+    transaction.delete(linkRef)
+    return linkData
+  })
+  await adminAuth.updateUser(data.uid, { password: newPassword })
+  await adminAuth.revokeRefreshTokens(data.uid)
+  return { reset: true }
+}
+
 export async function handleAuthApiRequest(request, env = process.env) {
   const pathname = new URL(request.url || '/', 'http://localhost').pathname
+  if (request.method === 'GET' && pathname === '/api/auth/user-by-handle') {
+    return findEmailByHandle(request, env)
+  }
   if (request.method === 'POST' && pathname === '/api/auth/verification-links') {
     return sendVerificationLink(request, env)
   }
   if (request.method === 'POST' && pathname === '/api/auth/verification-links/redeem') {
     return redeemVerificationLink(request, env)
+  }
+  if (request.method === 'POST' && pathname === '/api/auth/password-reset-links') {
+    return sendPasswordResetLink(request, env)
+  }
+  if (request.method === 'POST' && pathname === '/api/auth/password-reset-links/validate') {
+    return validatePasswordResetLink(request, env)
+  }
+  if (request.method === 'POST' && pathname === '/api/auth/password-reset-links/redeem') {
+    return redeemPasswordResetLink(request, env)
   }
   return null
 }
@@ -263,4 +511,6 @@ export const authLinkInternals = {
   cleanAppBaseUrl,
   escapeHtml,
   renderVerificationEmail,
+  renderPasswordResetEmail,
+  validActionToken,
 }
