@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   addItemToProfileCollection,
   buildPopularCollectionRecommendations,
+  collectionsCreatedByProfile,
   createProfileCollection,
   loadProfileCollections,
   loadSavedProfileCollections,
@@ -43,6 +44,21 @@ describe('profile collections', () => {
     expect(loadProfileCollections('minareads')).toEqual([collection])
     expect(loadSavedProfileCollections('jimboii')).toEqual([collection])
     expect(loadSavedProfileCollections('minareads')).toEqual([])
+  })
+
+  it('keeps only collections created by the profile in Created Collections', () => {
+    const owned = createProfileCollection('Jimmy favorites', ['book'], {
+      creatorHandle: '@jimboii',
+    })
+    const savedFromAnotherProfile = createProfileCollection('Mina favorites', ['book'], {
+      creatorHandle: 'minareads',
+    })
+    const legacyOwned = createProfileCollection('Older collection', ['book'])
+
+    expect(collectionsCreatedByProfile(
+      [owned, savedFromAnotherProfile, legacyOwned],
+      'JIMBOII',
+    )).toEqual([owned, legacyOwned])
   })
 
   it('deduplicates popular recommendations across reviews and provider IDs', () => {

@@ -31,4 +31,3 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSwitchToLogin }) =
     </div>
   )
 }
-

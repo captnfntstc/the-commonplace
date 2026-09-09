@@ -42,8 +42,8 @@ export const Card: React.FC<CardProps> = ({
   typeLabel,
   isLiked = false,
   isSaved = false,
-  likeCount = 12,
-  commentCount = 3,
+  likeCount = 0,
+  commentCount = 0,
   onToggleLike,
   onToggleSave,
   commentsDisabled = false,
@@ -58,6 +58,7 @@ export const Card: React.FC<CardProps> = ({
         authorAvatarUrl={entry.authorAvatarUrl}
         createdAt={entry.createdAt}
         onOpenProfile={onOpenProfile}
+        visibility={entry.visibility}
       />
 
       {/* Body: Artwork & Metadata */}
@@ -117,7 +118,7 @@ export const Card: React.FC<CardProps> = ({
             title={isLiked ? 'Unlike' : 'Like'}
           >
             <Heart size={15} fill={isLiked ? 'currentColor' : 'none'} />
-            <span className="glance-like-count">{likeCount + (isLiked ? 1 : 0)}</span>
+            <span className="glance-like-count">{likeCount}</span>
           </button>
 
           {/* Comment — icon + count, opens overlay */}

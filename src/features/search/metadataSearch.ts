@@ -1,9 +1,59 @@
-import { scoreGameTitleMatch, type MetadataResult } from '../../metadata'
+import { externalScreenSearchScore, scoreGameTitleMatch, type MetadataResult } from '../../metadata'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../../data/universalMediaEntities'
 import { resolveArtworkUrl } from '../../utils/artwork'
 
 function normalizeSearchText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+export const COMMUNITY_SEARCH_RANKING_MIN_REVIEWS = 10
+
+export type CommunityReviewSignal = {
+  id: string
+  type: string
+  title: string
+  providerId?: string
+  rating: number
+  ownerId?: string
+  authorHandle?: string
+}
+
+function reviewsForMetadataResult(result: MetadataResult, reviews: CommunityReviewSignal[]) {
+  const resultTitle = normalizeSearchText(result.title)
+  const reviewers = new Map<string, CommunityReviewSignal>()
+  reviews.forEach((review) => {
+    if (review.type !== result.type || review.rating <= 0) return
+    const providerMatches = Boolean(result.providerId && review.providerId === result.providerId)
+    if (!providerMatches && normalizeSearchText(review.title) !== resultTitle) return
+    const reviewer = review.ownerId || review.authorHandle || review.id
+    if (!reviewers.has(reviewer)) reviewers.set(reviewer, review)
+  })
+  return [...reviewers.values()]
+}
+
+export function rankMetadataSearchResults(
+  results: MetadataResult[],
+  communityReviews: CommunityReviewSignal[] = [],
+) {
+  if (!results.some(({ type }) => type === 'film' || type === 'tv')) return results
+  return results
+    .map((result, index) => {
+      const reviews = reviewsForMetadataResult(result, communityReviews)
+      const usesCommunityRanking = reviews.length >= COMMUNITY_SEARCH_RANKING_MIN_REVIEWS
+      const average = reviews.length > 0
+        ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length
+        : 0
+      const rankingScore = usesCommunityRanking
+        ? average * 20 + Math.log10(reviews.length + 1) * 2
+        : externalScreenSearchScore(result)
+      return { result, index, rankingScore }
+    })
+    .sort((left, right) => (
+      (right.result.screenSearchRelevance || 0) - (left.result.screenSearchRelevance || 0)
+      || right.rankingScore - left.rankingScore
+      || left.index - right.index
+    ))
+    .map(({ result }) => result)
 }
 
 export function localGameMetadataResults(query: string): MetadataResult[] {

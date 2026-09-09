@@ -1,7 +1,8 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Edit3, Trash2, Maximize2 } from 'lucide-react'
-import { FormattedText, stripHtmlAlignment, type Alignment } from '../FormattedText'
+import { Edit3, Trash2, Maximize2, MoreHorizontal } from 'lucide-react'
+import { FormattedText, type Alignment } from '../FormattedText'
+import { getDropCapParts } from '../dropCap'
 
 interface VariantProps {
   reflection: string
@@ -11,94 +12,6 @@ interface VariantProps {
   onEdit?: () => void
   onDelete?: () => void
   onExpandOverlay?: () => void
-}
-
-export function getDropCapParts(text: string): {
-  firstChar: string
-  restText: string
-  isEmoji: boolean
-  isLowercase: boolean
-} {
-  if (!text || !text.trim()) {
-    return { firstChar: '', restText: '', isEmoji: false, isLowercase: false }
-  }
-
-  const { cleanText } = stripHtmlAlignment(text)
-  const trimmed = cleanText.trim()
-
-  const checkLowercase = (char: string) => {
-    return char === char.toLowerCase() && char !== char.toUpperCase()
-  }
-
-  if (typeof window !== 'undefined' && typeof DOMParser !== 'undefined') {
-    try {
-      const parser = new DOMParser()
-      const doc = parser.parseFromString(trimmed, 'text/html')
-      const body = doc.body
-
-      let firstTextNode: Node | null = null
-      const walk = (node: Node) => {
-        if (firstTextNode) return
-        if (node.nodeType === Node.TEXT_NODE && node.nodeValue && node.nodeValue.trim().length > 0) {
-          firstTextNode = node
-          return
-        }
-        for (let child = node.firstChild; child; child = child.nextSibling) {
-          walk(child)
-        }
-      }
-      walk(body)
-
-      if (firstTextNode) {
-        const fullStr = (firstTextNode as Node).nodeValue || ''
-        const leadingWhitespaceMatch = fullStr.match(/^\s*/)
-        const leadingWhitespace = leadingWhitespaceMatch ? leadingWhitespaceMatch[0] : ''
-        const trimmedStr = fullStr.trimStart()
-
-        let firstChar = ''
-        if (typeof Intl !== 'undefined' && (Intl as any).Segmenter) {
-          const segmenter = new (Intl as any).Segmenter(undefined, { granularity: 'grapheme' })
-          const segments = Array.from(segmenter.segment(trimmedStr))
-          if (segments.length > 0) {
-            firstChar = (segments[0] as any).segment
-          }
-        }
-        if (!firstChar) {
-          firstChar = Array.from(trimmedStr)[0] || ''
-        }
-
-        const charLen = firstChar.length
-        const remainingStr = trimmedStr.slice(charLen)
-        ;(firstTextNode as Node).nodeValue = leadingWhitespace + remainingStr
-
-        const restText = body.innerHTML
-        const isEmoji = /\p{Extended_Pictographic}|\p{Emoji_Presentation}/u.test(firstChar)
-        const isLowercase = checkLowercase(firstChar)
-
-        return { firstChar, restText, isEmoji, isLowercase }
-      }
-    } catch {
-      // Fallback to plain text logic below if DOM parsing fails
-    }
-  }
-
-  let firstChar = ''
-  if (typeof Intl !== 'undefined' && (Intl as any).Segmenter) {
-    const segmenter = new (Intl as any).Segmenter(undefined, { granularity: 'grapheme' })
-    const segments = Array.from(segmenter.segment(trimmed))
-    if (segments.length > 0) {
-      firstChar = (segments[0] as any).segment
-    }
-  }
-  if (!firstChar) {
-    firstChar = Array.from(trimmed)[0] || ''
-  }
-
-  const restText = trimmed.slice(firstChar.length)
-  const isEmoji = /\p{Extended_Pictographic}|\p{Emoji_Presentation}/u.test(firstChar)
-  const isLowercase = checkLowercase(firstChar)
-
-  return { firstChar, restText, isEmoji, isLowercase }
 }
 
 export const HybridScrollVariant: React.FC<VariantProps> = ({
@@ -112,6 +25,24 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
 }) => {
   const showDropCap = Boolean(enableDropCap)
   const { firstChar, restText, isEmoji, isLowercase } = getDropCapParts(reflection)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const closeMenu = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+    document.addEventListener('mousedown', closeMenu)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeMenu)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [menuOpen])
 
   return (
     <AnimatePresence initial={false}>
@@ -123,7 +54,7 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
           exit={{ height: 0, opacity: 0 }}
           transition={{ duration: 0.32, ease: [0.2, 0, 0, 1] }}
           className="card-reflection expanded v12-hybrid-scroll"
-          style={{ overflow: 'hidden' }}
+          style={{ overflow: menuOpen ? 'visible' : 'hidden' }}
         >
           <div className="reflection-inner">
             <div className="scroll-container">
@@ -145,41 +76,52 @@ export const HybridScrollVariant: React.FC<VariantProps> = ({
               </div>
             </div>
 
-            <div className="card-actions">
-              {onExpandOverlay && (
+            {(onExpandOverlay || onEdit || onDelete) && (
+              <div className="card-actions" ref={menuRef}>
                 <button
-                  className="action-btn icon-only"
+                  className="card-more-btn"
                   type="button"
-                  onClick={onExpandOverlay}
-                  title="View Reading Overlay"
-                  aria-label="View Reading Overlay"
+                  onClick={() => setMenuOpen((open) => !open)}
+                  title="More actions"
+                  aria-label="More entry actions"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
                 >
-                  <Maximize2 aria-hidden="true" />
+                  <MoreHorizontal aria-hidden="true" />
                 </button>
-              )}
-              {onEdit && (
-                <button
-                  className="action-btn icon-only"
-                  type="button"
-                  onClick={onEdit}
-                  title="Edit Entry"
-                  aria-label="Edit Entry"
-                >
-                  <Edit3 aria-hidden="true" />
-                </button>
-              )}
-              {onDelete && (
-                <button
-                  className="action-btn danger icon-only"
-                  type="button"
-                  onClick={onDelete}
-                  title="Delete Entry"
-                  aria-label="Delete Entry"
-                >
-                  <Trash2 aria-hidden="true" />
-                </button>
-              )}
-            </div>
+                <AnimatePresence>
+                  {menuOpen && (
+                    <motion.div
+                      className="card-actions-menu"
+                      role="menu"
+                      initial={{ opacity: 0, scale: 0.96, y: 4 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.96, y: 4 }}
+                      transition={{ duration: 0.12 }}
+                    >
+                      {onExpandOverlay && (
+                        <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onExpandOverlay() }}>
+                          <Maximize2 aria-hidden="true" />
+                          <span>Open reading view</span>
+                        </button>
+                      )}
+                      {onEdit && (
+                        <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onEdit() }}>
+                          <Edit3 aria-hidden="true" />
+                          <span>Edit entry</span>
+                        </button>
+                      )}
+                      {onDelete && (
+                        <button className="danger" type="button" role="menuitem" onClick={() => { setMenuOpen(false); onDelete() }}>
+                          <Trash2 aria-hidden="true" />
+                          <span>Delete entry</span>
+                        </button>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
           </div>
         </motion.div>
       )}

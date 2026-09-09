@@ -1,6 +1,5 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
-// @ts-expect-error This JavaScript plugin runs only inside Vite's Node process.
 import { createIgdbDevPlugin } from './server/vite-plugin.mjs'
 
 // https://vite.dev/config/

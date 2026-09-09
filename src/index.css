@@ -30,13 +30,30 @@
 
 html {
   background: var(--bg);
+  width: 100%;
+  overflow-x: clip;
 }
 
 body {
-  min-width: 320px;
+  width: 100%;
+  min-width: 0;
   min-height: 100svh;
   margin: 0;
   background: var(--bg);
+  overflow-x: clip;
+}
+
+#root {
+  width: 100%;
+  min-width: 0;
+  min-height: 100svh;
+  overflow-x: clip;
+}
+
+img,
+video,
+canvas {
+  max-width: 100%;
 }
 
 body::selection {
@@ -87,4 +104,3 @@ textarea {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
-

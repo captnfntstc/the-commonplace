@@ -294,7 +294,7 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
     case 'human':
       return [
         { id: 'overview', label: 'Overview' },
-        { id: 'reviews', label: 'Community Reviews' },
+        { id: 'reviews', label: 'Most Reviewed' },
         { id: 'related', label: 'Similar' },
       ]
     case 'artist':
@@ -302,7 +302,7 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'overview', label: 'Overview' },
         { id: 'top_content', label: 'Top Songs' },
         { id: 'collection', label: 'Discography' },
-        { id: 'reviews', label: 'Community Reviews' },
+        { id: 'reviews', label: 'Most Reviewed' },
         { id: 'related', label: 'Similar' },
       ]
     case 'album':

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -6,6 +6,7 @@ import {
   Clock,
   ShieldCheck,
   Lock,
+  Trash2,
 } from 'lucide-react'
 import {
   LinkedAccountCard,
@@ -101,6 +102,7 @@ interface SettingsPageProps {
   showLocalNavigation?: boolean
   userProfile: UserProfileState
   onSaveProfile: (updated: UserProfileState) => void | Promise<void>
+  onResetHomeRecommendations?: () => void | Promise<void>
 }
 
 const TAKEN_USERNAMES = new Set(['admin', 'commonplace', 'system', 'root', 'collector', 'superuser', 'official'])
@@ -111,10 +113,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   showLocalNavigation = true,
   userProfile,
   onSaveProfile,
+  onResetHomeRecommendations,
 }) => {
   const {
     currentUser,
     changeEmail,
+    changePassword,
+    setGoogleAccountLinked,
+    deactivateAccount,
+    deleteAccount,
     resendVerificationEmail,
     verificationEmailCooldownSeconds,
     verificationEmailSent,
@@ -127,6 +134,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [emailChangeLoading, setEmailChangeLoading] = useState(false)
   const [emailChangeNotice, setEmailChangeNotice] = useState('')
   const [emailChangeError, setEmailChangeError] = useState('')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteConfirmation, setDeleteConfirmation] = useState('')
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+  const [deactivationDialogOpen, setDeactivationDialogOpen] = useState(false)
+  const [deactivationReason, setDeactivationReason] = useState('')
+  const [returnPlan, setReturnPlan] = useState('seven_days')
+  const [safetyConcern, setSafetyConcern] = useState(false)
+  const [deactivationFeedback, setDeactivationFeedback] = useState('')
+  const [deactivationLoading, setDeactivationLoading] = useState(false)
+  const [deactivationError, setDeactivationError] = useState('')
+  const [recommendationResetting, setRecommendationResetting] = useState(false)
+  const [recommendationNotice, setRecommendationNotice] = useState('')
+  const deactivationSectionRef = useRef<HTMLDivElement>(null)
   const verificationCooldownLabel = `${Math.floor(verificationEmailCooldownSeconds / 60)}:${String(verificationEmailCooldownSeconds % 60).padStart(2, '0')}`
   const currentEmail = currentUser?.email || userProfile.email
 
@@ -141,6 +162,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [privateProfile, setPrivateProfile] = useState(userProfile.isPrivate ?? false)
   const [showSavedActivity, setShowSavedActivity] = useState(userProfile.showSavedActivity ?? false)
   const [savedNotice, setSavedNotice] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   const handleSendVerification = async () => {
     try {
@@ -186,8 +208,61 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   }
 
-  // Activity Modals State
-  const [activeActivityModal, setActiveActivityModal] = useState<'likes' | 'comments' | null>(null)
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmation !== 'DELETE') return
+    try {
+      setDeleteLoading(true)
+      setDeleteError('')
+      await deleteAccount()
+    } catch (error) {
+      setDeleteError((error as Error)?.message || 'Unable to delete your account.')
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
+  const openDeactivationFlow = () => {
+    setDeleteDialogOpen(false)
+    setDeactivationError('')
+    setDeactivationDialogOpen(true)
+    window.setTimeout(() => deactivationSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0)
+  }
+
+  const handleDeactivateAccount = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!deactivationReason) {
+      setDeactivationError('Choose why you are deactivating your account.')
+      return
+    }
+    try {
+      setDeactivationLoading(true)
+      setDeactivationError('')
+      await deactivateAccount({
+        reason: deactivationReason,
+        returnPlan,
+        safetyConcern,
+        feedback: deactivationFeedback.trim(),
+      })
+    } catch (error) {
+      setDeactivationError((error as Error)?.message || 'Unable to deactivate your account.')
+    } finally {
+      setDeactivationLoading(false)
+    }
+  }
+
+  const handleResetHomeRecommendations = async () => {
+    if (!onResetHomeRecommendations) return
+    try {
+      setRecommendationResetting(true)
+      setRecommendationNotice('')
+      await onResetHomeRecommendations()
+      setRecommendationNotice('Home recommendations have been reset.')
+    } catch (error) {
+      setRecommendationNotice((error as Error)?.message || 'Unable to reset Home recommendations.')
+    } finally {
+      setRecommendationResetting(false)
+    }
+  }
 
   // Sync form state if props update
   useEffect(() => {
@@ -203,62 +278,68 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setShowSavedActivity(userProfile.showSavedActivity ?? false)
   }, [userProfile])
 
-  // Account Statuses Map (Google & GitHub connected by default)
   const [accountStatuses, setAccountStatuses] = useState<Record<string, ConnectionStatus>>({
-    google: 'connected',
-    apple: 'disconnected',
-    github: 'connected',
-    discord: 'disconnected',
-    facebook: 'disconnected',
-    instagram: 'disconnected',
-    twitterX: 'disconnected',
+    google: (currentUser?.providerData || []).some(({ providerId }) => providerId === 'google.com') ? 'connected' : 'disconnected',
   })
+  const [linkedAccountNotice, setLinkedAccountNotice] = useState('')
+  const [linkedAccountError, setLinkedAccountError] = useState('')
 
-  const handleToggleProvider = (id: string) => {
+  const handleToggleProvider = async (id: string) => {
     const current = accountStatuses[id] || 'disconnected'
     if (current === 'connecting') return
-
-    if (current === 'connected') {
-      setAccountStatuses((prev) => ({ ...prev, [id]: 'disconnected' }))
-    } else {
-      setAccountStatuses((prev) => ({ ...prev, [id]: 'connecting' }))
-      setTimeout(() => {
-        setAccountStatuses((prev) => ({ ...prev, [id]: 'connected' }))
-      }, 750)
+    setLinkedAccountNotice('')
+    setLinkedAccountError('')
+    setAccountStatuses((prev) => ({ ...prev, [id]: 'connecting' }))
+    try {
+      const shouldConnect = current !== 'connected'
+      await setGoogleAccountLinked(shouldConnect)
+      setAccountStatuses((prev) => ({ ...prev, [id]: shouldConnect ? 'connected' : 'disconnected' }))
+      setLinkedAccountNotice(`Google ${shouldConnect ? 'connected' : 'disconnected'} successfully.`)
+    } catch (error) {
+      setAccountStatuses((prev) => ({ ...prev, [id]: current }))
+      setLinkedAccountError((error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to update this linked account.')
     }
   }
 
-  // Security state (2FA & Password)
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false)
+  // Security state
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordNotice, setPasswordNotice] = useState('')
+  const [passwordError, setPasswordError] = useState('')
+  const [passwordLoading, setPasswordLoading] = useState(false)
 
-  const handlePasswordUpdate = (e: React.FormEvent) => {
+  const handlePasswordUpdate = async (e: React.FormEvent) => {
     e.preventDefault()
+    setPasswordError('')
+    setPasswordNotice('')
     if (!currentPassword) {
-      alert('Please enter your current password.')
+      setPasswordError('Please enter your current password.')
       return
     }
-    if (newPassword.length < 6) {
-      alert('New password must be at least 6 characters long.')
+    if (newPassword.length < 8) {
+      setPasswordError('New password must be at least 8 characters long.')
       return
     }
     if (newPassword !== confirmPassword) {
-      alert('New password and confirmation do not match.')
+      setPasswordError('New password and confirmation do not match.')
       return
     }
-    setPasswordNotice('Password updated successfully!')
-    setCurrentPassword('')
-    setNewPassword('')
-    setConfirmPassword('')
-    setTimeout(() => setPasswordNotice(''), 3000)
+    try {
+      setPasswordLoading(true)
+      await changePassword(currentPassword, newPassword)
+      setPasswordNotice('Password updated successfully!')
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setTimeout(() => setPasswordNotice(''), 3000)
+    } catch (error) {
+      const message = (error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to update your password.'
+      setPasswordError(/credential|password is invalid/i.test(message) ? 'Your current password is incorrect.' : message)
+    } finally {
+      setPasswordLoading(false)
+    }
   }
-
-  // Toggles state
-  const [deepSearchIndexing, setDeepSearchIndexing] = useState(true)
-  const [publicIndexing, setPublicIndexing] = useState(true)
 
   // Check if dirty changes exist
   const sanitizedHandle = handleInput.trim().toLowerCase().replace(/^@/, '')
@@ -305,28 +386,31 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
+    setSaveError('')
 
     if (!isCurrentUsername && isTaken) {
-      alert('This username is taken. Please choose another unique username.')
+      setSaveError('This username is taken. Please choose another unique username.')
       return
     }
 
     if (!isCurrentUsername && isUsernameCooldownActive) {
-      alert(`Username cannot be changed yet. Next change available on ${nextAvailableDate}.`)
+      setSaveError(`Username cannot be changed yet. Next change available on ${nextAvailableDate}.`)
       return
     }
 
     const usernameChanged = !isCurrentUsername && !isUsernameCooldownActive
 
     const updated: UserProfileState = {
-      firstName: firstName.trim() || 'Jimmy',
-      lastName: lastName.trim() || 'Boy',
+      firstName: firstName.trim() || userProfile.firstName || 'Reader',
+      lastName: lastName.trim(),
       showFullName,
-      handle: sanitizedHandle || 'jimboii',
-      email: currentEmail || 'jimboii@commonplace.app',
+      handle: sanitizedHandle || userProfile.handle,
+      email: currentEmail || userProfile.email,
       bio: bio.trim(),
       avatarUrl: userProfile.avatarUrl,
       coverUrl: userProfile.coverUrl,
+      createdAt: userProfile.createdAt,
+      birthday: userProfile.birthday,
       lastUsernameChangeDate: usernameChanged ? new Date().toISOString() : userProfile.lastUsernameChangeDate,
       showFollowLists,
       allowComments,
@@ -340,7 +424,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setTimeout(() => setSavedNotice(false), 3000)
     } catch (error) {
       console.error('Unable to save profile settings.', error)
-      alert(error instanceof Error ? error.message : 'Settings could not be saved. Please try again.')
+      setSaveError(error instanceof Error ? error.message : 'Settings could not be saved. Please try again.')
     }
   }
 
@@ -369,6 +453,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="settings-saved-banner">
               <CheckCircle2 aria-hidden="true" />
               <span>Settings updated successfully!</span>
+            </div>
+          )}
+          {saveError && (
+            <div className="settings-save-error" role="alert">
+              <AlertCircle aria-hidden="true" />
+              <span>{saveError}</span>
             </div>
           )}
 
@@ -551,7 +641,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             <div className="settings-page-content">
               <div className="settings-header-minimal">
                 <h1 className="settings-page-title">Social & Interactions</h1>
-                <p className="settings-page-desc">Manage comments, replies, and view your activity logs.</p>
+                <p className="settings-page-desc">Manage comments and replies on your entries.</p>
               </div>
 
               <SettingsSection title="Comment Settings">
@@ -563,43 +653,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 />
               </SettingsSection>
 
-              <SettingsSection title="Personal Activity Logs" description="View entries you have liked or commented on.">
-                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    className="secondary-action-btn"
-                    onClick={() => setActiveActivityModal('likes')}
-                  >
-                    <span>❤️ View My Liked Entries</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-action-btn"
-                    onClick={() => setActiveActivityModal('comments')}
-                  >
-                    <span>💬 View My Comments History</span>
-                  </button>
-                </div>
-              </SettingsSection>
-            </div>
-          )}
-
-          {/* PAGE 3: READING PREFERENCES */}
-          {activeTab === 'reading' && (
-            <div className="settings-page-content">
-              <div className="settings-header-minimal">
-                <h1 className="settings-page-title">Reading Preferences</h1>
-                <p className="settings-page-desc">Adjust search and reading behavior.</p>
-              </div>
-
-              <SettingsSection title="Search Behavior">
-                <SettingsToggle
-                  label="Deep Search Indexing"
-                  description="Include quote passages and review reflections in header search queries."
-                  checked={deepSearchIndexing}
-                  onChange={setDeepSearchIndexing}
-                />
-              </SettingsSection>
             </div>
           )}
 
@@ -642,17 +695,27 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 />
               </SettingsSection>
 
-              <SettingsSection title="Search Engine Indexing">
-                <SettingsToggle
-                  label="Allow Search Engine Indexing"
-                  description="Allow search engines to index your public commonplace profile."
-                  checked={publicIndexing && !privateProfile}
-                  onChange={(val) => {
-                    if (privateProfile) return
-                    setPublicIndexing(val)
-                  }}
-                />
+              <SettingsSection
+                title="Home Recommendations"
+                description="Clear the interests learned from your catalog, saves, likes, and opened media."
+              >
+                <div className="settings-danger-zone-row">
+                  <div>
+                    <strong>Reset Home recommendations</strong>
+                    <span>Your public and mutual-follow feed will return to a fresh, diverse ordering.</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-action-btn"
+                    onClick={handleResetHomeRecommendations}
+                    disabled={recommendationResetting || !onResetHomeRecommendations}
+                  >
+                    {recommendationResetting ? 'Resetting…' : 'Reset recommendations'}
+                  </button>
+                </div>
+                {recommendationNotice && <p className="settings-page-desc" role="status">{recommendationNotice}</p>}
               </SettingsSection>
+
             </div>
           )}
 
@@ -783,20 +846,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </SettingsSection>
 
               <SettingsSection
-                title="Two-Factor Authentication (2FA)"
-                description="Add an extra layer of security using an authenticator app (TOTP)."
-              >
-                <div className="security-2fa-card">
-                  <SettingsToggle
-                    label="Enable Two-Factor Authentication"
-                    description="Require a verification code when signing in."
-                    checked={twoFactorEnabled}
-                    onChange={setTwoFactorEnabled}
-                  />
-                </div>
-              </SettingsSection>
-
-              <SettingsSection
                 title="Change Password"
                 description="Update your account password regularly."
               >
@@ -840,53 +889,225 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   </div>
 
                   <div>
-                    <button type="submit" className="secondary-action-btn">
+                    <button type="submit" className="secondary-action-btn" disabled={passwordLoading}>
                       <Lock aria-hidden="true" />
-                      <span>Update Password</span>
+                      <span>{passwordLoading ? 'Updating…' : 'Update Password'}</span>
                     </button>
                   </div>
+                  {passwordError && <p className="settings-delete-account-error" role="alert">{passwordError}</p>}
                 </form>
               </SettingsSection>
 
               <SettingsSection title="Linked Accounts">
                 <div className="linked-accounts-editorial-list">
-                  {PROVIDERS.map((provider) => {
+                  {PROVIDERS.filter(({ id }) => id === 'google').map((provider) => {
                     const status = accountStatuses[provider.id] || 'disconnected'
                     return (
                       <LinkedAccountCard
                         key={provider.id}
                         provider={provider}
                         status={status}
-                        onToggle={() => handleToggleProvider(provider.id)}
+                        onToggle={() => { void handleToggleProvider(provider.id) }}
                       />
                     )
                   })}
                 </div>
+                {linkedAccountNotice && <p className="settings-page-desc" role="status">{linkedAccountNotice}</p>}
+                {linkedAccountError && <p className="settings-delete-account-error" role="alert">{linkedAccountError}</p>}
               </SettingsSection>
+
+              <div className="settings-danger-zone" ref={deactivationSectionRef}>
+                <SettingsSection
+                  title="Danger Zone"
+                  description="Step away temporarily or permanently remove your account."
+                >
+                  <div className="settings-danger-zone-row settings-deactivation-row">
+                    <div>
+                      <strong>Deactivate account</strong>
+                      <span>Hide your profile and activity until your chosen return date—or until you decide to return.</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="settings-deactivation-button"
+                      onClick={openDeactivationFlow}
+                    >
+                      <Clock aria-hidden="true" />
+                      Deactivate account
+                    </button>
+                  </div>
+                  <div className="settings-danger-zone-row">
+                    <div>
+                      <strong>Delete account</strong>
+                      <span>This removes your profile, catalogs, collections, comments, likes, follows, and sign-in account.</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="settings-danger-button"
+                      onClick={() => {
+                        setDeleteDialogOpen(true)
+                        setDeleteConfirmation('')
+                        setDeleteError('')
+                      }}
+                    >
+                      <Trash2 aria-hidden="true" />
+                      Delete account
+                    </button>
+                  </div>
+                </SettingsSection>
+              </div>
             </div>
           )}
 
         </main>
       </div>
 
-      {/* Activity Log Modal */}
-      {activeActivityModal && (
-        <div className="modal-backdrop" onClick={() => setActiveActivityModal(null)}>
-          <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="settings-header">
-              <h2>{activeActivityModal === 'likes' ? '❤️ My Liked Entries' : '💬 My Comments & Replies'}</h2>
-            </div>
-            <p style={{ color: 'var(--secondary)', margin: '14px 0 20px', lineHeight: 1.5 }}>
-              {activeActivityModal === 'likes'
-                ? 'Below is the list of entries you have recently liked across The Commonplace.'
-                : 'Below is your recent comment activity and replies across reviews.'}
+      {deactivationDialogOpen && (
+        <div className="modal-backdrop" onClick={() => !deactivationLoading && setDeactivationDialogOpen(false)}>
+          <form
+            className="settings-modal settings-deactivation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="deactivation-title"
+            onSubmit={handleDeactivateAccount}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="settings-deactivation-icon"><Clock aria-hidden="true" /></div>
+            <h2 id="deactivation-title">Take a quiet break</h2>
+            <p>
+              Your profile will disappear from search and your existing activity will use a neutral placeholder while your account is deactivated.
             </p>
-            <div style={{ padding: '16px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', textAlign: 'center', color: 'var(--secondary)', fontSize: '14px' }}>
-              {activeActivityModal === 'likes' ? 'No liked entries saved yet.' : 'No recent comments posted.'}
+
+            <label htmlFor="deactivation-reason">Why are you deactivating?</label>
+            <select
+              id="deactivation-reason"
+              className="dark-setting-input"
+              value={deactivationReason}
+              onChange={(event) => {
+                setDeactivationReason(event.target.value)
+                setDeactivationError('')
+              }}
+              required
+            >
+              <option value="">Select a reason</option>
+              <option value="taking_a_break">I just need a break</option>
+              <option value="privacy_or_safety">I have a privacy or safety concern</option>
+              <option value="too_distracting">The app feels too distracting</option>
+              <option value="technical_issues">I am having technical issues</option>
+              <option value="not_finding_value">I am not finding enough value</option>
+              <option value="other">Another reason</option>
+            </select>
+
+            <label htmlFor="deactivation-return">When would you like to return?</label>
+            <select
+              id="deactivation-return"
+              className="dark-setting-input"
+              value={returnPlan}
+              onChange={(event) => setReturnPlan(event.target.value)}
+            >
+              <option value="tomorrow">Tomorrow</option>
+              <option value="seven_days">In 7 days</option>
+              <option value="thirty_days">In 30 days</option>
+              <option value="in_my_own_time">In my own time</option>
+            </select>
+            <span className="settings-deactivation-hint">
+              {returnPlan === 'in_my_own_time'
+                ? 'Automatic reactivation is off. Your account returns only when you sign in again.'
+                : 'Your profile will automatically become visible again on the selected date. Signing in sooner also reactivates it.'}
+            </span>
+
+            <div className="settings-deactivation-survey">
+              <label className="settings-safety-check">
+                <input
+                  type="checkbox"
+                  checked={safetyConcern}
+                  onChange={(event) => setSafetyConcern(event.target.checked)}
+                />
+                <span>Something on The Commonplace made me feel unsafe or unwelcome.</span>
+              </label>
+              <label htmlFor="deactivation-feedback">Anything you would like us to understand? <span>(optional)</span></label>
+              <textarea
+                id="deactivation-feedback"
+                className="dark-setting-textarea"
+                rows={4}
+                maxLength={1000}
+                value={deactivationFeedback}
+                onChange={(event) => setDeactivationFeedback(event.target.value)}
+                placeholder="Share feedback, a safety concern, or what could make the space feel better. Please avoid including sensitive personal information."
+              />
+              <span className="settings-deactivation-character-count">{deactivationFeedback.length}/1000</span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
-              <button type="button" className="ghost-btn" onClick={() => setActiveActivityModal(null)}>
-                Close
+
+            {deactivationError && <p className="settings-delete-account-error" role="alert">{deactivationError}</p>}
+            <div className="settings-delete-account-actions">
+              <button
+                type="button"
+                className="save-bar-cancel-btn"
+                onClick={() => setDeactivationDialogOpen(false)}
+                disabled={deactivationLoading}
+              >
+                Keep my account active
+              </button>
+              <button
+                type="submit"
+                className="settings-deactivation-button"
+                disabled={!deactivationReason || deactivationLoading}
+              >
+                {deactivationLoading ? 'Deactivating...' : 'Deactivate my account'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+
+      {deleteDialogOpen && (
+        <div className="modal-backdrop" onClick={() => !deleteLoading && setDeleteDialogOpen(false)}>
+          <div
+            className="settings-modal settings-delete-account-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-account-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="settings-delete-account-icon"><Trash2 aria-hidden="true" /></div>
+            <h2 id="delete-account-title">Delete your account?</h2>
+            <p>
+              This is permanent and cannot be undone. Type <strong>DELETE</strong> to confirm.
+            </p>
+            <p className="settings-delete-alternative">
+              Sorry to see you go. Would you consider{' '}
+              <button type="button" onClick={openDeactivationFlow}>deactivating your account instead</button>?
+            </p>
+            <label htmlFor="delete-account-confirmation">Confirmation</label>
+            <input
+              id="delete-account-confirmation"
+              className="dark-setting-input"
+              value={deleteConfirmation}
+              onChange={(event) => {
+                setDeleteConfirmation(event.target.value)
+                setDeleteError('')
+              }}
+              autoComplete="off"
+              placeholder="Type DELETE"
+              autoFocus
+            />
+            {deleteError && <p className="settings-delete-account-error" role="alert">{deleteError}</p>}
+            <div className="settings-delete-account-actions">
+              <button
+                type="button"
+                className="save-bar-cancel-btn"
+                onClick={() => setDeleteDialogOpen(false)}
+                disabled={deleteLoading}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="settings-danger-button"
+                onClick={handleDeleteAccount}
+                disabled={deleteConfirmation !== 'DELETE' || deleteLoading}
+              >
+                {deleteLoading ? 'Deleting account...' : 'Permanently delete account'}
               </button>
             </div>
           </div>

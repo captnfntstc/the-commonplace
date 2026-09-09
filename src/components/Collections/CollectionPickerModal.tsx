@@ -95,7 +95,7 @@ export function CollectionPickerModal({ handle, userId = null, item, onClose }: 
         </header>
 
         <div className="collection-picker-item">
-          <span>{item.coverUrl ? <img src={item.coverUrl} alt="" /> : <FolderPlus aria-hidden="true" />}</span>
+          <span>{item.coverUrl ? <img src={item.coverUrl} alt="" loading="lazy" decoding="async" /> : <FolderPlus aria-hidden="true" />}</span>
           <div><strong>{item.title}</strong><small>{item.creator}</small></div>
         </div>
 

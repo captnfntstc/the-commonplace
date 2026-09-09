@@ -15,6 +15,44 @@ const mediaResults: HeaderSearchEntity[] = Array.from({ length: 9 }, (_, index) 
 }))
 
 describe('header search result limit', () => {
+  it('shows media filters only after the user enters a search query', () => {
+    const props = {
+      open: true,
+      mode: 'media' as const,
+      mediaResults: [],
+      mediaLoading: false,
+      resultLimit: 6,
+      onOpenChange: vi.fn(),
+      onQueryChange: vi.fn(),
+      onModeChange: vi.fn(),
+      onLoadMore: vi.fn(),
+      onOpenEntity: vi.fn(),
+      onOpenUser: vi.fn(),
+    }
+    const { rerender } = render(<HeaderSearch {...props} query="" />)
+
+    expect(screen.queryByRole('group', { name: 'Media filters' })).not.toBeInTheDocument()
+
+    rerender(<HeaderSearch {...props} query="1" />)
+
+    expect(screen.getByRole('group', { name: 'Media filters' })).toBeInTheDocument()
+  })
+
+  it('reports media filter changes so the request layer can skip unrelated providers', () => {
+    const onMediaFilterChange = vi.fn()
+    render(
+      <HeaderSearch
+        open query="Taylor" mode="media" mediaResults={[]} mediaLoading resultLimit={6}
+        onOpenChange={vi.fn()} onQueryChange={vi.fn()} onModeChange={vi.fn()}
+        onMediaFilterChange={onMediaFilterChange}
+        onLoadMore={vi.fn()} onOpenEntity={vi.fn()} onOpenUser={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filter by People' }))
+    expect(onMediaFilterChange).toHaveBeenCalledWith('people')
+  })
+
   it('expands on the first click and activates search on the second click', () => {
     const onOpenChange = vi.fn()
     const { container } = render(
@@ -145,6 +183,36 @@ describe('recent search functionality', () => {
     expect(screen.getByText('Recent Searches')).toBeInTheDocument()
     expect(screen.getByText('Dune')).toBeInTheDocument()
     expect(screen.queryByText('@minareads')).not.toBeInTheDocument()
+  })
+
+  it('keeps recent searches isolated to the signed-in account', () => {
+    localStorage.setItem('the_commonplace_recent_media_searches_v3', JSON.stringify([
+      { id: 'book-old', name: 'Jimmy recent', type: 'book' },
+    ]))
+    localStorage.setItem('the_commonplace_recent_media_searches_v3:new-user-uid', JSON.stringify([
+      { id: 'book-new', name: 'New account recent', type: 'book' },
+    ]))
+
+    render(
+      <HeaderSearch
+        open
+        query=""
+        mode="media"
+        mediaResults={[]}
+        mediaLoading={false}
+        resultLimit={6}
+        storageScope="new-user-uid"
+        onOpenChange={vi.fn()}
+        onQueryChange={vi.fn()}
+        onModeChange={vi.fn()}
+        onLoadMore={vi.fn()}
+        onOpenEntity={vi.fn()}
+        onOpenUser={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('New account recent')).toBeInTheDocument()
+    expect(screen.queryByText('Jimmy recent')).not.toBeInTheDocument()
   })
 
   it('renders only user recent searches in the Users tab', () => {

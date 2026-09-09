@@ -1,6 +1,6 @@
 import React from 'react'
 import { Edit3, Trash2 } from 'lucide-react'
-import { getDropCapParts } from './HybridScrollVariant'
+import { getDropCapParts } from '../dropCap'
 import { FormattedText, type Alignment } from '../FormattedText'
 
 interface VariantProps {

@@ -35,6 +35,20 @@ export interface CommunityQuoteRanking {
   contributionCount: number
 }
 
+export interface LinesThatStuckEntry {
+  id: string
+  favoritePassage?: string
+  authorHandle?: string
+  authorName?: string
+  createdAt?: string
+}
+
+export interface LineThatStuck {
+  id: string
+  text: string
+  entryCount: number
+}
+
 interface ExactQuoteGroup {
   normalizedText: string
   contributions: QuoteContribution[]
@@ -346,4 +360,22 @@ export function buildCommunityQuoteRanking(
     possibleMatches: findPossibleMatches(allGroups),
     contributionCount: allGroups.reduce((total, group) => total + group.submissionCount, 0),
   }
+}
+
+export function buildLinesThatStuck(entries: LinesThatStuckEntry[]): LineThatStuck[] {
+  const contributions = entries
+    .filter((entry) => Boolean(quoteToPlainText(entry.favoritePassage || '')))
+    .map((entry) => ({
+      id: entry.id,
+      text: entry.favoritePassage || '',
+      contributorName: entry.authorName,
+      contributorHandle: entry.authorHandle,
+      createdAt: entry.createdAt,
+    }))
+
+  return buildCommunityQuoteRanking(contributions, 1).allGroups.map((line) => ({
+    id: line.id,
+    text: quoteToPlainText(line.text).replace(/^["“”]+|["“”]+$/gu, '').trim(),
+    entryCount: line.submissionCount,
+  }))
 }

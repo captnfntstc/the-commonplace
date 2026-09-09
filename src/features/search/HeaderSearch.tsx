@@ -1,4 +1,4 @@
-import { PrimarySearch } from '../../components/Search/PrimarySearch'
+import { PrimarySearch, type SearchCategory } from '../../components/Search/PrimarySearch'
 import { toSearchMediaResult, type HeaderSearchEntity } from './entitySearch'
 
 type SearchMode = 'media' | 'users'
@@ -13,9 +13,11 @@ interface HeaderSearchProps {
   onOpenChange: (open: boolean) => void
   onQueryChange: (query: string) => void
   onModeChange: (mode: SearchMode) => void
+  onMediaFilterChange?: (filter: SearchCategory | 'all') => void
   onLoadMore: () => void
   onOpenEntity: (entity: HeaderSearchEntity) => void
   onOpenUser: (handle: string) => void
+  storageScope?: string
 }
 
 export function HeaderSearch({
@@ -28,9 +30,11 @@ export function HeaderSearch({
   onOpenChange,
   onQueryChange,
   onModeChange,
+  onMediaFilterChange,
   onLoadMore,
   onOpenEntity,
   onOpenUser,
+  storageScope,
 }: HeaderSearchProps) {
   return (
     <PrimarySearch
@@ -40,6 +44,7 @@ export function HeaderSearch({
       onOpenChange={onOpenChange}
       mode={mode}
       onModeChange={onModeChange}
+      onMediaFilterChange={onMediaFilterChange}
       mediaResults={mediaResults.map(toSearchMediaResult)}
       mediaLoading={mediaLoading}
       resultLimit={resultLimit}
@@ -58,6 +63,7 @@ export function HeaderSearch({
         onOpenEntity(entity)
       }}
       onOpenUser={onOpenUser}
+      storageScope={storageScope}
     />
   )
 }

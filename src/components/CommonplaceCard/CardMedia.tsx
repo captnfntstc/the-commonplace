@@ -69,7 +69,7 @@ export const CardMedia: React.FC<CardMediaProps> = ({
         tabIndex={-1}
       >
         {coverUrl ? (
-          <img src={coverUrl} alt="" referrerPolicy="no-referrer" />
+          <img src={coverUrl} alt="" referrerPolicy="no-referrer" loading="lazy" decoding="async" />
         ) : (
           <Icon aria-hidden="true" className="artwork-icon" />
         )}

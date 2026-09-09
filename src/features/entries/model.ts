@@ -11,6 +11,7 @@ export type CoverTone = 'gold' | 'rose' | 'sage' | 'blue' | 'violet' | 'ember'
 
 export type Entry = {
   id: string
+  ownerId?: string
   type: EntryType
   title: string
   creator: string
@@ -34,11 +35,18 @@ export type Entry = {
   authorHandle?: string
   authorName?: string
   authorAvatarUrl?: string
+  visibility?: 'public' | 'mutual'
 }
 
 export type EntryDraft = Omit<Entry, 'id' | 'createdAt' | 'updatedAt'>
 
 export const ENTRY_STORAGE_KEY = 'the-commonplace.entries'
+const PENDING_ENTRY_SYNC_STORAGE_PREFIX = 'the-commonplace.pending-entry-sync.'
+
+export type PendingEntrySync = {
+  token: string
+  disabledCommentEntryIds: string[]
+}
 
 export const entryTypes: Array<{
   id: EntryType
@@ -83,8 +91,16 @@ export const emptyDraft: EntryDraft = {
   coverTone: 'gold',
 }
 
-export function loadEntries(): Entry[] {
-  const stored = localStorage.getItem(ENTRY_STORAGE_KEY)
+export function entryStorageKey(userId?: string | null) {
+  return userId ? `${ENTRY_STORAGE_KEY}.${userId}` : ENTRY_STORAGE_KEY
+}
+
+export function hasAccountEntryStorage(userId: string) {
+  return localStorage.getItem(entryStorageKey(userId)) !== null
+}
+
+export function loadEntries(userId?: string | null): Entry[] {
+  const stored = localStorage.getItem(entryStorageKey(userId))
   if (!stored) return []
 
   try {
@@ -108,8 +124,59 @@ export function loadEntries(): Entry[] {
   }
 }
 
-export function saveEntriesToStorage(entries: Entry[]) {
-  localStorage.setItem(ENTRY_STORAGE_KEY, JSON.stringify(entries))
+export function saveEntriesToStorage(entries: Entry[], userId?: string | null) {
+  localStorage.setItem(entryStorageKey(userId), JSON.stringify(entries))
+}
+
+function pendingEntrySyncStorageKey(userId: string) {
+  return `${PENDING_ENTRY_SYNC_STORAGE_PREFIX}${userId}`
+}
+
+export function markEntriesPendingSync(userId: string, disabledCommentEntryIds: string[]) {
+  const pending: PendingEntrySync = {
+    token: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    disabledCommentEntryIds,
+  }
+  localStorage.setItem(pendingEntrySyncStorageKey(userId), JSON.stringify(pending))
+  return pending
+}
+
+export function loadPendingEntrySync(userId: string): PendingEntrySync | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(pendingEntrySyncStorageKey(userId)) || 'null')
+    if (!parsed || typeof parsed.token !== 'string') return null
+    return {
+      token: parsed.token,
+      disabledCommentEntryIds: Array.isArray(parsed.disabledCommentEntryIds)
+        ? parsed.disabledCommentEntryIds.filter((value: unknown): value is string => typeof value === 'string')
+        : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+export function clearPendingEntrySync(userId: string, token: string) {
+  if (loadPendingEntrySync(userId)?.token !== token) return
+  localStorage.removeItem(pendingEntrySyncStorageKey(userId))
+}
+
+export function reconcileEntrySnapshots(cloudEntries: Entry[], localEntries: Entry[]) {
+  const reconciled = new Map(cloudEntries.map((entry) => [entry.id, entry]))
+  localEntries.forEach((localEntry) => {
+    const cloudEntry = reconciled.get(localEntry.id)
+    if (!cloudEntry || localEntry.updatedAt >= cloudEntry.updatedAt) {
+      reconciled.set(localEntry.id, localEntry)
+    }
+  })
+  return Array.from(reconciled.values())
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+}
+
+export function entrySnapshotsMatch(left: Entry[], right: Entry[]) {
+  if (left.length !== right.length) return false
+  const rightVersions = new Map(right.map((entry) => [entry.id, entry.updatedAt]))
+  return left.every((entry) => rightVersions.get(entry.id) === entry.updatedAt)
 }
 
 export function makeEntryId() {

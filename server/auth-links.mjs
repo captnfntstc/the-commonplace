@@ -1,15 +1,26 @@
-import { randomBytes } from 'node:crypto'
-import { cert, getApps, initializeApp } from 'firebase-admin/app'
-import { getAuth } from 'firebase-admin/auth'
-import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore'
+import { randomBytes, randomInt } from 'node:crypto'
+import { FieldValue, Timestamp } from 'firebase-admin/firestore'
 import nodemailer from 'nodemailer'
+import { bearerToken, getAdminServices, readJsonBody } from './firebase-admin.mjs'
 
 const LINK_LIFETIME_MS = 24 * 60 * 60 * 1000
 const PASSWORD_RESET_LIFETIME_MS = 60 * 60 * 1000
 const RESEND_COOLDOWN_MS = 60 * 1000
-const MAX_BODY_BYTES = 16_384
+const DEACTIVATION_REASONS = new Set([
+  'taking_a_break',
+  'privacy_or_safety',
+  'too_distracting',
+  'technical_issues',
+  'not_finding_value',
+  'other',
+])
+const REACTIVATION_DELAYS_MS = {
+  tomorrow: 24 * 60 * 60 * 1000,
+  seven_days: 7 * 24 * 60 * 60 * 1000,
+  thirty_days: 30 * 24 * 60 * 60 * 1000,
+  in_my_own_time: null,
+}
 
-let adminApp
 let mailTransport
 
 function requireValue(value, name) {
@@ -19,16 +30,6 @@ function requireValue(value, name) {
     throw error
   }
   return value
-}
-
-function getAdminServices(env) {
-  if (!adminApp) {
-    const projectId = requireValue(env.FIREBASE_ADMIN_PROJECT_ID || env.VITE_FIREBASE_PROJECT_ID, 'FIREBASE_ADMIN_PROJECT_ID')
-    const clientEmail = requireValue(env.FIREBASE_ADMIN_CLIENT_EMAIL, 'FIREBASE_ADMIN_CLIENT_EMAIL')
-    const privateKey = requireValue(env.FIREBASE_ADMIN_PRIVATE_KEY, 'FIREBASE_ADMIN_PRIVATE_KEY').replace(/\\n/g, '\n')
-    adminApp = getApps()[0] || initializeApp({ credential: cert({ projectId, clientEmail, privateKey }), projectId })
-  }
-  return { adminAuth: getAuth(adminApp), adminDb: getFirestore(adminApp) }
 }
 
 function getMailTransport(env) {
@@ -45,30 +46,6 @@ function getMailTransport(env) {
     })
   }
   return mailTransport
-}
-
-async function readJsonBody(request) {
-  let body = ''
-  for await (const chunk of request) {
-    body += chunk
-    if (body.length > MAX_BODY_BYTES) {
-      const error = new Error('Request body is too large.')
-      error.statusCode = 413
-      throw error
-    }
-  }
-  try {
-    return body ? JSON.parse(body) : {}
-  } catch {
-    const error = new Error('Invalid JSON request.')
-    error.statusCode = 400
-    throw error
-  }
-}
-
-function bearerToken(request) {
-  const header = String(request.headers.authorization || '')
-  return header.startsWith('Bearer ') ? header.slice(7).trim() : ''
 }
 
 function cleanAppBaseUrl(env) {
@@ -290,6 +267,23 @@ function validActionToken(token) {
   return typeof token === 'string' && /^[A-Za-z0-9_-]{20,64}$/.test(token)
 }
 
+function normalizeHandle(value) {
+  return String(value || '').trim().replace(/^@/, '').toLowerCase()
+}
+
+function isValidHandle(handle) {
+  return /^[a-z0-9_]{3,20}$/.test(handle)
+}
+
+function randomizedHandleCandidates(handle, count = 12) {
+  const base = normalizeHandle(handle).replace(/[^a-z0-9_]/g, '').slice(0, 14) || 'reader'
+  const candidates = new Set()
+  while (candidates.size < count) {
+    candidates.add(`${base}_${randomInt(100, 10000)}`.slice(0, 20))
+  }
+  return [...candidates]
+}
+
 async function sendVerificationLink(request, env) {
   const idToken = bearerToken(request)
   if (!idToken) {
@@ -370,8 +364,8 @@ async function redeemVerificationLink(request, env) {
 
 async function findEmailByHandle(request, env) {
   const handle = new URL(request.url || '/', 'http://localhost').searchParams.get('handle') || ''
-  const normalized = handle.replace(/^@/, '').trim().toLowerCase()
-  if (!/^[a-z0-9_]{3,20}$/.test(normalized)) {
+  const normalized = normalizeHandle(handle)
+  if (!isValidHandle(normalized)) {
     const error = new Error('Invalid username.')
     error.statusCode = 400
     throw error
@@ -385,6 +379,166 @@ async function findEmailByHandle(request, env) {
     throw error
   }
   return { email: user.email }
+}
+
+async function checkHandleAvailability(request, env) {
+  const handle = new URL(request.url || '/', 'http://localhost').searchParams.get('handle') || ''
+  const normalized = normalizeHandle(handle)
+  if (!isValidHandle(normalized)) {
+    const error = new Error('Usernames must be 3–20 characters using only letters, numbers, or underscores.')
+    error.statusCode = 400
+    throw error
+  }
+
+  const { adminDb } = getAdminServices(env)
+  const handleRef = adminDb.collection('handles').doc(normalized)
+  const snapshot = await handleRef.get()
+  if (!snapshot.exists) return { handle: normalized, available: true, suggestions: [] }
+
+  const candidates = randomizedHandleCandidates(normalized)
+  const candidateSnapshots = await adminDb.getAll(
+    ...candidates.map((candidate) => adminDb.collection('handles').doc(candidate)),
+  )
+  const suggestions = candidateSnapshots
+    .filter((candidateSnapshot) => !candidateSnapshot.exists)
+    .map((candidateSnapshot) => candidateSnapshot.id)
+    .slice(0, 3)
+
+  return { handle: normalized, available: false, suggestions }
+}
+
+async function deleteAccountData(adminDb, uid) {
+  const querySnapshots = await Promise.all([
+    adminDb.collection('handles').where('uid', '==', uid).get(),
+    adminDb.collection('posts').where('ownerId', '==', uid).get(),
+    adminDb.collection('follows').where('followerId', '==', uid).get(),
+    adminDb.collection('follows').where('followingId', '==', uid).get(),
+    adminDb.collection('follow-requests').where('requesterId', '==', uid).get(),
+    adminDb.collection('follow-requests').where('targetId', '==', uid).get(),
+    adminDb.collection('authActionLinks').where('uid', '==', uid).get(),
+  ])
+  const refs = new Map()
+  refs.set(`users/${uid}`, adminDb.collection('users').doc(uid))
+  refs.set(`authEmailCooldowns/${uid}`, adminDb.collection('authEmailCooldowns').doc(uid))
+  refs.set(`authPasswordResetCooldowns/${uid}`, adminDb.collection('authPasswordResetCooldowns').doc(uid))
+  querySnapshots.forEach((snapshot) => {
+    snapshot.docs.forEach((document) => refs.set(document.ref.path, document.ref))
+  })
+
+  const allPosts = await adminDb.collection('posts').get()
+  for (const post of allPosts.docs) {
+    const comments = await post.ref.collection('comments').get()
+    for (const comment of comments.docs) {
+      if (String(comment.data()?.authorId || '') === uid) {
+        refs.set(comment.ref.path, comment.ref)
+        continue
+      }
+      const [commentLikes, replies] = await Promise.all([
+        comment.ref.collection('likes').get(),
+        comment.ref.collection('replies').get(),
+      ])
+      commentLikes.docs.forEach((like) => {
+        if (like.id === uid || String(like.data()?.userId || '') === uid) refs.set(like.ref.path, like.ref)
+      })
+      for (const reply of replies.docs) {
+        if (String(reply.data()?.authorId || '') === uid) {
+          refs.set(reply.ref.path, reply.ref)
+          continue
+        }
+        const replyLikes = await reply.ref.collection('likes').get()
+        replyLikes.docs.forEach((like) => {
+          if (like.id === uid || String(like.data()?.userId || '') === uid) refs.set(like.ref.path, like.ref)
+        })
+      }
+    }
+  }
+
+  for (const ref of refs.values()) await adminDb.recursiveDelete(ref)
+  return refs.size
+}
+
+async function deleteAuthenticatedAccount(request, env) {
+  const idToken = bearerToken(request)
+  if (!idToken) {
+    const error = new Error('Authentication required.')
+    error.statusCode = 401
+    throw error
+  }
+  const { adminAuth, adminDb } = getAdminServices(env)
+  const decoded = await adminAuth.verifyIdToken(idToken)
+  const deletedTargets = await deleteAccountData(adminDb, decoded.uid)
+  await adminAuth.deleteUser(decoded.uid)
+  return { deleted: true, deletedTargets }
+}
+
+function validateDeactivationRequest(data, now = Date.now()) {
+  const reason = typeof data?.reason === 'string' ? data.reason.trim() : ''
+  const returnPlan = typeof data?.returnPlan === 'string' ? data.returnPlan.trim() : ''
+  const feedback = typeof data?.feedback === 'string' ? data.feedback.trim() : ''
+  if (!DEACTIVATION_REASONS.has(reason)) {
+    const error = new Error('Choose why you are deactivating your account.')
+    error.statusCode = 400
+    throw error
+  }
+  if (!Object.hasOwn(REACTIVATION_DELAYS_MS, returnPlan)) {
+    const error = new Error('Choose when you would like your account to return.')
+    error.statusCode = 400
+    throw error
+  }
+  if (feedback.length > 1000) {
+    const error = new Error('Feedback must be 1,000 characters or fewer.')
+    error.statusCode = 400
+    throw error
+  }
+  const delay = REACTIVATION_DELAYS_MS[returnPlan]
+  return {
+    reason,
+    returnPlan,
+    feedback,
+    safetyConcern: data?.safetyConcern === true,
+    reactivatesAt: typeof delay === 'number' ? new Date(now + delay) : null,
+  }
+}
+
+async function deactivateAuthenticatedAccount(request, env) {
+  const idToken = bearerToken(request)
+  if (!idToken) {
+    const error = new Error('Authentication required.')
+    error.statusCode = 401
+    throw error
+  }
+  const requestData = validateDeactivationRequest(await readJsonBody(request))
+  const { adminAuth, adminDb } = getAdminServices(env)
+  const decoded = await adminAuth.verifyIdToken(idToken)
+  const userRef = adminDb.collection('users').doc(decoded.uid)
+  const privateSettingsRef = userRef.collection('private').doc('settings')
+  const reactivatesAt = requestData.reactivatesAt
+    ? Timestamp.fromDate(requestData.reactivatesAt)
+    : null
+
+  await Promise.all([
+    userRef.set({
+      accountStatus: 'deactivated',
+      deactivatedAt: FieldValue.serverTimestamp(),
+      reactivatesAt,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true }),
+    privateSettingsRef.set({
+      deactivation: {
+        reason: requestData.reason,
+        returnPlan: requestData.returnPlan,
+        feedback: requestData.feedback,
+        safetyConcern: requestData.safetyConcern,
+        submittedAt: FieldValue.serverTimestamp(),
+      },
+      updatedAt: new Date().toISOString(),
+    }, { merge: true }),
+  ])
+  await adminAuth.revokeRefreshTokens(decoded.uid)
+  return {
+    deactivated: true,
+    reactivatesAt: requestData.reactivatesAt?.toISOString() || null,
+  }
 }
 
 async function sendPasswordResetLink(request, env) {
@@ -486,6 +640,15 @@ async function redeemPasswordResetLink(request, env) {
 
 export async function handleAuthApiRequest(request, env = process.env) {
   const pathname = new URL(request.url || '/', 'http://localhost').pathname
+  if (request.method === 'POST' && pathname === '/api/auth/account/deactivate') {
+    return deactivateAuthenticatedAccount(request, env)
+  }
+  if (request.method === 'DELETE' && pathname === '/api/auth/account') {
+    return deleteAuthenticatedAccount(request, env)
+  }
+  if (request.method === 'GET' && pathname === '/api/auth/handle-availability') {
+    return checkHandleAvailability(request, env)
+  }
   if (request.method === 'GET' && pathname === '/api/auth/user-by-handle') {
     return findEmailByHandle(request, env)
   }
@@ -513,4 +676,8 @@ export const authLinkInternals = {
   renderVerificationEmail,
   renderPasswordResetEmail,
   validActionToken,
+  normalizeHandle,
+  isValidHandle,
+  randomizedHandleCandidates,
+  validateDeactivationRequest,
 }

@@ -22,7 +22,11 @@ import { FormattingToolbar } from '../../../components/FormattingToolbar/Formatt
 import { RichTextEditor } from '../../../components/RichTextEditor/RichTextEditor'
 import { AdaptiveGameArtwork } from '../../../components/GameArtwork/AdaptiveGameArtwork'
 import { resolveArtworkUrl } from '../../../utils/artwork'
-import { localGameMetadataResults, mergeMetadataSearchResults } from '../../search/metadataSearch'
+import {
+  localGameMetadataResults,
+  mergeMetadataSearchResults,
+  rankMetadataSearchResults,
+} from '../../search/metadataSearch'
 import {
   draftFromMetadata,
   emptyDraft,
@@ -36,6 +40,7 @@ import {
 } from '../model'
 
 const WARN_UNRATED_KEY = 'the-commonplace.warn-unrated'
+const EMPTY_COMMUNITY_ENTRIES: Entry[] = []
 
 function getWarnUnratedPreference(): boolean {
   const stored = localStorage.getItem(WARN_UNRATED_KEY)
@@ -93,19 +98,32 @@ function TypeIconBar({
   onChange: (type: EntryType) => void
   disabled?: boolean
 }) {
+  const [hoveredType, setHoveredType] = useState<EntryType | null>(null)
+  const [focusedType, setFocusedType] = useState<EntryType | null>(null)
+  const visibleTooltip = hoveredType ?? focusedType
+
   return (
-    <div className="type-icon-bar">
+    <div className="type-icon-bar" onMouseLeave={() => setHoveredType(null)}>
       {entryTypes.map(({ id, label, Icon }) => (
         <button
           key={id}
           type="button"
           className={`type-icon-btn ${value === id ? 'active' : ''}`}
           onClick={() => !disabled && onChange(id)}
+          onMouseEnter={() => {
+            setHoveredType(id)
+            if (focusedType && focusedType !== id && document.activeElement instanceof HTMLElement) {
+              document.activeElement.blur()
+              setFocusedType(null)
+            }
+          }}
+          onFocus={() => setFocusedType(id)}
+          onBlur={() => setFocusedType((current) => current === id ? null : current)}
           disabled={disabled}
           aria-label={label}
         >
           <Icon aria-hidden="true" style={{ width: 18, height: 18 }} />
-          <span className="type-icon-tooltip">{label}</span>
+          <span className={`type-icon-tooltip ${visibleTooltip === id ? 'is-visible' : ''}`}>{label}</span>
         </button>
       ))}
     </div>
@@ -119,6 +137,7 @@ export function EntryComposer({
   onClose,
   onSave,
   commentsDisabled = false,
+  communityEntries = EMPTY_COMMUNITY_ENTRIES,
 }: {
   entry: Entry | null
   initialDraft?: EntryDraft | null
@@ -126,6 +145,7 @@ export function EntryComposer({
   onClose: () => void
   onSave: (draft: EntryDraft, disableComments?: boolean) => void
   commentsDisabled?: boolean
+  communityEntries?: Entry[]
 }) {
   const [isCommentsDisabled, setIsCommentsDisabled] = useState(commentsDisabled)
   const initialDraft = entry
@@ -276,7 +296,10 @@ export function EntryComposer({
     // Instant return if result is already cached
     const cached = getCachedMetadata(draft.type, normalizedQuery)
     if (cached) {
-      setMetadataResults(mergeMetadataSearchResults(localGameResults, cached))
+      setMetadataResults(rankMetadataSearchResults(
+        mergeMetadataSearchResults(localGameResults, cached),
+        communityEntries,
+      ))
       setSearchStatus('ready')
       setStatusMessage('')
       return
@@ -299,7 +322,10 @@ export function EntryComposer({
       searchMetadata(draft.type, normalizedQuery, abortController.signal)
         .then((results) => {
           if (cancelled) return
-          const mergedResults = mergeMetadataSearchResults(localGameResults, results)
+          const mergedResults = rankMetadataSearchResults(
+            mergeMetadataSearchResults(localGameResults, results),
+            communityEntries,
+          )
           setMetadataResults(mergedResults)
           setSearchStatus('ready')
           setStatusMessage(
@@ -330,7 +356,7 @@ export function EntryComposer({
       abortController.abort()
       window.clearTimeout(timeout)
     }
-  }, [draft.providerId, draft.title, draft.type, metadataQuery])
+  }, [communityEntries, draft.providerId, draft.title, draft.type, metadataQuery])
 
   const changeType = (type: EntryType) => {
     setDraft((cur) => ({
@@ -501,9 +527,11 @@ export function EntryComposer({
                   <input
                     value={metadataQuery}
                     onChange={(event) => updateMetadataQuery(event.target.value)}
-                    placeholder={`Search ${getTypeMeta(draft.type).label.toLowerCase()}`}
+                    placeholder={draft.type === 'film' || draft.type === 'tv'
+                      ? `Search ${draft.type === 'film' ? 'films' : 'shows'} by title or artist`
+                      : `Search ${getTypeMeta(draft.type).label.toLowerCase()}`}
                   />
-                  {metadataQuery.trim().length >= 2 && (
+                  {metadataQuery.trim().length >= 2 && searchStatus !== 'idle' && (
                     <div className="metadata-dropdown">
                       {searchStatus === 'searching' && metadataResults.length === 0 && (
                         <p className="metadata-status searching">

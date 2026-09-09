@@ -14,11 +14,25 @@ service cloud.firestore {
       return signedIn() && request.auth.token.email_verified == true;
     }
 
+    function isAccountDeactivated(userId) {
+      let profile = get(/databases/$(database)/documents/users/$(userId)).data;
+      return profile.accountStatus == 'deactivated'
+        && (!('reactivatesAt' in profile)
+          || profile.reactivatesAt == null
+          || request.time < profile.reactivatesAt);
+    }
+
+    function isMutualFollow(userId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + userId))
+        && exists(/databases/$(database)/documents/follows/$(userId + '_' + request.auth.uid));
+    }
+
     function canReadProfileContent(userId) {
       return isOwner(userId)
-        || get(/databases/$(database)/documents/users/$(userId)).data.isPrivate != true
-        || (signedIn()
-          && exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + userId)));
+        || (!isAccountDeactivated(userId)
+          && (get(/databases/$(database)/documents/users/$(userId)).data.isPrivate != true
+            || isMutualFollow(userId)));
     }
 
     function canReadPost(postId) {
@@ -53,7 +67,13 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if true;
-      allow create, update, delete: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && request.resource.data.createdAt == request.time;
+      allow update: if isOwner(userId)
+        && (request.resource.data.createdAt == resource.data.createdAt
+          || (!('createdAt' in resource.data)
+            && request.resource.data.createdAt == request.time));
+      allow delete: if isOwner(userId);
 
       match /private/{document=**} {
         allow read, write: if isOwner(userId);
@@ -67,6 +87,42 @@ service cloud.firestore {
           && request.resource.data.dataUrl is string
           && request.resource.data.dataUrl.size() <= 700000;
         allow delete: if isOwner(userId);
+      }
+
+      match /notifications/{notificationId} {
+        allow read, update: if isOwner(userId);
+        allow delete: if isOwner(userId)
+          || (signedIn() && resource.data.actorId == request.auth.uid);
+        allow create: if signedIn()
+          && request.resource.data.recipientId == userId
+          && request.resource.data.actorId == request.auth.uid
+          && request.resource.data.actorId != userId
+          && request.resource.data.type in ['like', 'comment', 'reply', 'follow']
+          && request.resource.data.interactionId is string
+          && ((request.resource.data.type in ['like', 'comment', 'reply']
+            && request.resource.data.postId is string
+            && (((request.resource.data.type == 'like' || request.resource.data.type == 'comment')
+            && get(/databases/$(database)/documents/posts/$(request.resource.data.postId)).data.ownerId == userId
+            && ((request.resource.data.type == 'like'
+              && request.resource.data.interactionId == request.auth.uid
+              && exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)/likes/$(request.auth.uid)))
+            || (request.resource.data.type == 'comment'
+              && exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.interactionId))
+              && get(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.interactionId)).data.authorId == request.auth.uid)))
+          || (request.resource.data.type == 'reply'
+            && request.resource.data.parentInteractionId is string
+            && request.resource.data.replyToInteractionId is string
+            && exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.parentInteractionId)/replies/$(request.resource.data.interactionId))
+            && get(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.parentInteractionId)/replies/$(request.resource.data.interactionId)).data.authorId == request.auth.uid
+            && get(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.parentInteractionId)/replies/$(request.resource.data.interactionId)).data.replyToUserId == userId
+            && ((request.resource.data.replyToInteractionId == request.resource.data.parentInteractionId
+                && get(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.parentInteractionId)).data.authorId == userId)
+              || (request.resource.data.replyToInteractionId != request.resource.data.parentInteractionId
+                && exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.parentInteractionId)/replies/$(request.resource.data.replyToInteractionId))
+                && get(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.parentInteractionId)/replies/$(request.resource.data.replyToInteractionId)).data.authorId == userId)))))
+          || (request.resource.data.type == 'follow'
+            && request.resource.data.interactionId == request.auth.uid
+            && exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + userId))));
       }
 
       match /entries/{entryId} {
@@ -108,6 +164,7 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.followerId == request.auth.uid
         && followId == request.auth.uid + '_' + request.resource.data.followingId
+        && !isAccountDeactivated(request.resource.data.followingId)
         && (get(/databases/$(database)/documents/users/$(request.resource.data.followingId)).data.isPrivate != true
           || get(/databases/$(database)/documents/follow-requests/$(followId)).data.status == 'accepted');
       allow delete: if signedIn() && resource.data.followerId == request.auth.uid;
@@ -132,9 +189,40 @@ service cloud.firestore {
           || resource.data.targetId == request.auth.uid);
     }
 
+    match /reports/{reportId} {
+      allow create: if signedIn()
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.targetType in ['profile', 'post', 'comment', 'reply']
+        && request.resource.data.targetId is string
+        && request.resource.data.targetId.size() > 0
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0
+        && request.resource.data.details is string
+        && request.resource.data.details.size() <= 1000
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && ((request.resource.data.targetType == 'profile'
+            && request.resource.data.targetId != request.auth.uid)
+          || (request.resource.data.targetType == 'post'
+            && exists(/databases/$(database)/documents/posts/$(request.resource.data.targetId))
+            && get(/databases/$(database)/documents/posts/$(request.resource.data.targetId)).data.ownerId != request.auth.uid)
+          || (request.resource.data.targetType == 'comment'
+            && request.resource.data.postId is string
+            && canReadPost(request.resource.data.postId)
+            && exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.targetId))
+            && get(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.targetId)).data.authorId != request.auth.uid)
+          || (request.resource.data.targetType == 'reply'
+            && request.resource.data.postId is string
+            && request.resource.data.parentCommentId is string
+            && canReadPost(request.resource.data.postId)
+            && exists(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.parentCommentId)/replies/$(request.resource.data.targetId))
+            && get(/databases/$(database)/documents/posts/$(request.resource.data.postId)/comments/$(request.resource.data.parentCommentId)/replies/$(request.resource.data.targetId)).data.authorId != request.auth.uid));
+      allow read, update, delete: if false;
+    }
+
     match /posts/{postId} {
       // The index contains only ownership metadata; content remains under users/{uid}/entries.
-      allow read: if signedIn();
+      allow read: if signedIn() && canReadProfileContent(resource.data.ownerId);
       allow create: if hasVerifiedEmail()
         && request.resource.data.ownerId == request.auth.uid;
       allow update: if hasVerifiedEmail()
@@ -142,14 +230,21 @@ service cloud.firestore {
         && request.resource.data.ownerId == request.auth.uid;
       allow delete: if signedIn() && resource.data.ownerId == request.auth.uid;
 
+      match /likes/{userId} {
+        allow read: if signedIn() && canReadPost(postId);
+        allow create, update: if isOwner(userId)
+          && canReadPost(postId)
+          && request.resource.data.userId == userId;
+        allow delete: if isOwner(userId) || isPostOwner(postId);
+      }
+
       match /comments/{commentId} {
         allow read: if signedIn() && canReadPost(postId);
         allow create: if signedIn()
           && request.resource.data.authorId == request.auth.uid
           && canCommentOnPost(postId);
         allow update: if signedIn() && resource.data.authorId == request.auth.uid;
-        allow delete: if signedIn()
-          && (resource.data.authorId == request.auth.uid || isPostOwner(postId));
+        allow delete: if signedIn() && resource.data.authorId == request.auth.uid;
 
         match /likes/{userId} {
           allow read: if signedIn() && canReadPost(postId);
@@ -167,10 +262,7 @@ service cloud.firestore {
             && canCommentOnPost(postId)
             && request.resource.data.authorId == request.auth.uid;
           allow update: if signedIn() && resource.data.authorId == request.auth.uid;
-          allow delete: if signedIn()
-            && (resource.data.authorId == request.auth.uid
-              || isPostOwner(postId)
-              || get(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)).data.authorId == request.auth.uid);
+          allow delete: if signedIn() && resource.data.authorId == request.auth.uid;
 
           match /likes/{userId} {
             allow read: if signedIn() && canReadPost(postId);

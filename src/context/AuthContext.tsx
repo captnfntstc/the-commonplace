@@ -1,32 +1,53 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import {
   type User,
+  type UserCredential,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
   signInWithPopup,
+  getAdditionalUserInfo,
   signOut,
   reload,
   browserLocalPersistence,
   browserSessionPersistence,
   setPersistence,
   verifyBeforeUpdateEmail,
+  deleteUser,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
+  updatePassword,
+  linkWithPopup,
+  unlink,
 } from 'firebase/auth'
 import { auth, googleProvider, isFirebaseConfigured } from '../services/firebase'
+import { loadUserProfile, reactivateUserAccount, saveUserProfile } from '../services/cloudData'
+import { PENDING_SIGNUP_PROFILE_KEY, profileFromAuthUser } from '../features/profiles/accountProfile'
 
 interface AuthContextType {
   currentUser: User | null
   loading: boolean
   login: (identifier: string, pass: string, keepSignedIn?: boolean) => Promise<void>
-  signup: (email: string, pass: string, displayName?: string) => Promise<void>
-  loginWithGoogle: (keepSignedIn?: boolean) => Promise<void>
+  signup: (email: string, pass: string, displayName?: string, handle?: string, birthday?: string) => Promise<void>
+  loginWithGoogle: (keepSignedIn?: boolean, birthday?: string) => Promise<void>
   logout: () => Promise<void>
+  deactivateAccount: (answers: AccountDeactivationAnswers) => Promise<void>
+  deleteAccount: () => Promise<void>
   changeEmail: (newEmail: string) => Promise<void>
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>
+  setGoogleAccountLinked: (linked: boolean) => Promise<void>
   resendVerificationEmail: () => Promise<void>
   refreshEmailVerification: () => Promise<boolean>
   verificationEmailCooldownSeconds: number
   verificationEmailSent: boolean
+}
+
+export type AccountDeactivationAnswers = {
+  reason: string
+  returnPlan: string
+  safetyConcern: boolean
+  feedback: string
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -96,7 +117,7 @@ function clearCommonplaceStorage() {
   const keysToRemove: string[] = []
   for (let index = 0; index < localStorage.length; index += 1) {
     const key = localStorage.key(index)
-    if (key?.startsWith('the-commonplace.')) keysToRemove.push(key)
+    if (key?.startsWith('the-commonplace.') || key?.startsWith('the_commonplace_')) keysToRemove.push(key)
   }
   keysToRemove.forEach((key) => localStorage.removeItem(key))
 }
@@ -150,32 +171,68 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     }
   }
 
-  const login = async (identifier: string, pass: string, keepSignedIn = false) => {
+  const login = async (identifier: string, pass: string, keepSignedIn = true) => {
     requireFirebase()
     await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
     const email = await resolveLoginEmail(identifier)
-    await signInWithEmailAndPassword(auth, email, pass)
+    const credential = await signInWithEmailAndPassword(auth, email, pass)
+    await reactivateUserAccount(credential.user.uid)
   }
 
-  const signup = async (email: string, pass: string, displayName?: string) => {
+  const signup = async (email: string, pass: string, displayName?: string, handle?: string, birthday?: string) => {
     requireFirebase()
     await setPersistence(auth, browserLocalPersistence)
-    const res = await createUserWithEmailAndPassword(auth, email, pass)
-    if (displayName && res.user) {
-      await updateProfile(res.user, { displayName })
-      setAuthRefreshVersion((version) => version + 1)
+    const normalizedEmail = email.trim().toLowerCase()
+    localStorage.setItem(PENDING_SIGNUP_PROFILE_KEY, JSON.stringify({
+      email: normalizedEmail,
+      displayName: displayName?.trim() || '',
+      handle: handle?.trim().toLowerCase() || '',
+      birthday: birthday?.trim() || '',
+    }))
+    let res: UserCredential
+    try {
+      res = await createUserWithEmailAndPassword(auth, normalizedEmail, pass)
+    } catch (error) {
+      localStorage.removeItem(PENDING_SIGNUP_PROFILE_KEY)
+      throw error
     }
-    const retryAfter = await sendAccountVerification(res.user)
-    const cooldownUntil = Date.now() + retryAfter * 1000
-    localStorage.setItem(verificationCooldownKey(res.user), String(cooldownUntil))
-    setVerificationCooldownUntil(cooldownUntil)
-    setVerificationClock(Date.now())
+    try {
+      if (displayName && res.user) {
+        await updateProfile(res.user, { displayName })
+        setAuthRefreshVersion((version) => version + 1)
+      }
+      if (handle) {
+        await saveUserProfile(
+          res.user.uid,
+          profileFromAuthUser(res.user, displayName, handle, birthday),
+        )
+      }
+    } catch (error) {
+      localStorage.removeItem(PENDING_SIGNUP_PROFILE_KEY)
+      await deleteUser(res.user).catch(() => undefined)
+      throw error
+    }
   }
 
-  const loginWithGoogle = async (keepSignedIn = false) => {
+  const loginWithGoogle = async (keepSignedIn = true, birthday?: string) => {
     requireFirebase()
     await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
-    await signInWithPopup(auth, googleProvider)
+    const credential = await signInWithPopup(auth, googleProvider)
+    const isNewAccount = getAdditionalUserInfo(credential)?.isNewUser === true
+    if (isNewAccount && !birthday) {
+      await deleteUser(credential.user).catch(() => undefined)
+      throw new Error('New Google accounts must be created from the registration page with a valid date of birth.')
+    }
+    if (birthday) {
+      const existingProfile = isNewAccount ? null : await loadUserProfile(credential.user.uid).catch(() => null)
+      await saveUserProfile(
+        credential.user.uid,
+        existingProfile
+          ? { ...existingProfile, birthday: existingProfile.birthday || birthday }
+          : profileFromAuthUser(credential.user, undefined, undefined, birthday),
+      )
+    }
+    await reactivateUserAccount(credential.user.uid)
   }
 
   const logout = async () => {
@@ -192,6 +249,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     setVerificationClock(Date.now())
   }
 
+  const deactivateAccount = async (answers: AccountDeactivationAnswers) => {
+    requireFirebase()
+    if (!currentUser) throw new Error('You need to log in before deactivating your account.')
+    let response: Response
+    try {
+      const idToken = await currentUser.getIdToken()
+      response = await fetch('/api/auth/account/deactivate', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(answers),
+      })
+    } catch (error) {
+      throw new Error('The account deactivation service is unavailable. Please try again shortly.', { cause: error })
+    }
+    const payload = await response.json().catch(() => ({})) as { error?: string }
+    if (!response.ok) throw new Error(payload.error || 'Unable to deactivate your account.')
+    await signOut(auth).catch(() => undefined)
+    setCurrentUser(null)
+    clearCommonplaceStorage()
+    setVerificationCooldownUntil(0)
+    setVerificationClock(Date.now())
+  }
+
+  const deleteAccount = async () => {
+    requireFirebase()
+    if (!currentUser) throw new Error('You need to log in before deleting your account.')
+    let response: Response
+    try {
+      const idToken = await currentUser.getIdToken()
+      response = await fetch('/api/auth/account', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${idToken}` },
+      })
+    } catch (error) {
+      throw new Error('The account deletion service is unavailable. Please try again shortly.', { cause: error })
+    }
+    const payload = await response.json().catch(() => ({})) as { error?: string }
+    if (!response.ok) throw new Error(payload.error || 'Unable to delete your account.')
+    await signOut(auth).catch(() => undefined)
+    setCurrentUser(null)
+    clearCommonplaceStorage()
+    setVerificationCooldownUntil(0)
+    setVerificationClock(Date.now())
+  }
+
   const changeEmail = async (newEmail: string) => {
     requireFirebase()
     if (!currentUser) throw new Error('You need to log in before changing your email.')
@@ -201,6 +306,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
       url: `${window.location.origin}/verify-email`,
       handleCodeInApp: true,
     })
+  }
+
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    requireFirebase()
+    if (!currentUser?.email) throw new Error('You need to log in with an email account before changing your password.')
+    if (!currentPassword) throw new Error('Enter your current password.')
+    if (newPassword.length < 8) throw new Error('Your new password must be at least 8 characters long.')
+    const credential = EmailAuthProvider.credential(currentUser.email, currentPassword)
+    await reauthenticateWithCredential(currentUser, credential)
+    await updatePassword(currentUser, newPassword)
+  }
+
+  const setGoogleAccountLinked = async (linked: boolean) => {
+    requireFirebase()
+    if (!currentUser) throw new Error('You need to log in before changing linked accounts.')
+    const providers = currentUser.providerData || []
+    const hasGoogle = providers.some(({ providerId }) => providerId === 'google.com')
+    if (linked && !hasGoogle) {
+      await linkWithPopup(currentUser, googleProvider)
+    } else if (!linked && hasGoogle) {
+      if (providers.length <= 1) throw new Error('Add another sign-in method before disconnecting Google.')
+      await unlink(currentUser, 'google.com')
+    }
+    setAuthRefreshVersion((version) => version + 1)
   }
 
   const resendVerificationEmail = async () => {
@@ -241,7 +370,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     signup,
     loginWithGoogle,
     logout,
+    deactivateAccount,
+    deleteAccount,
     changeEmail,
+    changePassword,
+    setGoogleAccountLinked,
     resendVerificationEmail,
     refreshEmailVerification,
     verificationEmailCooldownSeconds: Math.max(0, Math.ceil((verificationCooldownUntil - verificationClock) / 1000)),

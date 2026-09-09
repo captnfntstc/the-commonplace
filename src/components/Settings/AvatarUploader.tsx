@@ -98,7 +98,7 @@ export const AvatarCropperDialog: React.FC<AvatarCropperDialogProps> = ({
       context.fillStyle = '#17120d'
       context.fillRect(0, 0, outputSize, outputSize)
       context.drawImage(image, sourceX, sourceY, cropSize, cropSize, 0, 0, outputSize, outputSize)
-      onApply(canvas.toDataURL('image/jpeg', 0.9))
+      onApply(canvas.toDataURL('image/jpeg', 0.82))
     }
     image.src = imageUrl
   }
@@ -279,7 +279,7 @@ export const CoverCropperDialog: React.FC<CoverCropperDialogProps> = ({
         outputWidth,
         outputHeight,
       )
-      onApply(canvas.toDataURL('image/jpeg', 0.9))
+      onApply(canvas.toDataURL('image/jpeg', 0.82))
     }
     image.src = imageUrl
   }

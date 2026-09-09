@@ -1,7 +1,6 @@
 import React from 'react'
 import {
   User,
-  Sliders,
   Bell,
   Shield,
   Lock,
@@ -10,7 +9,6 @@ import {
 export type SettingsNavTab =
   | 'profile'
   | 'social'
-  | 'reading'
   | 'privacy'
   | 'security'
 
@@ -35,7 +33,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'profile', label: 'Profile Information', Icon: User },
       { id: 'social', label: 'Social & Interactions', Icon: Bell },
-      { id: 'reading', label: 'Reading Preferences', Icon: Sliders },
     ],
   },
   {

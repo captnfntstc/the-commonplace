@@ -149,7 +149,7 @@ function RelatedContentCard({
     >
       <div className="game-related-content-cover">
         {item.coverUrl
-          ? <img src={item.coverUrl} alt={`${item.name} cover`} loading="lazy" referrerPolicy="no-referrer" />
+          ? <img src={item.coverUrl} alt={`${item.name} cover`} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
           : <Gamepad2 size={22} aria-hidden="true" />}
       </div>
       <h3>{item.name}</h3>
@@ -167,12 +167,10 @@ export function GameRelatedContentTab({
       items: (metadata.relatedContent || []).filter((item) => item.kind === kind),
     }))
     .filter((group) => group.items.length > 0)
-  const itemCount = groups.reduce((count, group) => count + group.items.length, 0)
-
   return (
     <section className="media-section game-related-content-section">
       <div className="media-section-header">
-        <div className="media-section-title-group"><Package size={17} /><h2>More From This Game ({itemCount})</h2></div>
+        <div className="media-section-title-group"><Package size={17} /><h2>More From This Game</h2></div>
       </div>
       {groups.length > 0 ? (
         <div className="game-related-content-groups">

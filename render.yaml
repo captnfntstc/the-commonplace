@@ -26,6 +26,8 @@ services:
         sync: false
       - key: FIREBASE_ADMIN_PRIVATE_KEY
         sync: false
+      - key: VITE_PERSONALIZED_HOME_FEED
+        value: "true"
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT

@@ -1,12 +1,42 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildCommunityQuoteRanking,
+  buildLinesThatStuck,
   isHighConfidenceTypoMatch,
   normalizeQuoteText,
   quoteToPlainText,
 } from './communityQuotes'
 
 describe('community quote ranking', () => {
+  it('builds Lines That Stuck only from actual favorite passages', () => {
+    expect(buildLinesThatStuck([])).toEqual([])
+    expect(buildLinesThatStuck([{
+      id: 'reflection-only',
+      favoritePassage: '',
+      authorHandle: 'reader',
+    }])).toEqual([])
+
+    const lines = buildLinesThatStuck([
+      {
+        id: 'entry-1',
+        favoritePassage: '<p>“A real line from this song.”</p>',
+        authorHandle: 'reader_one',
+      },
+      {
+        id: 'entry-2',
+        favoritePassage: 'A real line from this song.',
+        authorHandle: 'reader_two',
+      },
+    ])
+
+    expect(lines).toEqual([
+      expect.objectContaining({
+        text: 'A real line from this song.',
+        entryCount: 2,
+      }),
+    ])
+  })
+
   it('normalizes rich text, entities, punctuation, capitalization, and spacing', () => {
     const richText = '<p>  You&rsquo;re <strong>always</strong> here.&nbsp;</p><p>With me!</p>'
 

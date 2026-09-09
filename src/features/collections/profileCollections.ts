@@ -28,6 +28,23 @@ export type ProfileCollection = {
   customCoverUrl?: string
 }
 
+function normalizeProfileHandle(handle: string) {
+  return handle.replace(/^@/, '').trim().toLowerCase()
+}
+
+export function collectionsCreatedByProfile(
+  collections: ProfileCollection[],
+  profileHandle: string,
+) {
+  const ownerHandle = normalizeProfileHandle(profileHandle)
+  return collections.filter((collection) => {
+    const creatorHandle = normalizeProfileHandle(collection.creatorHandle || '')
+    // Older collections did not store creatorHandle; their profile-scoped
+    // storage location remains the ownership source for those records.
+    return !creatorHandle || creatorHandle === ownerHandle
+  })
+}
+
 function normalizeCollectionItemText(value: string) {
   return value
     .normalize('NFKD')

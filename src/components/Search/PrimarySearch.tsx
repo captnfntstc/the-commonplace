@@ -11,7 +11,7 @@ import {
 import { createArtworkPlaceholder } from '../../utils/artwork'
 import { AdaptiveGameArtwork } from '../GameArtwork/AdaptiveGameArtwork'
 import { getEntryTypeIcon } from '../../utils/mediaIcons'
-import { loadPublicUserByHandle } from '../../services/cloudData'
+import { searchPublicUsers } from '../../services/cloudData'
 import { isLegacySeedHandle } from '../../utils/legacySeedCleanup'
 
 type SearchMode = 'media' | 'users'
@@ -38,14 +38,20 @@ function belongsToSearchMode(item: RecentSearchItem, mode: SearchMode) {
   return mode === 'users' ? item.type === 'user' : item.type !== 'user'
 }
 
-function loadRecentSearches(mode: SearchMode): RecentSearchItem[] {
+function recentSearchesKey(mode: SearchMode, storageScope?: string) {
+  return storageScope ? `${RECENT_SEARCHES_KEYS[mode]}:${storageScope}` : RECENT_SEARCHES_KEYS[mode]
+}
+
+function loadRecentSearches(mode: SearchMode, storageScope?: string): RecentSearchItem[] {
   try {
-    const raw = localStorage.getItem(RECENT_SEARCHES_KEYS[mode])
+    const raw = localStorage.getItem(recentSearchesKey(mode, storageScope))
     if (raw !== null) {
       return (JSON.parse(raw) as RecentSearchItem[]).filter(
         (item) => belongsToSearchMode(item, mode) && !isLegacySeedHandle(item.handle),
       )
     }
+
+    if (storageScope) return []
 
     const legacyRaw = localStorage.getItem(LEGACY_RECENT_SEARCHES_KEY)
     const migrated = legacyRaw
@@ -60,12 +66,12 @@ function loadRecentSearches(mode: SearchMode): RecentSearchItem[] {
   }
 }
 
-function saveRecentSearches(mode: SearchMode, items: RecentSearchItem[]) {
+function saveRecentSearches(mode: SearchMode, items: RecentSearchItem[], storageScope?: string) {
   try {
     const scopedItems = items
       .filter((item) => belongsToSearchMode(item, mode))
       .slice(0, MAX_RECENT_SEARCHES)
-    localStorage.setItem(RECENT_SEARCHES_KEYS[mode], JSON.stringify(scopedItems))
+    localStorage.setItem(recentSearchesKey(mode, storageScope), JSON.stringify(scopedItems))
   } catch {
     // ignore
   }
@@ -126,12 +132,14 @@ interface PrimarySearchProps {
   onOpenChange: (open: boolean) => void
   mode: SearchMode
   onModeChange: (mode: SearchMode) => void
+  onMediaFilterChange?: (filter: SearchCategory | 'all') => void
   mediaResults: SearchMediaResult[]
   mediaLoading: boolean
   resultLimit: number
   onLoadMore: () => void
   onOpenEntity: (result: SearchMediaResult) => void
   onOpenUser: (handle: string) => void
+  storageScope?: string
 }
 
 const FILTERS: Array<{
@@ -309,18 +317,20 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
   onOpenChange,
   mode,
   onModeChange,
+  onMediaFilterChange,
   mediaResults,
   mediaLoading,
   resultLimit,
   onLoadMore,
   onOpenEntity,
   onOpenUser,
+  storageScope,
 }) => {
   const [mediaFilter, setMediaFilter] = useState<SearchCategory | 'all'>('all')
   const [activeIndex, setActiveIndex] = useState(-1)
   const [recentSearchesByMode, setRecentSearchesByMode] = useState<Record<SearchMode, RecentSearchItem[]>>(() => ({
-    media: loadRecentSearches('media'),
-    users: loadRecentSearches('users'),
+    media: loadRecentSearches('media', storageScope),
+    users: loadRecentSearches('users', storageScope),
   }))
   const [iconExpanded, setIconExpanded] = useState(false)
   const [userSearchState, setUserSearchState] = useState<{
@@ -338,7 +348,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
 
   const replaceRecentSearches = (items: RecentSearchItem[]) => {
     setRecentSearchesByMode((current) => ({ ...current, [mode]: items }))
-    saveRecentSearches(mode, items)
+    saveRecentSearches(mode, items, storageScope)
   }
 
   const addRecentSearch = (item: SearchMediaResult | SearchUser) => {
@@ -424,26 +434,22 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
     const searchKey = handle.toLowerCase()
     const timer = window.setTimeout(() => {
       setUserSearchState({ key: searchKey, results: [], loading: true })
-      void loadPublicUserByHandle(handle)
-        .then((data) => {
+      void searchPublicUsers(handle)
+        .then((users) => {
           if (cancelled) return
-          if (!data) {
+          if (users.length === 0) {
             setUserSearchState({ key: searchKey, results: [], loading: false })
             return
           }
-          const profile = data.profile
-          const name = profile.showFullName
-            ? `${profile.firstName} ${profile.lastName}`.trim()
-            : profile.firstName
           setUserSearchState({
             key: searchKey,
             loading: false,
-            results: [{
-              handle: profile.handle,
-              name: name || `@${profile.handle}`,
-              avatar: profile.avatarUrl || '',
-              isPrivate: profile.isPrivate,
-            }],
+            results: users.map((user) => ({
+              handle: user.handle,
+              name: user.name,
+              avatar: user.avatarUrl,
+              isPrivate: user.isPrivate,
+            })),
           })
         })
         .catch(() => {
@@ -678,7 +684,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
             </button>
           </div>
 
-          {mode === 'media' && (
+          {mode === 'media' && trimmedQuery.length > 0 && (
             <div className="alt-search-filters" role="group" aria-label="Media filters">
               {FILTERS.map(({ Icon, ...filter }) => (
                 <button
@@ -688,6 +694,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
                   onClick={() => {
                     setActiveIndex(-1)
                     setMediaFilter(filter.id)
+                    onMediaFilterChange?.(filter.id)
                   }}
                   title={filter.label}
                   aria-label={`Filter by ${filter.label}`}

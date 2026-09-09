@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react'
+import React, { useState, useMemo, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft,
@@ -23,6 +23,7 @@ import {
   Sparkles,
   ImagePlus,
   Minus,
+  Flag,
 } from 'lucide-react'
 import { Card } from '../components/CommonplaceCard/Card'
 import { entryTypes, type Entry as CardEntry, type EntryType } from '../features/entries/model'
@@ -31,12 +32,13 @@ import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import {
   CollectionMediaSkeleton,
   CollectionShelfSkeleton,
-  ProfileCatalogSkeleton,
 } from '../components/Collections/ProfileCollectionSkeletons'
+import { CardSkeletonGrid } from '../components/CommonplaceCard/CardSkeleton'
 import type { UserProfileState } from '../types/userProfile'
 import { getEntryTypeIcon } from '../utils/mediaIcons'
 import {
   buildPopularCollectionRecommendations,
+  collectionsCreatedByProfile,
   createProfileCollection,
   duplicateProfileCollectionItem,
   entriesForProfileCollection,
@@ -53,12 +55,30 @@ import {
 } from '../features/collections/profileCollections'
 import { AvatarCropperDialog, CoverCropperDialog } from '../components/Settings/AvatarUploader'
 import { AuthToast } from '../components/auth/AuthToast'
-import { loadOrMigrateUserCollections, saveUserCollections } from '../services/cloudData'
+import { ReportDialog } from '../components/Reports/ReportDialog'
+import {
+  loadOrMigrateUserCollections,
+  saveUserCollections,
+  subscribeProfileFollowLists,
+  submitContentReport,
+  type PublicAccountIdentity,
+  type PostEngagement,
+} from '../services/cloudData'
 
 // ─── Catalog mode ────────────────────────────────────────────────────────────
 type CatalogMode = 'reviewed' | 'shelf' | 'collections' | 'saved-collections'
 type CollectionCatalogMode = Extract<CatalogMode, 'collections' | 'saved-collections'>
 type CollectionComposerMode = 'create' | 'edit' | 'add'
+
+function memberSinceLabel(createdAt?: string) {
+  if (!createdAt) return 'Member'
+  const date = new Date(createdAt)
+  if (Number.isNaN(date.getTime())) return 'Member'
+  return `Member since ${new Intl.DateTimeFormat('en', {
+    month: 'long',
+    year: 'numeric',
+  }).format(date)}`
+}
 
 interface UserProfilePageProps {
   onBack: () => void
@@ -71,6 +91,7 @@ interface UserProfilePageProps {
   publicCollections?: ProfileCollection[]
   publicSavedCollections?: ProfileCollection[]
   likedEntryIds?: string[]
+  postEngagements?: Record<string, PostEngagement>
   disabledCommentEntryIds?: string[]
   onSelectEntry?: (entry: CardEntry) => void
   onOpenMediaProfile?: (entry: CardEntry) => void
@@ -79,7 +100,6 @@ interface UserProfilePageProps {
   onToggleCommentsDisabled?: (id: string) => void
   userProfile: UserProfileState
   onUpdateProfile?: (updated: UserProfileState) => void | Promise<void>
-  onNavigateToSettings: () => void
   onDeleteEntry?: (id: string) => void
   onEditEntry?: (entry: CardEntry) => void
   categoryFilter: string
@@ -95,6 +115,7 @@ interface UserProfilePageProps {
   initialCollectionId?: string | null
   onOpenCollectionPage?: (collectionId: string) => void
   onCloseCollectionPage?: () => void
+  privateContentLocked?: boolean
 }
 
 export const UserProfilePage: React.FC<UserProfilePageProps> = ({
@@ -108,6 +129,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   publicCollections,
   publicSavedCollections = [],
   likedEntryIds = [],
+  postEngagements = {},
   disabledCommentEntryIds = [],
   onSelectEntry,
   onOpenMediaProfile,
@@ -116,7 +138,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onToggleCommentsDisabled,
   userProfile,
   onUpdateProfile,
-  onNavigateToSettings,
   onDeleteEntry,
   onEditEntry,
   categoryFilter,
@@ -132,12 +153,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   initialCollectionId = null,
   onOpenCollectionPage,
   onCloseCollectionPage,
+  privateContentLocked,
 }) => {
   // ── External profile follow & private state ──────────────────────────────
   const isFollowingUser = followedUserHandles.includes(userProfile.handle)
   const isFollowRequested = followRequestedHandles.includes(userProfile.handle)
   const isPrivateProfile = Boolean(userProfile.isPrivate)
-  const isLockedPrivate = !isOwnProfile && isPrivateProfile && !isFollowingUser
+  const isLockedPrivate = privateContentLocked
+    ?? (!isOwnProfile && isPrivateProfile && !isFollowingUser)
   const canViewSavedActivity = isOwnProfile || userProfile.showSavedActivity === true
   const inlineAvatarInputRef = useRef<HTMLInputElement>(null)
   const inlineCoverInputRef = useRef<HTMLInputElement>(null)
@@ -145,6 +168,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [inlineCoverCropImage, setInlineCoverCropImage] = useState('')
   const [inlineMediaError, setInlineMediaError] = useState('')
   const [profileMediaToast, setProfileMediaToast] = useState<string | null>(null)
+  const [profileReportOpen, setProfileReportOpen] = useState(false)
 
   const handleInlineAvatarFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -211,7 +235,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     : userProfile.firstName
   const currentUserHandle = (currentUserProfile?.handle || userProfile.handle).replace(/^@/, '')
   const [profileCollections, setProfileCollections] = useState<ProfileCollection[]>(() =>
-    loadProfileCollections(userProfile.handle),
+    collectionsCreatedByProfile(loadProfileCollections(userProfile.handle), userProfile.handle),
   )
   const [viewerSavedProfileCollections, setViewerSavedProfileCollections] = useState<ProfileCollection[]>(() =>
     loadSavedProfileCollections(currentUserHandle),
@@ -241,6 +265,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [collectionDeleteTarget, setCollectionDeleteTarget] = useState<ProfileCollection | null>(null)
   const [profileContentLoading, setProfileContentLoading] = useState(true)
   const profileLoadingTimerRef = useRef<number | null>(null)
+  const pendingCatalogScrollTopRef = useRef<number | null>(null)
+
+  useLayoutEffect(() => {
+    const scrollTop = pendingCatalogScrollTopRef.current
+    if (scrollTop === null) return
+    pendingCatalogScrollTopRef.current = null
+    window.scrollTo({ top: scrollTop, behavior: 'auto' })
+  })
 
   useEffect(() => {
     if (!cloudUserId || !isOwnProfile) return
@@ -249,8 +281,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     void loadOrMigrateUserCollections(cloudUserId, 'created', localCollections)
       .then((collections) => {
         if (!cancelled) {
-          setProfileCollections(collections)
-          saveProfileCollections(userProfile.handle, collections)
+          const ownedCollections = collectionsCreatedByProfile(collections, userProfile.handle)
+          setProfileCollections(ownedCollections)
+          saveProfileCollections(userProfile.handle, ownedCollections)
         }
       })
       .catch((error) => console.error('Unable to load collections from Firebase.', error))
@@ -303,6 +336,15 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   // ── Follow modal ────────────────────────────────────────────────────────────
   const [activeFollowModal, setActiveFollowModal] = useState<'followers' | 'following' | null>(null)
   const [followSearch, setFollowSearch] = useState('')
+  const [profileFollowLists, setProfileFollowLists] = useState<{
+    followers: PublicAccountIdentity[]
+    following: PublicAccountIdentity[]
+  }>({ followers: [], following: [] })
+
+  useEffect(() => {
+    if (!cloudUserId) return undefined
+    return subscribeProfileFollowLists(userProfile.handle, setProfileFollowLists)
+  }, [cloudUserId, userProfile.handle])
 
   const profileGridRef = useRef<HTMLElement>(null)
   const collectionGridRef = useRef<HTMLElement>(null)
@@ -316,18 +358,25 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const isSavedCollectionsMode = catalogMode === 'saved-collections'
 
   // ── Dynamic Followers & Following lists ─────────────────────────────────────
-  const dynamicFollowersList = useMemo(() => [], [])
+  const dynamicFollowersList = useMemo(() => profileFollowLists.followers.map((identity) => ({
+    id: identity.uid,
+    name: identity.name,
+    handle: identity.handle,
+    avatar: identity.avatarUrl,
+    reviews: 0,
+    isPrivate: identity.isPrivate,
+    isDeactivated: identity.isDeactivated,
+  })), [profileFollowLists.followers])
 
-  const dynamicFollowingList = useMemo(() => {
-    return followedUserHandles.map((handle) => ({
-      id: handle,
-      name: `@${handle}`,
-      handle,
-      avatar: '',
-      reviews: 0,
-      isPrivate: false,
-    }))
-  }, [followedUserHandles])
+  const dynamicFollowingList = useMemo(() => profileFollowLists.following.map((identity) => ({
+        id: identity.uid,
+        name: identity.name,
+        handle: identity.handle,
+        avatar: identity.avatarUrl,
+        reviews: 0,
+        isPrivate: identity.isPrivate,
+        isDeactivated: identity.isDeactivated,
+      })), [profileFollowLists.following])
 
   const activeFollowList = activeFollowModal === 'followers' ? dynamicFollowersList : dynamicFollowingList
 
@@ -340,9 +389,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   }, [activeFollowList, followSearch])
 
   // ── Counts (switches dynamically based on catalogMode) ───────────────────────
-  const displayedProfileCollections = !isOwnProfile && publicCollections
-    ? publicCollections
-    : profileCollections
+  const displayedProfileCollections = collectionsCreatedByProfile(
+    isOwnProfile ? profileCollections : (publicCollections ?? []),
+    userProfile.handle,
+  )
   const displayedSavedProfileCollections = isOwnProfile ? viewerSavedProfileCollections : publicSavedCollections
   const visibleCollections = isSavedCollectionsMode ? displayedSavedProfileCollections : displayedProfileCollections
 
@@ -406,18 +456,17 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   // ── Category change handlers ────────────────────────────────────────────────
   const handleCategoryChange = (id: string) => {
+    if (id === activeFilter) return
+    pendingCatalogScrollTopRef.current = window.scrollY
     if (catalogMode === 'reviewed') {
-      if (id === profileCategoryFilter) return
       startProfileContentLoading()
       setIsFilterSwitching(true)
       setProfileCategoryFilter(id)
     } else if (catalogMode === 'shelf') {
-      if (id === shelfCategoryFilter) return
       startProfileContentLoading()
       setIsShelfSwitching(true)
       setShelfCategoryFilter(id)
     } else if (selectedCollection) {
-      if (id === collectionCategoryFilter) return
       startProfileContentLoading()
       setIsCollectionSwitching(true)
       setCollectionCategoryFilter(id)
@@ -588,8 +637,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     profileGridRef,
     activeEntries.length,
     activeExpandedCardId,
-    `${catalogMode}-${activeFilter}-${activeSearchQuery}-${profileContentLoading}`,
-    catalogMode === 'shelf' ? 960 : 1080,
+    `${catalogMode}-${activeFilter}-${activeSearchQuery}-${profileContentLoading}-${activeEntries.map((entry) => entry.id).join('|')}`,
+    1280,
   )
   const collectionMasonryLayout = useMasonryLayout(
     collectionGridRef,
@@ -598,7 +647,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     `${selectedCollectionId}-${collectionCategoryFilter}-${profileContentLoading}-${activeEntries.map((entry) => entry.id).join('|')}`,
     1080,
   )
-
   // ── Filter switching cooldown ───────────────────────────────────────────────
   useEffect(() => {
     if (activeMasonryLayout) {
@@ -611,9 +659,15 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     }
   }, [activeMasonryLayout, activeFilter, activeSearchQuery, catalogMode])
 
+  const showCatalogSkeleton = (catalogMode === 'reviewed' || catalogMode === 'shelf')
+    && (profileContentLoading || (activeEntries.length > 0 && (activeIsFilterSwitching || !activeMasonryLayout)))
+  const showCollectionMediaSkeleton = isCollectionDetail
+    && (profileContentLoading || (activeEntries.length > 0 && (isCollectionSwitching || !collectionMasonryLayout)))
+
   // ── Bookmark toggle ─────────────────────────────────────────────────────────
   const handleCatalogModeChange = (mode: CatalogMode) => {
     if (catalogMode === mode) return
+    pendingCatalogScrollTopRef.current = window.scrollY
     startProfileContentLoading(320)
     setCatalogMode(mode)
     if (mode === 'collections' || mode === 'saved-collections') setCollectionReturnMode(mode)
@@ -856,6 +910,39 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   const displayName = profileDisplayName
   const handleFormatted = `@${userProfile.handle.replace(/^@/, '')}`
+
+  if (!isOwnProfile && userProfile.accountStatus === 'deactivated') {
+    return (
+      <motion.div
+        className="page-wrapper profile-page-wrapper"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.22, ease: 'easeOut' }}
+      >
+        {showLocalNavigation && (
+          <button
+            type="button"
+            className="profile-back-circle"
+            onClick={onBack}
+            title="Back"
+            aria-label="Back"
+          >
+            <ArrowLeft aria-hidden="true" />
+          </button>
+        )}
+        <div className="profile-unavailable-state" role="status">
+          <div className="profile-unavailable-icon"><AlertTriangle aria-hidden="true" /></div>
+          <span>{displayName}</span>
+          <h1>There is a problem loading this account</h1>
+          <p>This account is unavailable right now. Its profile and activity are hidden.</p>
+          <button type="button" className="secondary-action-btn" onClick={onBack}>
+            <ArrowLeft aria-hidden="true" />
+            Go back
+          </button>
+        </div>
+      </motion.div>
+    )
+  }
   // ── Type icon helper ────────────────────────────────────────────────────────
   const getTypeMeta = (type: string) => {
     switch (type) {
@@ -922,7 +1009,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 aria-label="Change cover photo"
                 title="Change cover photo"
               >
-                <Edit3 aria-hidden="true" />
+                <ImagePlus aria-hidden="true" />
+                <span>Cover photo</span>
               </button>
             </>
           )}
@@ -951,29 +1039,33 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             <span className="profile-inline-media-error" role="alert">{inlineMediaError}</span>
           )}
 
-          {isOwnProfile ? (
+          {!isOwnProfile && (
             <button
               type="button"
-              className="edit-profile-btn"
-              onClick={onNavigateToSettings}
-              title="Edit Profile Settings"
+              className="profile-report-btn"
+              onClick={() => setProfileReportOpen(true)}
+              title="Report profile"
             >
-              <Edit3 aria-hidden="true" />
-              <span>Edit Profile</span>
+              <Flag aria-hidden="true" />
+              <span>Report</span>
             </button>
-          ) : isLockedPrivate ? (
+          )}
+
+          {!isOwnProfile && (isLockedPrivate ? (
             <button
               type="button"
-              className={`edit-profile-btn ${isFollowRequested ? 'is-following' : ''}`}
-              onClick={() => onToggleFollowRequest?.(userProfile.handle)}
+              className={`edit-profile-btn ${isFollowingUser || isFollowRequested ? 'is-following' : ''}`}
+              onClick={() => isFollowingUser
+                ? onToggleFollowUser?.(userProfile.handle)
+                : onToggleFollowRequest?.(userProfile.handle)}
               style={{
-                background: isFollowRequested ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
-                color: isFollowRequested ? 'var(--text-strong)' : '#0e0b06',
-                borderColor: isFollowRequested ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
+                background: isFollowingUser || isFollowRequested ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
+                color: isFollowingUser || isFollowRequested ? 'var(--text-strong)' : '#0e0b06',
+                borderColor: isFollowingUser || isFollowRequested ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
               }}
             >
-              {isFollowRequested ? <UserCheck size={14} /> : <UserPlus size={14} />}
-              <span>{isFollowRequested ? 'Requested' : 'Request to Follow'}</span>
+              {isFollowingUser || isFollowRequested ? <UserCheck size={14} /> : <UserPlus size={14} />}
+              <span>{isFollowingUser ? 'Following' : isFollowRequested ? 'Requested' : 'Request to Follow'}</span>
             </button>
           ) : (
             <button
@@ -989,7 +1081,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               {isFollowingUser ? <UserCheck size={14} /> : <UserPlus size={14} />}
               <span>{isFollowingUser ? 'Following' : 'Follow'}</span>
             </button>
-          )}
+          ))}
+
         </div>
 
         {inlineAvatarCropImage && onUpdateProfile && (
@@ -1041,7 +1134,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           <div className="profile-pill-container">
             <span className="profile-pill-badge">
               <Calendar aria-hidden="true" />
-              <span>Member since July 2026</span>
+              <span>{memberSinceLabel(userProfile.createdAt)}</span>
             </span>
             <span className="profile-pill-badge rating">
               <Star aria-hidden="true" />
@@ -1081,25 +1174,27 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             </div>
             <h3 className="private-locked-title">This Profile is Private</h3>
             <p className="private-locked-subtitle">
-              Follow @{userProfile.handle.replace(/^@/, '')} to see their created catalog, collections, and reflections.
+              Private catalogs become visible only when you and @{userProfile.handle.replace(/^@/, '')} follow each other.
             </p>
             <button
               type="button"
               className="edit-profile-btn"
               style={{
                 position: 'static',
-                background: isFollowRequested ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
-                color: isFollowRequested ? 'var(--text-strong)' : '#0e0b06',
-                borderColor: isFollowRequested ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
+                background: isFollowingUser || isFollowRequested ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
+                color: isFollowingUser || isFollowRequested ? 'var(--text-strong)' : '#0e0b06',
+                borderColor: isFollowingUser || isFollowRequested ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
                 padding: '10px 24px',
                 fontSize: '13px',
               }}
-              onClick={() => onToggleFollowRequest?.(userProfile.handle)}
+              onClick={() => isFollowingUser
+                ? onToggleFollowUser?.(userProfile.handle)
+                : onToggleFollowRequest?.(userProfile.handle)}
             >
-              {isFollowRequested ? (
+              {isFollowingUser || isFollowRequested ? (
                 <>
                   <UserCheck size={14} />
-                  <span>Requested</span>
+                  <span>{isFollowingUser ? 'Following' : 'Requested'}</span>
                 </>
               ) : (
                 <>
@@ -1263,14 +1358,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         <div className="collection-detail-hero">
                           <div className="collection-detail-hero-cover" aria-hidden="true">
                             {selectedCollection.customCoverUrl ? (
-                              <img className="collection-detail-custom-cover" src={selectedCollection.customCoverUrl} alt="" />
+                              <img className="collection-detail-custom-cover" src={selectedCollection.customCoverUrl} alt="" loading="lazy" decoding="async" />
                             ) : selectedCollectionEntries.length > 0 ? (
                               Array.from({ length: 4 }, (_, index) => {
                                 const entry = selectedCollectionEntries[index]
                                 return (
                                   <span key={entry?.id ?? `empty-hero-${index}`} className={!entry ? 'empty' : ''}>
                                     {entry && (entry.coverUrl
-                                      ? <img src={entry.coverUrl} alt="" />
+                                      ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
                                       : React.createElement(getTypeMeta(entry.type).Icon))}
                                   </span>
                                 )
@@ -1456,6 +1551,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       className={`stat-card stat-btn ${isActive ? 'active' : ''}`}
                       onClick={() => handleCategoryChange(id)}
                     >
+                      {isActive && (
+                        <motion.span
+                          className="profile-filter-pill"
+                          layoutId={`profile-media-filter-${userProfile.handle}-${catalogMode}`}
+                          transition={{ type: 'spring', stiffness: 380, damping: 36 }}
+                          aria-hidden="true"
+                        />
+                      )}
                       <div className="stat-icon-wrapper">
                         <Icon aria-hidden="true" />
                       </div>
@@ -1495,14 +1598,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           <span className="profile-collection-preview" aria-hidden="true">
                             {collection.customCoverUrl ? (
                               <span className="profile-collection-preview-tile is-custom-cover">
-                                <img src={collection.customCoverUrl} alt="" />
+                                <img src={collection.customCoverUrl} alt="" loading="lazy" decoding="async" />
                               </span>
                             ) : (
                               <>
                                 {collectionEntries.slice(0, 4).map((entry) => (
                                   <span key={entry.id} className="profile-collection-preview-tile">
                                     {entry.coverUrl ? (
-                                      <img src={entry.coverUrl} alt="" />
+                                      <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
                                     ) : (
                                       React.createElement(getTypeMeta(entry.type).Icon)
                                     )}
@@ -1570,14 +1673,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             )}
 
             <div key={catalogMode} className="profile-catalog-content">
-              {profileContentLoading && (catalogMode === 'reviewed' || catalogMode === 'shelf') && (
-                <ProfileCatalogSkeleton
-                  mode={catalogMode === 'shelf' ? 'saved' : 'created'}
+              {showCatalogSkeleton && (
+                <CardSkeletonGrid
                   count={activeEntries.length > 0 ? Math.min(8, Math.max(4, activeEntries.length)) : 8}
+                  label={`Loading ${catalogMode === 'shelf' ? 'saved' : 'created'} catalog entries`}
                 />
               )}
 
-              {profileContentLoading && isCollectionDetail && (
+              {showCollectionMediaSkeleton && (
                 <CollectionMediaSkeleton count={activeEntries.length > 0 ? Math.min(8, Math.max(4, activeEntries.length)) : 8} />
               )}
 
@@ -1636,17 +1739,18 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 <section
                   className="profile-collection-media-list"
                   aria-label={`${selectedCollection.name} media`}
-                  aria-hidden={profileContentLoading}
+                  aria-hidden={showCollectionMediaSkeleton}
                   ref={collectionGridRef}
                   style={{
-                    position: profileContentLoading ? 'absolute' : 'relative',
-                    inset: profileContentLoading ? 0 : undefined,
+                    position: showCollectionMediaSkeleton ? 'absolute' : 'relative',
+                    inset: showCollectionMediaSkeleton ? 0 : undefined,
                     width: '100%',
                     height: collectionMasonryLayout?.height ?? 'auto',
                     minHeight: 240,
-                    opacity: profileContentLoading ? 0 : 1,
-                    pointerEvents: profileContentLoading ? 'none' : undefined,
-                    transition: 'opacity 180ms ease-out',
+                    visibility: showCollectionMediaSkeleton ? 'hidden' : 'visible',
+                    opacity: showCollectionMediaSkeleton ? 0 : 1,
+                    pointerEvents: showCollectionMediaSkeleton ? 'none' : undefined,
+                    transition: 'none',
                   }}
                 >
                     {activeEntries.map((entry, index) => {
@@ -1678,7 +1782,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           >
                             <span className="profile-collection-media-art">
                               {entry.coverUrl
-                                ? <img src={entry.coverUrl} alt="" />
+                                ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
                                 : <Icon aria-hidden="true" />}
                             </span>
                             <span className="profile-collection-media-copy">
@@ -1712,20 +1816,22 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                   key={`${catalogMode}-cards`}
                   className="card-grid profile-masonry-grid"
                   ref={profileGridRef as React.RefObject<HTMLElement>}
+                  aria-hidden={showCatalogSkeleton}
                   style={{
-                    position: profileContentLoading ? 'absolute' : 'relative',
-                    inset: profileContentLoading ? 0 : undefined,
-                    width: profileContentLoading ? '100%' : undefined,
+                    position: showCatalogSkeleton ? 'absolute' : 'relative',
+                    inset: showCatalogSkeleton ? 0 : undefined,
                     height: activeMasonryLayout ? activeMasonryLayout.height : 'auto',
                     minHeight: 320,
-                    opacity: (!profileContentLoading && activeMasonryLayout && !activeIsFilterSwitching) ? 1 : 0,
-                    pointerEvents: profileContentLoading ? 'none' : undefined,
-                    transition: 'opacity 220ms ease-out',
+                    visibility: showCatalogSkeleton ? 'hidden' : 'visible',
+                    opacity: showCatalogSkeleton ? 0 : 1,
+                    pointerEvents: showCatalogSkeleton ? 'none' : undefined,
+                    transition: 'none',
                   }}
                 >
                   {activeEntries.map((entry) => {
                     const pos = activeMasonryLayout?.positions.get(entry.id)
                     const { Icon, label } = getTypeMeta(entry.type)
+                    const engagement = postEngagements[entry.id]
 
                     return (
                       <div
@@ -1758,8 +1864,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           onOpenProfile={() => {}}
                           typeIcon={Icon}
                           typeLabel={label}
-                          isLiked={likedEntryIds.includes(entry.id)}
+                          isLiked={engagement?.isLiked ?? likedEntryIds.includes(entry.id)}
                           isSaved={savedEntryIds.includes(entry.id)}
+                          likeCount={engagement?.likeCount || 0}
+                          commentCount={engagement?.commentCount || 0}
                           onToggleLike={() => onToggleLike?.(entry.id)}
                           onToggleSave={() => onToggleSave?.(entry.id)}
                           commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
@@ -1863,7 +1971,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         return (
                           <span key={item?.id ?? `empty-edit-${index}`} className={!item ? 'empty' : ''}>
                             {item && (item.coverUrl
-                              ? <img src={item.coverUrl} alt="" />
+                              ? <img src={item.coverUrl} alt="" loading="lazy" decoding="async" />
                               : React.createElement(getTypeMeta(item.type).Icon))}
                           </span>
                         )
@@ -1925,7 +2033,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     const { Icon } = getTypeMeta(item.type)
                     return (
                       <div className="collection-edit-media-item" key={item.id}>
-                        <span>{item.coverUrl ? <img src={item.coverUrl} alt="" /> : <Icon aria-hidden="true" />}</span>
+                        <span>{item.coverUrl ? <img src={item.coverUrl} alt="" loading="lazy" decoding="async" /> : <Icon aria-hidden="true" />}</span>
                         <div>
                           <strong>{item.title}</strong>
                           <small>{item.creator}</small>
@@ -2068,7 +2176,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         onClick={() => toggleCollectionItem(item)}
                       >
                         <span className="collection-item-art">
-                          {item.coverUrl ? <img src={item.coverUrl} alt="" /> : <Icon aria-hidden="true" />}
+                          {item.coverUrl ? <img src={item.coverUrl} alt="" loading="lazy" decoding="async" /> : <Icon aria-hidden="true" />}
                         </span>
                         <span className="collection-item-copy">
                           <strong>{item.title}</strong>
@@ -2233,7 +2341,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                               return (
                                 <span key={entry?.id ?? `empty-auto-${index}`} className={!entry ? 'empty' : ''}>
                                   {entry && (entry.coverUrl
-                                    ? <img src={entry.coverUrl} alt="" />
+                                    ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
                                     : React.createElement(getTypeMeta(entry.type).Icon))}
                                 </span>
                               )
@@ -2331,7 +2439,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                             onClick={() => toggleCollectionItem(item)}
                           >
                             <span className="collection-item-art">
-                              {item.coverUrl ? <img src={item.coverUrl} alt="" /> : <Icon aria-hidden="true" />}
+                              {item.coverUrl ? <img src={item.coverUrl} alt="" loading="lazy" decoding="async" /> : <Icon aria-hidden="true" />}
                             </span>
                             <span className="collection-item-copy">
                               <strong>{item.title}</strong>
@@ -2429,7 +2537,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         return (
                           <span key={entry?.id ?? `empty-preview-${index}`} className={!entry ? 'empty' : ''}>
                             {entry && (entry.coverUrl
-                              ? <img src={entry.coverUrl} alt="" />
+                              ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
                               : React.createElement(getTypeMeta(entry.type).Icon))}
                           </span>
                         )
@@ -2568,6 +2676,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                             if (isCurrentUser) {
                               return <span className="follow-you-badge">You</span>
                             }
+                            if (person.isDeactivated) {
+                              return <span className="follow-you-badge">Unavailable</span>
+                            }
                             if (isPersonFollowing) {
                               return (
                                 <button
@@ -2639,6 +2750,24 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           </div>
         )}
       </AnimatePresence>
+      <ReportDialog
+        open={profileReportOpen}
+        targetType="profile"
+        targetLabel={`@${userProfile.handle.replace(/^@/, '')}`}
+        onClose={() => setProfileReportOpen(false)}
+        onSubmit={async (reason, details) => {
+          if (!cloudUserId) throw new Error('Sign in to report this profile.')
+          await submitContentReport(cloudUserId, {
+            targetType: 'profile',
+            targetId: userProfile.handle,
+            targetHandle: userProfile.handle,
+            reason,
+            details,
+          })
+          setProfileReportOpen(false)
+          setProfileMediaToast('Report submitted. Thank you for helping keep The Commonplace safe.')
+        }}
+      />
       <AuthToast message={profileMediaToast} onClose={() => setProfileMediaToast(null)} />
     </motion.div>
   )

@@ -16,7 +16,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   const { login, loginWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [keepSignedIn, setKeepSignedIn] = useState(false)
+  const [keepSignedIn, setKeepSignedIn] = useState(true)
   const [genericError, setGenericError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)

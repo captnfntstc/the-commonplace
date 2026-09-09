@@ -14,6 +14,12 @@ function getColumnCount(width: number, fourColumnBreakpoint: number): number {
 export type MasonryPos = { left: number; top: number; width: number }
 export type MasonryLayout = { positions: Map<string, MasonryPos>; height: number } | null
 
+type MeasuredMasonryLayout = NonNullable<MasonryLayout> & {
+  itemCount: number
+  activeSignal: unknown
+  fourColumnBreakpoint: number
+}
+
 function getItemTargetHeight(item: HTMLElement, isExpanded: boolean): number {
   const card = item.querySelector('.entry-card') as HTMLElement | null
   if (!card) return item.offsetHeight
@@ -39,7 +45,7 @@ export function useMasonryLayout(
   activeSignal?: unknown,
   fourColumnBreakpoint = 1280,
 ): MasonryLayout {
-  const [layout, setLayout] = useState<MasonryLayout>(null)
+  const [layout, setLayout] = useState<MeasuredMasonryLayout | null>(null)
 
   useLayoutEffect(() => {
     const container = containerRef.current
@@ -83,7 +89,13 @@ export function useMasonryLayout(
           heights[col] += itemHeight + M_GAP
         })
 
-        setLayout({ positions, height: Math.max(...heights) + 60 })
+        setLayout({
+          positions,
+          height: Math.max(...heights) + 60,
+          itemCount,
+          activeSignal,
+          fourColumnBreakpoint,
+        })
       })
     }
 
@@ -108,6 +120,18 @@ export function useMasonryLayout(
       clearTimeout(t4)
     }
   }, [containerRef, itemCount, expandedId, activeSignal, fourColumnBreakpoint])
+
+  // A dataset change is committed before its next animation-frame measurement.
+  // Suppress coordinates from the previous dataset during that frame so new
+  // cards cannot paint full-width and then jump outward into their columns.
+  if (
+    !layout
+    || layout.itemCount !== itemCount
+    || !Object.is(layout.activeSignal, activeSignal)
+    || layout.fourColumnBreakpoint !== fourColumnBreakpoint
+  ) {
+    return null
+  }
 
   return layout
 }

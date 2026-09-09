@@ -20,7 +20,7 @@ const theLastSignal: UniversalMediaEntity = {
   name: 'The Last Signal',
   type: 'tv',
   categoryLabel: 'Series',
-  artworkUrl: '/design-review/the-last-signal-poster.png',
+  artworkUrl: '/design-review/the-last-signal-poster.jpg',
   description: 'After a radio astronomer detects a repeating transmission hidden inside a coastal storm, a small observatory team discovers that every pulse predicts a disappearance exactly seventy-two hours before it happens. Their search for the signal’s source forces them to choose between warning the city and protecting the person apparently sending it from the future.',
   metadataChips: [
     { label: 'Creator', value: 'Mara Velez' },
@@ -50,7 +50,7 @@ const theLastSignal: UniversalMediaEntity = {
         seasonNumber: 1,
         episodeCount: 6,
         airDate: '2026-03-14',
-        posterUrl: '/design-review/the-last-signal-poster.png',
+        posterUrl: '/design-review/the-last-signal-poster.jpg',
         overview: 'The observatory team traces a signal that appears to predict disappearances across the city.',
         episodes: [
           { id: 91101, name: 'Dead Air', seasonNumber: 1, episodeNumber: 1, airDate: '2026-03-14', runtime: 51, overview: 'Elian records a transmission containing the name of a woman who vanishes three days later.' },
@@ -62,8 +62,8 @@ const theLastSignal: UniversalMediaEntity = {
         ].map((episode, index) => ({
           ...episode,
           stillUrl: index % 2 === 0
-            ? '/design-review/the-last-signal-observatory.png'
-            : '/design-review/the-last-signal-flooded-city.png',
+            ? '/design-review/the-last-signal-observatory.jpg'
+            : '/design-review/the-last-signal-flooded-city.jpg',
         })),
       },
       {
@@ -72,7 +72,7 @@ const theLastSignal: UniversalMediaEntity = {
         seasonNumber: 2,
         episodeCount: 6,
         airDate: '2027-05-09',
-        posterUrl: '/design-review/the-last-signal-poster.png',
+        posterUrl: '/design-review/the-last-signal-poster.jpg',
         overview: 'A year after the broadcast, fragments of the signal begin appearing in ordinary household devices.',
         episodes: [
           { id: 92101, name: 'Afterimage', seasonNumber: 2, episodeNumber: 1, airDate: '2027-05-09', runtime: 54, overview: 'A silent year ends when hundreds of radios repeat a message only Elian remembers sending.' },
@@ -84,8 +84,8 @@ const theLastSignal: UniversalMediaEntity = {
         ].map((episode, index) => ({
           ...episode,
           stillUrl: index % 2 === 0
-            ? '/design-review/the-last-signal-flooded-city.png'
-            : '/design-review/the-last-signal-observatory.png',
+            ? '/design-review/the-last-signal-flooded-city.jpg'
+            : '/design-review/the-last-signal-observatory.jpg',
         })),
       },
     ],

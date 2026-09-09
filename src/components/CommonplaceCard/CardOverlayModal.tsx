@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   X,
@@ -17,18 +17,28 @@ import {
 import { FormattedText } from './FormattedText'
 import { StarRating } from './CardHeader'
 import { formatFullDateTime } from '../../utils/dateUtils'
-import { getDropCapParts } from './variants/HybridScrollVariant'
+import { getDropCapParts } from './dropCap'
+import { insertMention, mentionAtCursor, type MentionMatch } from './mentions'
 import { getEntryTypeIcon } from '../../utils/mediaIcons'
 import { useAuth } from '../../context/AuthContext'
+import { ReportDialog } from '../Reports/ReportDialog'
+import {
+  hideReportedInteraction,
+  isInteractionOwner,
+  isReportedInteractionHidden,
+} from './commentPermissions'
 import {
   canUseCloudData,
   createPostComment,
   createPostReply,
   deletePostComment,
   deletePostReply,
+  loadMutualFollowers,
   loadPostComments,
   togglePostCommentLike,
   togglePostReplyLike,
+  submitContentReport,
+  type PublicUserSummary,
 } from '../../services/cloudData'
 
 export interface OverlayEntry {
@@ -58,6 +68,11 @@ export interface OverlayEntry {
 interface ReplyItem {
   id: string
   authorId?: string
+  authorHandle?: string
+  replyToUserId?: string
+  replyToHandle?: string
+  replyToName?: string
+  replyToInteractionId?: string
   author: string
   initials: string
   text: string
@@ -69,6 +84,7 @@ interface ReplyItem {
 interface CommentItem {
   id: string
   authorId?: string
+  authorHandle?: string
   author: string
   initials: string
   text: string
@@ -78,14 +94,37 @@ interface CommentItem {
   replies: ReplyItem[]
 }
 
+interface ReplyTarget {
+  commentId: string
+  interactionId: string
+  authorId?: string
+  authorHandle?: string
+  author: string
+}
+
+type InteractionReportTarget = {
+  targetType: 'comment' | 'reply'
+  targetId: string
+  parentCommentId?: string
+  targetHandle?: string
+  targetLabel: string
+}
+
+const EMPTY_COMMENTS: CommentItem[] = []
+
 interface CardOverlayModalProps {
   entry: OverlayEntry | null
   onClose: () => void
+  focusCommentId?: string
+  focusReplyId?: string
+  focusRequestId?: string
   isLiked?: boolean
   isSaved?: boolean
+  likeCount?: number
   onToggleLike?: () => void
   onToggleSave?: () => void
   onOpenProfile?: (handle: string) => void
+  currentUserHandle?: string
 }
 
 const typeIconMap = {
@@ -108,11 +147,16 @@ function formatCommentTimestamp(value: string) {
 export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   entry,
   onClose,
+  focusCommentId,
+  focusReplyId,
+  focusRequestId,
   isLiked = false,
   isSaved = false,
+  likeCount = 0,
   onToggleLike,
   onToggleSave,
   onOpenProfile,
+  currentUserHandle,
 }) => {
   const { currentUser } = useAuth()
   const cloudUserId = currentUser?.uid || null
@@ -128,7 +172,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     entryId: activeEntryId,
     items: [],
   })
-  const comments = commentState.entryId === activeEntryId ? commentState.items : []
+  const comments = commentState.entryId === activeEntryId ? commentState.items : EMPTY_COMMENTS
   const setComments = (update: React.SetStateAction<CommentItem[]>) => {
     setCommentState((previous) => {
       const currentItems = previous.entryId === activeEntryId ? previous.items : []
@@ -142,17 +186,35 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   const [newCommentText, setNewCommentText] = useState('')
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
   const [replyingToId, setReplyingToId] = useState<string | null>(null)
+  const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null)
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({})
+  const [mutualFollowers, setMutualFollowers] = useState<PublicUserSummary[]>([])
+  const [replyMention, setReplyMention] = useState<MentionMatch | null>(null)
+  const replyInputRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
+  const commentItemRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const replyItemRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const [visibleCommentsCount, setVisibleCommentsCount] = useState(5)
   const [visibleRepliesCount, setVisibleRepliesCount] = useState<Record<string, number>>({})
+  const [focusedInteractionId, setFocusedInteractionId] = useState<string | null>(null)
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false)
   const [reportToast, setReportToast] = useState<string | null>(null)
+  const [postReportOpen, setPostReportOpen] = useState(false)
+  const [interactionReportTarget, setInteractionReportTarget] = useState<InteractionReportTarget | null>(null)
   useEffect(() => {
     if (!activeEntryId || !cloudUserId || !canUseCloudData(cloudUserId)) return
     let cancelled = false
     void loadPostComments(activeEntryId, cloudUserId)
       .then((items) => {
-        if (!cancelled) setCommentState({ entryId: activeEntryId, items })
+        if (cancelled) return
+        const visibleItems = items
+          .filter((comment) => !isReportedInteractionHidden(cloudUserId, activeEntryId, 'comment', comment.id))
+          .map((comment) => ({
+            ...comment,
+            replies: comment.replies.filter((reply) => (
+              !isReportedInteractionHidden(cloudUserId, activeEntryId, 'reply', reply.id)
+            )),
+          }))
+        setCommentState({ entryId: activeEntryId, items: visibleItems })
       })
       .catch((error) => console.error('Unable to load comments from Firebase.', error))
     return () => {
@@ -160,7 +222,66 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     }
   }, [activeEntryId, cloudUserId])
 
-  const likeCount = 12
+  useEffect(() => {
+    if (!focusCommentId || comments.length === 0) return
+    const orderedComments = sortOrder === 'newest' ? [...comments].reverse() : comments
+    const commentIndex = orderedComments.findIndex(({ id }) => id === focusCommentId)
+    if (commentIndex < 0) return
+
+    let secondFrame = 0
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const target = (focusReplyId && replyItemRefs.current[focusReplyId])
+          || commentItemRefs.current[focusCommentId]
+        if (!target) return
+        setFocusedInteractionId(focusReplyId || focusCommentId)
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        target.focus({ preventScroll: true })
+      })
+    })
+    const highlightTimer = window.setTimeout(() => setFocusedInteractionId(null), 2200)
+    return () => {
+      window.cancelAnimationFrame(firstFrame)
+      window.cancelAnimationFrame(secondFrame)
+      window.clearTimeout(highlightTimer)
+    }
+  }, [comments, focusCommentId, focusReplyId, focusRequestId, sortOrder])
+
+  useEffect(() => {
+    if (!activeEntryId || !cloudUserId || !canUseCloudData(cloudUserId)) {
+      return
+    }
+    let cancelled = false
+    void loadMutualFollowers(cloudUserId)
+      .then((users) => {
+        if (!cancelled) setMutualFollowers(users)
+      })
+      .catch((error) => console.error('Unable to load mutual followers for mentions.', error))
+    return () => {
+      cancelled = true
+    }
+  }, [activeEntryId, cloudUserId])
+
+  const mentionResults = replyMention
+    ? mutualFollowers.filter((user) => {
+        const query = replyMention.query
+        return user.handle.includes(query) || user.name.toLowerCase().includes(query)
+      }).slice(0, 6)
+    : []
+
+  const selectReplyMention = (user: PublicUserSummary) => {
+    if (!replyMention) return
+    const { commentId } = replyMention
+    const currentText = replyTexts[commentId] || ''
+    const insertion = insertMention(currentText, replyMention, user.handle)
+    setReplyTexts((previous) => ({ ...previous, [commentId]: insertion.value }))
+    setReplyMention(null)
+    requestAnimationFrame(() => {
+      const input = replyInputRefs.current[commentId]
+      input?.focus()
+      input?.setSelectionRange(insertion.cursor, insertion.cursor)
+    })
+  }
 
   const hasUnsavedChanges = (): boolean => {
     if (newCommentText.trim().length > 0) return true
@@ -196,7 +317,8 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   if (!entry) return null
 
   const currentAuthorHandle = currentAuthor.replace(/^@/, '')
-  const isPostOwner = !entry.authorHandle || entry.authorHandle.replace(/^@/, '') === currentAuthorHandle
+  const isPostOwner = !entry.authorHandle
+    || entry.authorHandle.replace(/^@/, '') === (currentUserHandle || currentAuthorHandle).replace(/^@/, '')
   const displayAuthorHandle = (entry.authorHandle || currentAuthorHandle).replace(/^@/, '')
 
   const IconComponent = typeIconMap[entry.type] || BookOpen
@@ -209,8 +331,10 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     e.preventDefault()
     if (!newCommentText.trim()) return
     const item: CommentItem = {
+      // eslint-disable-next-line react-hooks/purity -- Generated only when the submit event runs.
       id: `c-${Date.now()}`,
       authorId: cloudUserId || undefined,
+      authorHandle: currentUserHandle?.replace(/^@/, ''),
       author: currentAuthor,
       initials: currentInitials,
       text: newCommentText.trim(),
@@ -221,7 +345,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     }
     setComments((prev) => [...prev, item])
     if (cloudUserId) {
-      void createPostComment(entry.id, cloudUserId, item)
+      void createPostComment(entry.id, cloudUserId, item, entry.title)
         .catch((error) => console.error('Unable to save comment to Firebase.', error))
     }
     setNewCommentText('')
@@ -231,8 +355,14 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     const text = (replyTexts[commentId] || '').trim()
     if (!text) return
     const reply: ReplyItem = {
+      // eslint-disable-next-line react-hooks/purity -- Generated only when the submit event runs.
       id: `r-${Date.now()}`,
       authorId: cloudUserId || undefined,
+      authorHandle: currentUserHandle?.replace(/^@/, ''),
+      replyToUserId: replyTarget?.commentId === commentId ? replyTarget.authorId : undefined,
+      replyToHandle: replyTarget?.commentId === commentId ? replyTarget.authorHandle : undefined,
+      replyToName: replyTarget?.commentId === commentId ? replyTarget.author : undefined,
+      replyToInteractionId: replyTarget?.commentId === commentId ? replyTarget.interactionId : commentId,
       author: currentAuthor,
       initials: currentInitials,
       text,
@@ -249,6 +379,8 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     }
     setReplyTexts((prev) => ({ ...prev, [commentId]: '' }))
     setReplyingToId(null)
+    setReplyTarget(null)
+    setReplyMention(null)
   }
 
   const toggleCommentLike = (commentId: string) => {
@@ -304,38 +436,44 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   }
 
   const handleDeleteComment = (commentId: string) => {
-    if (window.confirm('Delete this comment?')) {
-      setComments((prev) => prev.filter((c) => c.id !== commentId))
-      if (cloudUserId) {
-        void deletePostComment(entry.id, commentId, cloudUserId)
-          .catch((error) => console.error('Unable to delete comment from Firebase.', error))
-      }
+    const comment = comments.find((item) => item.id === commentId)
+    if (!comment || !isInteractionOwner(comment, cloudUserId, currentUserHandle)) return
+    if (!window.confirm('Delete this comment?')) return
+    if (!cloudUserId) {
+      setComments((prev) => prev.filter((item) => item.id !== commentId))
+      return
     }
+    void deletePostComment(entry.id, commentId, cloudUserId)
+      .then(() => setComments((prev) => prev.filter((item) => item.id !== commentId)))
+      .catch((error) => console.error('Unable to delete comment from Firebase.', error))
   }
 
   const handleDeleteReply = (commentId: string, replyId: string) => {
-    if (window.confirm('Delete this reply?')) {
-      setComments((prev) =>
-        prev.map((c) =>
-          c.id === commentId
-            ? { ...c, replies: c.replies.filter((r) => r.id !== replyId) }
-            : c
-        )
+    const reply = comments.find((item) => item.id === commentId)?.replies.find((item) => item.id === replyId)
+    if (!reply || !isInteractionOwner(reply, cloudUserId, currentUserHandle)) return
+    if (!window.confirm('Delete this reply?')) return
+    const removeReply = () => setComments((prev) =>
+      prev.map((comment) =>
+        comment.id === commentId
+          ? { ...comment, replies: comment.replies.filter((item) => item.id !== replyId) }
+          : comment
       )
-      if (cloudUserId) {
-        void deletePostReply(entry.id, commentId, replyId, cloudUserId)
-          .catch((error) => console.error('Unable to delete reply from Firebase.', error))
-      }
+    )
+    if (!cloudUserId) {
+      removeReply()
+      return
     }
-  }
-
-  const handleReport = (author: string) => {
-    setReportToast(`Report submitted for @${author}'s comment.`)
-    setTimeout(() => setReportToast(null), 3000)
+    void deletePostReply(entry.id, commentId, replyId, cloudUserId)
+      .then(removeReply)
+      .catch((error) => console.error('Unable to delete reply from Firebase.', error))
   }
 
   const sortedComments = sortOrder === 'newest' ? [...comments].reverse() : comments
-  const visibleComments = sortedComments.slice(0, visibleCommentsCount)
+  const focusedCommentIndex = focusCommentId
+    ? sortedComments.findIndex(({ id }) => id === focusCommentId)
+    : -1
+  const effectiveVisibleCommentsCount = Math.max(visibleCommentsCount, focusedCommentIndex + 1)
+  const visibleComments = sortedComments.slice(0, effectiveVisibleCommentsCount)
 
   return (
     <AnimatePresence>
@@ -479,7 +617,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                 title={isLiked ? 'Unlike' : 'Like'}
               >
                 <Heart size={16} fill={isLiked ? 'currentColor' : 'none'} />
-                <span>{likeCount + (isLiked ? 1 : 0)}</span>
+                <span>{likeCount}</span>
               </button>
 
               <button
@@ -490,6 +628,18 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
               >
                 <Bookmark size={16} fill={isSaved ? 'currentColor' : 'none'} />
               </button>
+
+              {!isPostOwner && (
+                <button
+                  type="button"
+                  className="overlay-icon-action"
+                  onClick={() => setPostReportOpen(true)}
+                  title="Report post"
+                  aria-label="Report post"
+                >
+                  <Flag size={15} />
+                </button>
+              )}
             </div>
 
             <span className="overlay-comment-count">
@@ -514,18 +664,35 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
 
             <div className="overlay-comments-list">
               {visibleComments.map((c) => {
-                const canDeleteC = cloudUserId
-                  ? c.authorId === cloudUserId
-                  : isPostOwner || c.author === currentAuthor
-                const maxReplies = visibleRepliesCount[c.id] || 3
+                const canDeleteC = isInteractionOwner(c, cloudUserId, currentUserHandle)
+                const canReportC = Boolean(cloudUserId && !canDeleteC)
+                const focusedReplyIndex = c.id === focusCommentId && focusReplyId
+                  ? c.replies.findIndex(({ id }) => id === focusReplyId)
+                  : -1
+                const maxReplies = Math.max(visibleRepliesCount[c.id] || 3, focusedReplyIndex + 1)
                 const visibleReplies = c.replies.slice(0, maxReplies)
 
                 return (
-                  <div key={c.id} className="overlay-comment-item">
+                  <div
+                    key={c.id}
+                    ref={(item) => { commentItemRefs.current[c.id] = item }}
+                    className={`overlay-comment-item ${focusedInteractionId === c.id ? 'is-notification-target' : ''}`}
+                    tabIndex={-1}
+                  >
                     <div className="overlay-comment-avatar">{c.initials}</div>
                     <div className="overlay-comment-body">
                       <div className="overlay-comment-meta">
-                        <span className="overlay-comment-author">{c.author}</span>
+                        {c.authorHandle && onOpenProfile ? (
+                          <button
+                            type="button"
+                            className="overlay-comment-author overlay-comment-author-link"
+                            onClick={() => onOpenProfile(c.authorHandle || '')}
+                          >
+                            {c.author}
+                          </button>
+                        ) : (
+                          <span className="overlay-comment-author">{c.author}</span>
+                        )}
                         <span className="overlay-comment-time">{formatCommentTimestamp(c.createdAt)}</span>
                       </div>
                       <p className="overlay-comment-text">{c.text}</p>
@@ -545,11 +712,20 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                           type="button"
                           className="comment-action-btn"
                           onClick={() => {
-                            setReplyingToId(replyingToId === c.id ? null : c.id)
+                            const isClosing = replyingToId === c.id
+                            setReplyingToId(isClosing ? null : c.id)
+                            setReplyTarget(isClosing ? null : {
+                              commentId: c.id,
+                              interactionId: c.id,
+                              authorId: c.authorId,
+                              authorHandle: c.authorHandle,
+                              author: c.author,
+                            })
+                            setReplyMention(null)
                             if (replyingToId !== c.id) {
                               setReplyTexts((prev) => ({
                                 ...prev,
-                                [c.id]: `@${c.author.replace(/^@/, '')} `,
+                                [c.id]: prev[c.id] || '',
                               }))
                             }
                           }}
@@ -557,22 +733,32 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                           <CornerUpLeft size={12} />
                           <span>{replyingToId === c.id ? 'Cancel' : 'Reply'}</span>
                         </button>
-                        <button
-                          type="button"
-                          className="comment-action-btn"
-                          onClick={() => handleReport(c.author)}
-                          title="Report comment"
-                        >
-                          <Flag size={12} />
-                        </button>
                         {canDeleteC && (
                           <button
                             type="button"
                             className="comment-action-btn danger"
                             onClick={() => handleDeleteComment(c.id)}
                             title="Delete comment"
+                            aria-label="Delete comment"
                           >
                             <Trash2 size={12} />
+                          </button>
+                        )}
+                        {canReportC && (
+                          <button
+                            type="button"
+                            className="comment-action-btn danger"
+                            onClick={() => setInteractionReportTarget({
+                              targetType: 'comment',
+                              targetId: c.id,
+                              targetHandle: c.authorHandle,
+                              targetLabel: `comment by ${c.authorHandle ? `@${c.authorHandle.replace(/^@/, '')}` : c.author}`,
+                            })}
+                            title="Report comment"
+                            aria-label="Report comment"
+                          >
+                            <Flag size={12} />
+                            <span>Report</span>
                           </button>
                         )}
                       </div>
@@ -588,25 +774,62 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                         >
                           <div className="overlay-reply-avatar">JB</div>
                           <textarea
+                            ref={(input) => { replyInputRefs.current[c.id] = input }}
                             className="overlay-reply-input"
-                            placeholder={`Reply to ${c.author}…`}
+                            placeholder={`Reply to ${replyTarget?.commentId === c.id ? replyTarget.author : c.author}…`}
                             value={replyTexts[c.id] || ''}
                             rows={1}
                             spellCheck={false}
                             onChange={(e) => {
                               const val = e.target.value
                               setReplyTexts((prev) => ({ ...prev, [c.id]: val }))
+                              setReplyMention(mentionAtCursor(c.id, val, e.target.selectionStart))
                               e.target.style.height = 'auto'
                               e.target.style.height = Math.min(e.target.scrollHeight, 110) + 'px'
                             }}
                             onKeyDown={(e) => {
+                              if (e.key === 'Escape' && replyMention?.commentId === c.id) {
+                                e.preventDefault()
+                                setReplyMention(null)
+                                return
+                              }
                               if (e.key === 'Enter' && !e.shiftKey) {
                                 e.preventDefault()
+                                if (replyMention?.commentId === c.id && mentionResults[0]) {
+                                  selectReplyMention(mentionResults[0])
+                                  return
+                                }
                                 handleReplySubmit(c.id)
                               }
                             }}
                             autoFocus
                           />
+                          {replyMention?.commentId === c.id && (
+                            <div className="reply-mention-menu" role="listbox" aria-label="Mention a mutual follower">
+                              {mentionResults.length > 0 ? mentionResults.map((user) => (
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected="false"
+                                  key={user.uid}
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => selectReplyMention(user)}
+                                >
+                                  <span className="reply-mention-avatar" aria-hidden="true">
+                                    {user.avatarUrl
+                                      ? <img src={user.avatarUrl} alt="" referrerPolicy="no-referrer" loading="lazy" decoding="async" />
+                                      : user.name.slice(0, 1).toUpperCase()}
+                                  </span>
+                                  <span className="reply-mention-identity">
+                                    <strong>{user.name}</strong>
+                                    <small>@{user.handle}</small>
+                                  </span>
+                                </button>
+                              )) : (
+                                <p>No matching mutual followers</p>
+                              )}
+                            </div>
+                          )}
                           <button type="submit" className="overlay-reply-send" aria-label="Send reply">
                             <Send size={12} />
                           </button>
@@ -617,15 +840,29 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                       {c.replies.length > 0 && (
                         <div className="overlay-replies-list">
                           {visibleReplies.map((r) => {
-                            const canDeleteR = cloudUserId
-                              ? r.authorId === cloudUserId
-                              : isPostOwner || r.author === currentAuthor
+                            const canDeleteR = isInteractionOwner(r, cloudUserId, currentUserHandle)
+                            const canReportR = Boolean(cloudUserId && !canDeleteR)
                             return (
-                              <div key={r.id} className="overlay-reply-item">
+                              <div
+                                key={r.id}
+                                ref={(item) => { replyItemRefs.current[r.id] = item }}
+                                className={`overlay-reply-item ${focusedInteractionId === r.id ? 'is-notification-target' : ''}`}
+                                tabIndex={-1}
+                              >
                                 <div className="overlay-reply-avatar-sm">{r.initials}</div>
                                 <div className="overlay-reply-body">
                                   <div className="overlay-comment-meta">
-                                    <span className="overlay-comment-author">{r.author}</span>
+                                    {r.authorHandle && onOpenProfile ? (
+                                      <button
+                                        type="button"
+                                        className="overlay-comment-author overlay-comment-author-link"
+                                        onClick={() => onOpenProfile(r.authorHandle || '')}
+                                      >
+                                        {r.author}
+                                      </button>
+                                    ) : (
+                                      <span className="overlay-comment-author">{r.author}</span>
+                                    )}
                                     <span className="overlay-comment-time">{formatCommentTimestamp(r.createdAt)}</span>
                                   </div>
                                   <p className="overlay-comment-text">{r.text}</p>
@@ -643,29 +880,50 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                                       className="comment-action-btn"
                                       onClick={() => {
                                         setReplyingToId(c.id)
+                                        setReplyTarget({
+                                          commentId: c.id,
+                                          interactionId: r.id,
+                                          authorId: r.authorId,
+                                          authorHandle: r.authorHandle,
+                                          author: r.author,
+                                        })
+                                        setReplyMention(null)
                                         setReplyTexts((prev) => ({
                                           ...prev,
-                                          [c.id]: `@${r.author.replace(/^@/, '')} `,
+                                          [c.id]: prev[c.id] || '',
                                         }))
                                       }}
                                     >
                                       <CornerUpLeft size={11} />
                                       <span>Reply</span>
                                     </button>
-                                    <button
-                                      type="button"
-                                      className="comment-action-btn"
-                                      onClick={() => handleReport(r.author)}
-                                    >
-                                      <Flag size={11} />
-                                    </button>
                                     {canDeleteR && (
                                       <button
                                         type="button"
                                         className="comment-action-btn danger"
                                         onClick={() => handleDeleteReply(c.id, r.id)}
+                                        title="Delete reply"
+                                        aria-label="Delete reply"
                                       >
                                         <Trash2 size={11} />
+                                      </button>
+                                    )}
+                                    {canReportR && (
+                                      <button
+                                        type="button"
+                                        className="comment-action-btn danger"
+                                        onClick={() => setInteractionReportTarget({
+                                          targetType: 'reply',
+                                          targetId: r.id,
+                                          parentCommentId: c.id,
+                                          targetHandle: r.authorHandle,
+                                          targetLabel: `reply by ${r.authorHandle ? `@${r.authorHandle.replace(/^@/, '')}` : r.author}`,
+                                        })}
+                                        title="Report reply"
+                                        aria-label="Report reply"
+                                      >
+                                        <Flag size={11} />
+                                        <span>Report</span>
                                       </button>
                                     )}
                                   </div>
@@ -779,6 +1037,59 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
             </div>
           )}
         </AnimatePresence>
+        <ReportDialog
+          open={postReportOpen}
+          targetType="post"
+          targetLabel={`“${entry.title}” by @${displayAuthorHandle}`}
+          onClose={() => setPostReportOpen(false)}
+          onSubmit={async (reason, details) => {
+            if (!cloudUserId) throw new Error('Sign in to report this post.')
+            await submitContentReport(cloudUserId, {
+              targetType: 'post',
+              targetId: entry.id,
+              targetHandle: displayAuthorHandle,
+              reason,
+              details,
+            })
+            setPostReportOpen(false)
+            setReportToast('Report submitted. Thank you for helping keep The Commonplace safe.')
+            window.setTimeout(() => setReportToast(null), 3500)
+          }}
+        />
+        <ReportDialog
+          open={Boolean(interactionReportTarget)}
+          targetType={interactionReportTarget?.targetType || 'comment'}
+          targetLabel={interactionReportTarget?.targetLabel || 'this interaction'}
+          onClose={() => setInteractionReportTarget(null)}
+          onSubmit={async (reason, details) => {
+            if (!cloudUserId || !interactionReportTarget) {
+              throw new Error('Sign in to report this interaction.')
+            }
+            const target = interactionReportTarget
+            await submitContentReport(cloudUserId, {
+              targetType: target.targetType,
+              targetId: target.targetId,
+              targetHandle: target.targetHandle,
+              postId: entry.id,
+              parentCommentId: target.parentCommentId,
+              reason,
+              details,
+            })
+            hideReportedInteraction(cloudUserId, entry.id, target.targetType, target.targetId)
+            if (target.targetType === 'comment') {
+              setComments((previous) => previous.filter((comment) => comment.id !== target.targetId))
+            } else {
+              setComments((previous) => previous.map((comment) =>
+                comment.id === target.parentCommentId
+                  ? { ...comment, replies: comment.replies.filter((reply) => reply.id !== target.targetId) }
+                  : comment
+              ))
+            }
+            setInteractionReportTarget(null)
+            setReportToast(`Report submitted. The ${target.targetType} has been hidden.`)
+            window.setTimeout(() => setReportToast(null), 3500)
+          }}
+        />
       </div>
     </AnimatePresence>
   )

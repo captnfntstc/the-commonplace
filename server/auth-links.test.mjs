@@ -41,6 +41,54 @@ test('requires an authenticated Firebase session before generating a short link'
   )
 })
 
+test('requires an authenticated Firebase session before deleting an account', async () => {
+  const request = Readable.from([])
+  Object.assign(request, {
+    method: 'DELETE',
+    url: '/api/auth/account',
+    headers: {},
+  })
+  await assert.rejects(
+    () => handleAuthApiRequest(request, {}),
+    (error) => error.statusCode === 401 && error.message === 'Authentication required.',
+  )
+})
+
+test('requires an authenticated Firebase session before deactivating an account', async () => {
+  const request = Readable.from([JSON.stringify({
+    reason: 'taking_a_break',
+    returnPlan: 'seven_days',
+  })])
+  Object.assign(request, {
+    method: 'POST',
+    url: '/api/auth/account/deactivate',
+    headers: {},
+  })
+  await assert.rejects(
+    () => handleAuthApiRequest(request, {}),
+    (error) => error.statusCode === 401 && error.message === 'Authentication required.',
+  )
+})
+
+test('validates deactivation answers and calculates automatic reactivation', () => {
+  const now = Date.parse('2026-09-01T00:00:00.000Z')
+  const scheduled = authLinkInternals.validateDeactivationRequest({
+    reason: 'privacy_or_safety',
+    returnPlan: 'seven_days',
+    safetyConcern: true,
+    feedback: '  I need better blocking tools.  ',
+  }, now)
+  assert.equal(scheduled.reactivatesAt.toISOString(), '2026-09-08T00:00:00.000Z')
+  assert.equal(scheduled.feedback, 'I need better blocking tools.')
+  assert.equal(scheduled.safetyConcern, true)
+
+  const manual = authLinkInternals.validateDeactivationRequest({
+    reason: 'taking_a_break',
+    returnPlan: 'in_my_own_time',
+  }, now)
+  assert.equal(manual.reactivatesAt, null)
+})
+
 test('renders a branded password reset email with escaped account data and a one-hour notice', () => {
   const html = authLinkInternals.renderPasswordResetEmail({
     email: '<reader@example.com>',
@@ -71,4 +119,21 @@ test('returns an opaque invalid result for malformed reset tokens without access
   })
 
   assert.deepEqual(await handleAuthApiRequest(request, {}), { valid: false })
+})
+
+test('normalizes and validates registration handles', () => {
+  assert.equal(authLinkInternals.normalizeHandle('  @Reader_Name  '), 'reader_name')
+  assert.equal(authLinkInternals.isValidHandle('reader_name'), true)
+  assert.equal(authLinkInternals.isValidHandle('no spaces'), false)
+  assert.equal(authLinkInternals.isValidHandle('ab'), false)
+})
+
+test('generates unique valid randomized username candidates', () => {
+  const suggestions = authLinkInternals.randomizedHandleCandidates('reader_name')
+  assert.equal(suggestions.length, 12)
+  assert.equal(new Set(suggestions).size, suggestions.length)
+  suggestions.forEach((suggestion) => {
+    assert.equal(authLinkInternals.isValidHandle(suggestion), true)
+    assert.match(suggestion, /^reader_name_\d{3,4}$/)
+  })
 })

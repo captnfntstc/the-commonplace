@@ -8,6 +8,7 @@ import { handleLastFmApiRequest } from './server/lastfm.mjs'
 import { handleIdentityApiRequest } from './server/identities.mjs'
 import { handleOpenLibraryApiRequest } from './server/openlibrary.mjs'
 import { handleAuthApiRequest } from './server/auth-links.mjs'
+import { handleFeedApiRequest } from './server/feed.mjs'
 
 const root = fileURLToPath(new URL('.', import.meta.url))
 const distRoot = join(root, 'dist')
@@ -54,6 +55,11 @@ createServer(async (request, response) => {
       return sendJson(response, 200, payload, 'no-store')
     }
 
+    if (request.url?.startsWith('/api/feed')) {
+      const payload = await handleFeedApiRequest(request)
+      return sendJson(response, 200, payload, 'private, no-store')
+    }
+
     if (request.method === 'GET' && request.url?.startsWith('/api/igdb/')) {
       const payload = await handleIgdbApiRequest(request.url)
       if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
@@ -98,7 +104,13 @@ createServer(async (request, response) => {
     return serveFile(response, filePath)
   } catch (error) {
     const status = Number(error?.statusCode) || (error?.name === 'AbortError' ? 504 : 500)
-    return sendJson(response, status, { error: error instanceof Error ? error.message : 'Unexpected server error.' })
+    const cacheControl = request.url?.startsWith('/api/feed') ? 'private, no-store' : undefined
+    return sendJson(
+      response,
+      status,
+      { error: error instanceof Error ? error.message : 'Unexpected server error.' },
+      cacheControl,
+    )
   }
 }).listen(port, '0.0.0.0', () => {
   console.log(`The Commonplace is listening on port ${port}`)

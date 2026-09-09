@@ -25,6 +25,7 @@ handles/{handle}                         public handle -> uid lookup
 users/{uid}                              public profile and privacy settings
 users/{uid}/private/settings             email and private account settings
 users/{uid}/private/app-state            likes, saves, follows, requests, notifications
+users/{uid}/private/feed-preferences      bounded recommendation affinity weights
 users/{uid}/media/{mediaId}              compressed PFP, cover, or collection cover
 users/{uid}/activity/saved               shareable saved-catalog IDs
 users/{uid}/entries/{entryId}            posts/reviews
@@ -38,7 +39,15 @@ posts/{entryId}/comments/{commentId}    comments and nested likes/replies
 
 Uploaded images are converted to compressed JPEG data URLs and stored in separate Firestore media documents. Each image is capped below 700,000 characters to stay safely under Firestore's 1 MiB document limit. This is appropriate for the current small app; a dedicated image service can replace it later if usage grows substantially.
 
-Public profile data intentionally excludes email. Private-profile entries and collections require ownership or an accepted follow relationship. Saved activity is readable only when the profile setting allows it.
+Public profile data intentionally excludes email. Private-profile entries, collections, reviews, and interactions require ownership or mutual following: both `viewer -> owner` and `owner -> viewer` follow documents must exist. One-way and pending relationships cannot read private content. Saved activity is readable only when the profile setting allows it and the same profile-content rule passes.
+
+## Personalized Home feed
+
+The authenticated `GET /api/feed` endpoint reads chronological 40-entry candidate windows through the Admin SDK, removes deactivated and inaccessible private accounts, then applies deterministic affinity and diversity ranking. The category chips use the same endpoint with `category=album|book|film|game|song|tv`; `All` is the default. Responses are always `private, no-store` and use opaque keyset cursors.
+
+`POST /api/feed/signals` records only decaying aggregate weights for media type, genre, and creator. Raw searches and browsing history are never stored. `DELETE /api/feed/preferences` powers the **Reset Home recommendations** setting. Entry-open deduplication remains account-scoped and device-local for 24 hours.
+
+Deploy both `firestore.rules` and `firestore.indexes.json` before enabling `VITE_PERSONALIZED_HOME_FEED`. The endpoint also requires the server-side `FIREBASE_ADMIN_*` values described below.
 
 ## One-time browser migration
 
@@ -48,7 +57,7 @@ Because the old browser data was not account-scoped, the first Firebase account 
 
 ## Intentionally device-local
 
-Recent searches, metadata/image caches, the Firebase Auth persistence record, and the composer’s “warn about unrated entries” preference remain in local storage or IndexedDB. They are device preferences/cache rather than account content.
+Recent searches, metadata/image caches, 24-hour feed-open deduplication records, the Firebase Auth persistence record, and the composer’s “warn about unrated entries” preference remain in local storage or IndexedDB. They are device preferences/cache rather than account content.
 
 ## Clean email verification links
 
@@ -75,5 +84,9 @@ The app does not fall back to Firebase's built-in verification email. If any ser
 - Change the profile picture and cover, then verify `users/{uid}/media` contains compressed documents and the images appear on cards.
 - Create, edit, save, and remove collections from a second browser session.
 - Toggle profile/privacy settings and confirm a second user sees only allowed content.
+- Confirm private content is hidden for both one-way follow directions and appears only after the relationship becomes mutual.
+- Remove one half of a mutual relationship and confirm private cards are purged without a reload.
+- Scroll beyond the initial 20 Home cards and confirm no entry is duplicated or skipped across cursors.
+- Reset Home recommendations in Settings and confirm the feed remains usable with cold-start ranking.
 - Add, like, reply to, and delete comments while signed in.
 - Confirm Firestore requests are rejected when one user attempts to write another user's paths.

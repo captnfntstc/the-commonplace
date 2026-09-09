@@ -4,12 +4,29 @@ import { handleLastFmApiRequest } from './lastfm.mjs'
 import { handleIdentityApiRequest } from './identities.mjs'
 import { handleOpenLibraryApiRequest } from './openlibrary.mjs'
 import { handleAuthApiRequest } from './auth-links.mjs'
+import { handleFeedApiRequest } from './feed.mjs'
 
 export function createIgdbDevPlugin(env) {
   return {
     name: 'the-commonplace-igdb-api',
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
+        if (request.url?.startsWith('/api/feed')) {
+          try {
+            const payload = await handleFeedApiRequest(request, env)
+            response.statusCode = 200
+            response.setHeader('Content-Type', 'application/json; charset=utf-8')
+            response.setHeader('Cache-Control', 'private, no-store')
+            response.end(JSON.stringify(payload))
+          } catch (error) {
+            response.statusCode = Number(error?.statusCode) || 503
+            response.setHeader('Content-Type', 'application/json; charset=utf-8')
+            response.setHeader('Cache-Control', 'private, no-store')
+            response.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Feed temporarily unavailable.' }))
+          }
+          return
+        }
+
         if (request.url?.startsWith('/api/auth/')) {
           try {
             const payload = await handleAuthApiRequest(request, env)

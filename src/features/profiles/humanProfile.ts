@@ -252,7 +252,7 @@ export function getDynamicHumanTabs(options: {
   return [
     { id: 'overview', label: 'Overview' },
     ...workTabs,
-    { id: 'reviews', label: 'Community Reviews' },
+    { id: 'reviews', label: 'Most Reviewed' },
     { id: 'related', label: 'Similar' },
   ]
 }

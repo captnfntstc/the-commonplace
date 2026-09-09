@@ -42,6 +42,12 @@ export type MetadataResult = {
   gameSearchRelevance?: number
   /** Game-only popularity score derived from IGDB ratings, follows, and hype. */
   gamePopularity?: number
+  /** Film/TV query relevance, including partial title + cast-name matches. */
+  screenSearchRelevance?: number
+  /** Temporary external ranking signals used until enough community reviews exist. */
+  externalRating?: number
+  externalRatingCount?: number
+  externalPopularity?: number
   gameMetadata?: GameMetadata
   /** Only populated by fetchLyrics — not present in search results */
   lyrics?: string
@@ -134,6 +140,26 @@ type TmdbItem = {
   poster_path?: string
   genre_ids?: number[]
   original_language?: string
+  popularity?: number
+  vote_count?: number
+  vote_average?: number
+}
+
+type TmdbCastCredit = {
+  id: number
+  name?: string
+  character?: string
+  profile_path?: string | null
+  order?: number
+}
+
+export type TmdbCastMember = {
+  id: string
+  providerId: string
+  name: string
+  character: string
+  profileUrl?: string
+  order: number
 }
 
 export type TmdbTvSeason = {
@@ -2741,7 +2767,7 @@ const lyricsCache = new Map<string, string | undefined>()
 const apiResponseCache = new Map<string, unknown>()
 const pendingApiRequestCache = new Map<string, Promise<unknown>>()
 const API_CACHE_NAMESPACE = 'external-api-v7'
-const SEARCH_CACHE_NAMESPACE = 'metadata-search-v9'
+const SEARCH_CACHE_NAMESPACE = 'metadata-search-v11'
 const STATIC_METADATA_TTL = 30 * 24 * 60 * 60 * 1000
 const SEARCH_METADATA_TTL = 14 * 24 * 60 * 60 * 1000
 
@@ -3051,6 +3077,10 @@ async function searchTmdb(
             : undefined,
           year: yearFrom(date),
           summary: item.overview,
+          screenSearchRelevance: tmdbTitleSearchRelevance(title, query),
+          externalRating: item.vote_average,
+          externalRatingCount: item.vote_count,
+          externalPopularity: item.popularity,
         }
       })
     )
@@ -3145,6 +3175,205 @@ export async function fetchTmdbSimilarTitles(
       .sort((left, right) => right.sharedGenreCount - left.sharedGenreCount)
       .slice(0, 8)
       .map(({ result }) => result)
+  })
+}
+
+export type TmdbPersonSearchCandidate = {
+  personQuery: string
+  titleQuery: string
+}
+
+export function tmdbPersonSearchCandidates(query: string): TmdbPersonSearchCandidate[] {
+  const words = query.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return []
+  const candidates: TmdbPersonSearchCandidate[] = [{ personQuery: words.join(' '), titleQuery: '' }]
+
+  for (let personWordCount = 1; personWordCount <= Math.min(3, words.length - 1); personWordCount += 1) {
+    if (personWordCount === 1 && words.at(-1)!.length > 3) continue
+    candidates.push({
+      personQuery: words.slice(-personWordCount).join(' '),
+      titleQuery: words.slice(0, -personWordCount).join(' '),
+    })
+  }
+
+  return candidates.filter((candidate, index, items) => (
+    items.findIndex((item) => normalizePersonName(item.personQuery) === normalizePersonName(candidate.personQuery)) === index
+  ))
+}
+
+function normalizeTmdbTitleSearch(value: string) {
+  return normalizePersonName(value).replace(/\bse7en\b/g, 'seven')
+}
+
+export function tmdbTitleSearchRelevance(title: string, query: string) {
+  const normalizedTitle = normalizeTmdbTitleSearch(title)
+  const normalizedQuery = normalizeTmdbTitleSearch(query)
+  if (!normalizedTitle || !normalizedQuery) return 1
+  if (normalizedTitle === normalizedQuery) return 4
+  if (normalizedTitle.startsWith(normalizedQuery)) return 3
+  const queryWords = normalizedQuery.split(' ').filter(Boolean)
+  return queryWords.every((word) => normalizedTitle.includes(word)) ? 2 : 1
+}
+
+export function tmdbCreditMatchesTitle(credit: TmdbPersonCredit, titleQuery: string) {
+  if (!titleQuery) return true
+  const title = normalizeTmdbTitleSearch(credit.title || credit.name || '')
+  const queryWords = normalizeTmdbTitleSearch(titleQuery).split(' ').filter(Boolean)
+  return queryWords.every((word) => title.includes(word))
+}
+
+async function searchTmdbPersonCredits(
+  type: 'film' | 'tv',
+  query: string,
+  signal?: AbortSignal,
+): Promise<MetadataResult[]> {
+  const candidates = tmdbPersonSearchCandidates(query)
+  if (!tmdbToken || candidates.length === 0) return []
+  const headers = { Authorization: `Bearer ${tmdbToken}`, accept: 'application/json' }
+  const mediaType = type === 'film' ? 'movie' : 'tv'
+
+  const candidateCredits = await Promise.all(candidates.map(async (candidate) => {
+    const personUrl = new URL('https://api.themoviedb.org/3/search/person')
+    personUrl.searchParams.set('query', candidate.personQuery)
+    personUrl.searchParams.set('include_adult', 'false')
+    personUrl.searchParams.set('language', 'en-US')
+    personUrl.searchParams.set('page', '1')
+    const personResponse = await fetch(personUrl, { headers, signal })
+    if (!personResponse.ok) return []
+    const personData = await personResponse.json() as { results?: TmdbPersonResult[] }
+    const expectedName = normalizePersonName(candidate.personQuery)
+    const people = (personData.results || [])
+      .filter(({ name }) => {
+        const normalizedName = normalizePersonName(name || '')
+        return normalizedName === expectedName || normalizedName.startsWith(expectedName)
+      })
+      .slice(0, 5)
+    if (people.length === 0) return []
+
+    const credits = await Promise.all(people.map(async (person) => {
+      const creditsUrl = new URL(`https://api.themoviedb.org/3/person/${person.id}/combined_credits`)
+      creditsUrl.searchParams.set('language', 'en-US')
+      const creditsResponse = await fetch(creditsUrl, { headers, signal })
+      if (!creditsResponse.ok) return []
+      const creditsData = await creditsResponse.json() as { cast?: TmdbPersonCredit[]; crew?: TmdbPersonCredit[] }
+      return [...(creditsData.cast || []), ...(creditsData.crew || [])]
+    }))
+    return credits.flat()
+      .filter((credit) => credit.media_type === mediaType && tmdbCreditMatchesTitle(credit, candidate.titleQuery))
+      .map((credit) => ({ ...credit, searchTitleQuery: candidate.titleQuery }))
+  }))
+
+  const uniqueCredits = new Map<number, TmdbPersonCredit>()
+  candidateCredits.flat().forEach((credit) => {
+    const current = uniqueCredits.get(credit.id)
+    if (!current || (credit.popularity || 0) > (current.popularity || 0)) uniqueCredits.set(credit.id, credit)
+  })
+  const rankedCredits = [...uniqueCredits.values()]
+    .sort((left, right) => (
+      (right.popularity || 0) - (left.popularity || 0)
+      || (right.vote_count || 0) - (left.vote_count || 0)
+      || String(right.release_date || right.first_air_date || '').localeCompare(String(left.release_date || left.first_air_date || ''))
+    ))
+    .slice(0, 10)
+
+  return Promise.all(rankedCredits.map(async (credit) => {
+    const title = (type === 'film' ? credit.title : credit.name) || 'Untitled'
+    const date = type === 'film' ? credit.release_date : credit.first_air_date
+    const genres = (credit.genre_ids || []).map((genreId) => tmdbGenreMap[genreId]).filter(Boolean)
+    return {
+      id: `tmdb:${type}:${credit.id}`,
+      type,
+      title,
+      creator: await fetchTmdbCreator(type, credit.id, title, signal),
+      provider: yearFrom(date) || '',
+      providerId: String(credit.id),
+      genre: genres[0] || (type === 'film' ? 'Film' : 'TV Show'),
+      genres,
+      coverUrl: credit.poster_path
+        ? resolveArtworkUrl(`https://image.tmdb.org/t/p/w500${credit.poster_path}`, title, type)
+        : undefined,
+      year: yearFrom(date),
+      screenSearchRelevance: credit.searchTitleQuery
+        ? tmdbTitleSearchRelevance(title, credit.searchTitleQuery)
+        : 1,
+      externalRating: credit.vote_average,
+      externalRatingCount: credit.vote_count,
+      externalPopularity: credit.popularity,
+    } satisfies MetadataResult
+  }))
+}
+
+export function externalScreenSearchScore(result: MetadataResult) {
+  const rating = Math.max(0, result.externalRating || 0) * 10
+  const reviewConfidence = Math.log10(Math.max(0, result.externalRatingCount || 0) + 1) * 2
+  const popularity = Math.log10(Math.max(0, result.externalPopularity || 0) + 1)
+  return rating + reviewConfidence + popularity
+}
+
+async function searchTmdbByTitleOrPerson(
+  type: 'film' | 'tv',
+  query: string,
+  signal?: AbortSignal,
+) {
+  const [titleSearch, personSearch] = await Promise.allSettled([
+    searchTmdb(type, query, signal),
+    searchTmdbPersonCredits(type, query, signal),
+  ])
+  if (signal?.aborted) signal.throwIfAborted()
+  if (titleSearch.status === 'rejected' && personSearch.status === 'rejected') throw titleSearch.reason
+
+  const merged = [
+    ...(titleSearch.status === 'fulfilled' ? titleSearch.value : []),
+    ...(personSearch.status === 'fulfilled' ? personSearch.value : []),
+  ]
+  return [...new Map(merged.map((result) => [result.id, result])).values()]
+    .sort((left, right) => (
+      (right.screenSearchRelevance || 0) - (left.screenSearchRelevance || 0)
+      || externalScreenSearchScore(right) - externalScreenSearchScore(left)
+    ))
+    .slice(0, 12)
+}
+
+export function mapTmdbCastMembers(cast: TmdbCastCredit[]): TmdbCastMember[] {
+  const unique = new Map<number, TmdbCastCredit>()
+  cast
+    .filter((credit) => credit.id && credit.name?.trim())
+    .sort((left, right) => (left.order ?? Number.MAX_SAFE_INTEGER) - (right.order ?? Number.MAX_SAFE_INTEGER))
+    .forEach((credit) => {
+      if (!unique.has(credit.id)) unique.set(credit.id, credit)
+    })
+
+  return [...unique.values()].slice(0, 20).map((credit, index) => ({
+    id: `tmdb:person:${credit.id}`,
+    providerId: String(credit.id),
+    name: credit.name!.trim(),
+    character: credit.character?.trim() || 'Cast member',
+    profileUrl: credit.profile_path
+      ? resolveArtworkUrl(`https://image.tmdb.org/t/p/w500${credit.profile_path}`, credit.name, 'Cast')
+      : undefined,
+    order: credit.order ?? index,
+  }))
+}
+
+export async function fetchTmdbCast(
+  type: 'film' | 'tv',
+  providerId: string,
+  signal?: AbortSignal,
+): Promise<TmdbCastMember[]> {
+  const cleanId = providerId.replace(/^tmdb:(?:film|movie|tv):/i, '').trim()
+  if (!tmdbToken || !/^\d+$/.test(cleanId)) return []
+
+  return cachedApiRequest(`tmdb-cast-v1:${type}:${cleanId}`, signal, async () => {
+    const endpoint = type === 'film' ? 'movie' : 'tv'
+    const url = new URL(`https://api.themoviedb.org/3/${endpoint}/${cleanId}/credits`)
+    url.searchParams.set('language', 'en-US')
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${tmdbToken}`, accept: 'application/json' },
+      signal,
+    })
+    if (!response.ok) throw new Error(`TMDB cast request failed with HTTP ${response.status}.`)
+    const data = await response.json() as { cast?: TmdbCastCredit[] }
+    return mapTmdbCastMembers(data.cast || [])
   })
 }
 
@@ -3258,6 +3487,10 @@ type TmdbPersonCredit = {
   order?: number
   job?: string
   department?: string
+  popularity?: number
+  vote_count?: number
+  vote_average?: number
+  searchTitleQuery?: string
 }
 
 export interface HumanScreenCatalog {
@@ -5705,7 +5938,7 @@ export async function searchMetadata(
 
   let results: MetadataResult[] = []
   if (type === 'book') results = await searchBooks(providerQuery, signal)
-  else if (type === 'film' || type === 'tv') results = await searchTmdb(type, providerQuery, signal)
+  else if (type === 'film' || type === 'tv') results = await searchTmdbByTitleOrPerson(type, providerQuery, signal)
   else if (type === 'song') results = await searchSongs(providerQuery, signal)
   else if (type === 'album') results = await searchAlbums(providerQuery, signal)
   else if (type === 'game') results = await searchGames(providerQuery, signal)

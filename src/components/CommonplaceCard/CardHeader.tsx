@@ -1,5 +1,5 @@
 import React from 'react'
-import { User, Star } from 'lucide-react'
+import { Lock, User, Star } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { formatRelativeTime, formatFullDateTime } from '../../utils/dateUtils'
 
@@ -11,6 +11,7 @@ interface CardHeaderProps {
   authorAvatarUrl?: string
   createdAt?: string
   onOpenProfile?: () => void
+  visibility?: 'public' | 'mutual'
 }
 
 export function StarRating({ rating }: { rating: number }) {
@@ -39,6 +40,7 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
   authorAvatarUrl,
   createdAt,
   onOpenProfile,
+  visibility = 'public',
 }) => {
   const displayHandle = authorHandle.replace(/^@/, '')
 
@@ -57,7 +59,7 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
         >
           <div className="avatar" aria-hidden="true">
             {authorAvatarUrl ? (
-              <img src={authorAvatarUrl} alt={displayHandle} className="avatar-img" referrerPolicy="no-referrer" />
+              <img src={authorAvatarUrl} alt={displayHandle} className="avatar-img" referrerPolicy="no-referrer" loading="lazy" decoding="async" />
             ) : (
               <User />
             )}
@@ -69,6 +71,15 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
             &bull; {formatRelativeTime(createdAt)}
           </span>
         )}
+        {visibility === 'mutual' && (
+          <span
+            className="card-mutual-visibility"
+            title="Visible because you follow each other"
+            aria-label="Visible because you follow each other"
+          >
+            <Lock aria-hidden="true" />
+          </span>
+        )}
       </div>
       <div className="card-type-icon" aria-label={typeLabel} title={typeLabel}>
         <Icon aria-hidden="true" />
@@ -76,5 +87,3 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
     </div>
   )
 }
-
-

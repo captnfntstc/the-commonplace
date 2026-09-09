@@ -7,10 +7,13 @@ import {
   ChevronUp,
   Plus,
   Settings,
+  Activity,
+  CircleHelp,
   LogOut,
   CircleUserRound,
   Home,
   MailCheck,
+  Menu,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -29,10 +32,13 @@ import { CardOverlayModal } from '../components/CommonplaceCard/CardOverlayModal
 import { CardSkeletonGrid } from '../components/CommonplaceCard/CardSkeleton'
 import { UserProfilePage } from '../pages/UserProfilePage'
 import { SettingsPage } from '../pages/SettingsPage'
+import { ActivityPage } from '../pages/ActivityPage'
+import { HelpSupportPage } from '../pages/HelpSupportPage'
 import { LoginPage } from '../pages/LoginPage'
 import { RegisterPage } from '../pages/RegisterPage'
 import { EmailVerificationPage } from '../pages/EmailVerificationPage'
 import { ResetPasswordPage } from '../pages/ResetPasswordPage'
+import { NotFoundPage } from '../pages/NotFoundPage'
 import { LogoutConfirmModal } from '../components/auth/LogoutConfirmModal'
 import { useAuth } from '../context/AuthContext'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
@@ -51,6 +57,14 @@ import {
 } from '../services/profileCache'
 import { identityToUniversalEntity, searchIdentities } from '../services/identity'
 import type { UserProfileState } from '../types/userProfile'
+import {
+  PENDING_SIGNUP_PROFILE_KEY,
+  pendingSignupProfileForUser,
+  profileBelongsToAuthUser,
+  profileFromAuthUser,
+  shouldResetLegacyDemoProfile,
+  type AuthProfileSource,
+} from '../features/profiles/accountProfile'
 import type { MetadataChip } from '../types/mediaEntity'
 import {
   loadProfileCollections,
@@ -60,6 +74,12 @@ import {
   type ProfileCollectionItem,
 } from '../features/collections/profileCollections'
 import type { AppNotification } from '../types/notification'
+import { birthdayNotificationId } from '../features/auth/ageEligibility'
+import {
+  applyPendingSavedEntryChanges,
+  updatePendingSavedEntryChanges,
+  type PendingSavedEntryChanges,
+} from '../features/saves/persistence'
 import { EntryComposer } from '../features/entries/composer/EntryComposer'
 import {
   dedupeSearchEntities,
@@ -73,6 +93,7 @@ import {
   type HeaderSearchEntity,
 } from '../features/search/entitySearch'
 import { HeaderSearch } from '../features/search/HeaderSearch'
+import type { SearchCategory } from '../components/Search/PrimarySearch'
 import {
   decodeRouteSegment,
   entityTypeByRouteSegment,
@@ -82,12 +103,18 @@ import {
   routeSegment,
 } from '../features/entities/routing'
 import {
+  clearPendingEntrySync,
   emptyDraft,
+  entrySnapshotsMatch,
   entryTypes,
   getDefaultCoverTone,
   getTypeMeta,
+  hasAccountEntryStorage,
   loadEntries,
+  loadPendingEntrySync,
   makeEntryId,
+  markEntriesPendingSync,
+  reconcileEntrySnapshots,
   saveEntriesToStorage,
   type Entry,
   type EntryDraft,
@@ -95,20 +122,38 @@ import {
 } from '../features/entries/model'
 import {
   canUseCloudData,
+  loadPostEntry,
+  loadPublicFeedEntries,
+  loadPublicAccountIdentityByHandle,
   loadPublicUserByHandle,
   loadOrMigrateUserCollections,
   loadOrMigrateUserData,
+  deleteCloudNotifications,
   saveUserCollections,
   saveFollowRequest,
   saveFollowRelationship,
   savePostCommenting,
+  setCloudSavedEntry,
+  setCloudNotificationsRead,
   saveUserCloudState,
   saveUserEntries,
   saveUserProfile,
+  subscribePostEngagements,
+  subscribeUserNotifications,
+  togglePostLike,
   uploadUserImage,
+  type PostEngagement,
   type PublicUserData,
   type UserCloudSnapshot,
 } from '../services/cloudData'
+import {
+  feedSignalSubject,
+  personalizedHomeFeedEnabled,
+  recordFeedSignal,
+  resetFeedPreferences,
+  shouldRecordEntryOpen,
+} from '../services/feed'
+import { usePersonalizedFeed } from '../features/feed/usePersonalizedFeed'
 import {
   isLegacySeedCollection,
   isLegacySeedEntry,
@@ -121,7 +166,24 @@ import {
 const SEARCH_INITIAL_RESULT_LIMIT = 6
 const SEARCH_RESULTS_PER_PAGE = 6
 const SEARCH_MAX_RESULT_LIMIT = 40
+const SEARCH_ENTRY_TYPE_BY_FILTER: Partial<Record<SearchCategory, EntryType>> = {
+  albums: 'album',
+  books: 'book',
+  films: 'film',
+  games: 'game',
+  songs: 'song',
+  shows: 'tv',
+}
+const FEED_ENTRY_TYPE_BY_ENTITY: Partial<Record<MediaEntityType, EntryType>> = {
+  album: 'album',
+  book: 'book',
+  movie: 'film',
+  game: 'game',
+  song: 'song',
+  tv: 'tv',
+}
 const PROFILE_STORAGE_KEY = 'the-commonplace.user-profile.v1'
+const pendingSavedEntryWrites = new Map<string, Promise<void>>()
 
 function loadStoredEntryIds(key: string) {
   try {
@@ -130,6 +192,54 @@ function loadStoredEntryIds(key: string) {
   } catch {
     return []
   }
+}
+
+function pendingSavedEntriesStorageKey(userId: string) {
+  return `the-commonplace.pending-saves.${userId}`
+}
+
+function loadPendingSavedEntryChanges(userId: string): PendingSavedEntryChanges {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(pendingSavedEntriesStorageKey(userId)) || '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const changes: PendingSavedEntryChanges = {}
+    Object.entries(parsed as Record<string, unknown>).forEach(([entryId, saved]) => {
+      if (typeof saved === 'boolean') changes[entryId] = saved
+    })
+    return changes
+  } catch {
+    return {}
+  }
+}
+
+function storePendingSavedEntryChanges(userId: string, changes: PendingSavedEntryChanges) {
+  const storageKey = pendingSavedEntriesStorageKey(userId)
+  if (Object.keys(changes).length === 0) localStorage.removeItem(storageKey)
+  else localStorage.setItem(storageKey, JSON.stringify(changes))
+}
+
+function clearPendingSavedEntryChange(userId: string, entryId: string, saved: boolean) {
+  const current = loadPendingSavedEntryChanges(userId)
+  if (current[entryId] !== saved) return
+  delete current[entryId]
+  storePendingSavedEntryChanges(userId, current)
+}
+
+function queueCloudSavedEntryChange(userId: string, entryId: string, saved: boolean) {
+  const queueKey = `${userId}:${entryId}`
+  const previous = pendingSavedEntryWrites.get(queueKey) || Promise.resolve()
+  const current = previous
+    .catch(() => undefined)
+    .then(() => setCloudSavedEntry(userId, entryId, saved))
+    .then(() => clearPendingSavedEntryChange(userId, entryId, saved))
+    .catch((error) => {
+      console.error('Unable to sync saved entry to Firebase; it will retry next time.', error)
+    })
+  pendingSavedEntryWrites.set(queueKey, current)
+  void current.finally(() => {
+    if (pendingSavedEntryWrites.get(queueKey) === current) pendingSavedEntryWrites.delete(queueKey)
+  })
+  return current
 }
 
 function loadStoredHandles(key: string) {
@@ -163,28 +273,58 @@ function emptyPublicProfile(handle: string): PublicUserData {
   }
 }
 
-const DEFAULT_USER_PROFILE: UserProfileState = {
-  firstName: 'Jimmy',
-  lastName: 'Boy',
-  showFullName: true,
-  handle: 'jimboii',
-  email: 'jimboii@commonplace.app',
-  bio: 'Collector of timeless passages, album impressions, cinematic notes, and personal reflections in one quiet place.',
+const EMPTY_USER_PROFILE: UserProfileState = {
+  firstName: 'Reader',
+  lastName: '',
+  showFullName: false,
+  handle: 'reader',
+  email: '',
+  bio: '',
   avatarUrl: '',
-  coverUrl: 'https://images.unsplash.com/photo-1457369804613-52c61a468e7d?q=80&w=1200&auto=format&fit=crop',
-  lastUsernameChangeDate: '2026-07-01T00:00:00.000Z',
+  coverUrl: '',
   showFollowLists: true,
   allowComments: true,
   showSavedActivity: false,
 }
 
-function loadLocalUserProfile() {
+function loadLocalUserProfile(user?: AuthProfileSource | null) {
   try {
     const stored = localStorage.getItem(PROFILE_STORAGE_KEY)
-    return stored ? { ...DEFAULT_USER_PROFILE, ...JSON.parse(stored) } as UserProfileState : DEFAULT_USER_PROFILE
+    const profile = stored
+      ? { ...EMPTY_USER_PROFILE, ...JSON.parse(stored) } as UserProfileState
+      : EMPTY_USER_PROFILE
+    if (!user) return profile
+    return profileBelongsToAuthUser(profile, user) ? profile : accountProfileForUser(user)
   } catch {
-    return DEFAULT_USER_PROFILE
+    return user ? accountProfileForUser(user) : EMPTY_USER_PROFILE
   }
+}
+
+function canReuseLocalAccountData(user: AuthProfileSource) {
+  try {
+    const stored = localStorage.getItem(PROFILE_STORAGE_KEY)
+    if (!stored) return false
+    const profile = { ...EMPTY_USER_PROFILE, ...JSON.parse(stored) } as UserProfileState
+    return profileBelongsToAuthUser(profile, user)
+  } catch {
+    return false
+  }
+}
+
+function emptyCloudState() {
+  return {
+    likedEntryIds: [],
+    savedEntryIds: [],
+    disabledCommentEntryIds: [],
+    followedUserHandles: [],
+    followRequestedHandles: [],
+    notifications: [],
+  }
+}
+
+function accountProfileForUser(user: AuthProfileSource) {
+  const pending = pendingSignupProfileForUser(user, localStorage.getItem(PENDING_SIGNUP_PROFILE_KEY))
+  return profileFromAuthUser(user, pending?.displayName, pending?.handle, pending?.birthday)
 }
 
 function collectionItemFromEntity(
@@ -225,6 +365,10 @@ export default function AppController() {
   const location = useLocation()
   const navigate = useNavigate()
   const [entries, setEntries] = useState<Entry[]>(loadEntries)
+  const entriesRef = useRef(entries)
+  const entriesRevisionRef = useRef(0)
+  const [publicFeedEntries, setPublicFeedEntries] = useState<Entry[]>([])
+  const [postEngagements, setPostEngagements] = useState<Record<string, PostEngagement>>({})
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<EntryType | 'all'>('all')
   const { expandedCardId, setExpandedCardId, toggleCardExpanded } = useCardExpansion()
@@ -237,19 +381,45 @@ export default function AppController() {
     verificationEmailCooldownSeconds,
     verificationEmailSent,
   } = useAuth()
-  const cloudUserId = currentUser?.uid || null
+  const currentUserId = currentUser?.uid
+  const currentUserDisplayName = currentUser?.displayName
+  const currentUserEmail = currentUser?.email
+  const currentUserPhotoUrl = currentUser?.photoURL
+  const currentUserCreationTime = currentUser?.metadata?.creationTime
+  const authProfile = useMemo<AuthProfileSource | null>(() => currentUserId ? {
+    uid: currentUserId,
+    displayName: currentUserDisplayName,
+    email: currentUserEmail,
+    photoURL: currentUserPhotoUrl,
+    metadata: { creationTime: currentUserCreationTime },
+  } : null, [
+    currentUserCreationTime,
+    currentUserDisplayName,
+    currentUserEmail,
+    currentUserId,
+    currentUserPhotoUrl,
+  ])
+  const cloudUserId = authProfile?.uid || null
   const [homeDataStatus, setHomeDataStatus] = useState<'loading' | 'ready'>(() =>
     authLoading || Boolean(cloudUserId) ? 'loading' : 'ready',
   )
-  const [activeView, setActiveView] = useState<'feed' | 'profile' | 'settings' | 'entity' | 'login' | 'register'>('feed')
+  const personalizedFeed = usePersonalizedFeed(
+    currentUser,
+    typeFilter,
+    homeDataStatus === 'ready',
+  )
+  const [activeView, setActiveView] = useState<'feed' | 'profile' | 'activity' | 'settings' | 'help' | 'entity' | 'login' | 'register' | 'not-found'>('feed')
   const [selectedProfileHandle, setSelectedProfileHandle] = useState<string | null>(null)
   const [selectedProfileCollectionId, setSelectedProfileCollectionId] = useState<string | null>(null)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
   const [selectedEntityType, setSelectedEntityType] = useState<MediaEntityType | null>(null)
   const [searchTab, setSearchTab] = useState<'media' | 'users'>('media')
+  const [searchMediaFilter, setSearchMediaFilter] = useState<SearchCategory | 'all'>('all')
   const [headerMediaResults, setHeaderMediaResults] = useState<MetadataResult[]>([])
   const [headerIdentityResults, setHeaderIdentityResults] = useState<UniversalMediaEntity[]>([])
-  const [headerMediaSearchLoading, setHeaderMediaSearchLoading] = useState(false)
+  const [headerMetadataSearchLoading, setHeaderMetadataSearchLoading] = useState(false)
+  const [headerIdentitySearchLoading, setHeaderIdentitySearchLoading] = useState(false)
+  const headerMediaSearchLoading = headerMetadataSearchLoading || headerIdentitySearchLoading
   const headerAlbumResults = headerMediaResults
   const headerAlbumSearchLoading = headerMediaSearchLoading
   void headerAlbumResults
@@ -353,6 +523,13 @@ export default function AppController() {
       searchEntityCacheRef.current.set(entity.id, universalEntity)
       setPersistedEntityCache((current) => ({ ...current, [entity.id]: universalEntity }))
       void cacheProfileEntity(universalEntity)
+    }
+    const feedType = FEED_ENTRY_TYPE_BY_ENTITY[(universalEntity?.type || entity.type) as MediaEntityType]
+    if (currentUser && feedType && personalizedHomeFeedEnabled) {
+      void recordFeedSignal(currentUser, 'search_open', {
+        type: feedType,
+        creator: entity.creatorValue,
+      }).catch((error) => console.error('Unable to update Home recommendations.', error))
     }
     handleOpenEntity(entity.id, universalEntity?.type || entity.type as MediaEntityType)
   }
@@ -459,11 +636,37 @@ export default function AppController() {
     navigate('/settings')
   }
 
-  const [userProfile, setUserProfile] = useState<UserProfileState>(loadLocalUserProfile)
+  const handleOpenActivity = () => {
+    setSelectedEntityId(null)
+    setSelectedEntityType(null)
+    setSelectedProfileHandle(null)
+    setActiveView('activity')
+    setProfileMenuOpen(false)
+    navigate('/activity')
+  }
+
+  const handleOpenHelp = () => {
+    setSelectedEntityId(null)
+    setSelectedEntityType(null)
+    setSelectedProfileHandle(null)
+    setActiveView('help')
+    setProfileMenuOpen(false)
+    navigate('/help')
+  }
+
+  const [userProfile, setUserProfile] = useState<UserProfileState>(() => loadLocalUserProfile(currentUser))
   const [cloudExternalProfile, setCloudExternalProfile] = useState<{
     handle: string
     data: PublicUserData
   } | null>(null)
+
+  useEffect(() => {
+    if (!currentUser?.uid) return
+    if (profileBelongsToAuthUser(userProfile, currentUser)) return
+    const accountProfile = accountProfileForUser(currentUser)
+    setUserProfile(accountProfile)
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(accountProfile))
+  }, [currentUser, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, userProfile])
 
   useEffect(() => {
     const handle = selectedProfileHandle
@@ -472,7 +675,7 @@ export default function AppController() {
       return
     }
     let cancelled = false
-    void loadPublicUserByHandle(handle)
+    void loadPublicUserByHandle(handle, cloudUserId)
       .then((data) => {
         if (!cancelled) setCloudExternalProfile(data ? { handle, data } : null)
       })
@@ -483,7 +686,7 @@ export default function AppController() {
     return () => {
       cancelled = true
     }
-  }, [selectedProfileHandle, userProfile.handle])
+  }, [cloudUserId, selectedProfileHandle, userProfile.handle])
 
   const persistUserProfile = async (updated: UserProfileState) => {
     let nextProfile = updated
@@ -523,19 +726,55 @@ export default function AppController() {
   })
 
   const toggleLikeEntry = (id: string) => {
-    setLikedEntryIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-      localStorage.setItem('the-commonplace.likes', JSON.stringify(next))
-      persistCloudState({ likedEntryIds: next })
-      return next
-    })
+    const target = [...entries, ...personalizedFeed.items, ...publicFeedEntries].find((entry) => entry.id === id)
+    const previousEngagement = postEngagements[id]
+    const wasLiked = previousEngagement?.isLiked ?? likedEntryIds.includes(id)
+    const nextLiked = !wasLiked
+    const nextLikedEntryIds = nextLiked
+      ? Array.from(new Set([...likedEntryIds, id]))
+      : likedEntryIds.filter((item) => item !== id)
+
+    setPostEngagements((previous) => ({
+      ...previous,
+      [id]: {
+        likeCount: Math.max(0, (previous[id]?.likeCount || 0) + (nextLiked ? 1 : -1)),
+        commentCount: previous[id]?.commentCount || 0,
+        isLiked: nextLiked,
+      },
+    }))
+    setLikedEntryIds(nextLikedEntryIds)
+    localStorage.setItem('the-commonplace.likes', JSON.stringify(nextLikedEntryIds))
+    persistCloudState({ likedEntryIds: nextLikedEntryIds })
+    if (target) sendFeedSignal('like', target, nextLiked)
+
+    if (cloudUserId) {
+      void togglePostLike(id, cloudUserId, nextLiked, {
+        name: userProfileName,
+        handle: userProfile.handle,
+      }, target?.title || 'Untitled entry').catch((error) => {
+        console.error('Unable to sync post like to Firebase.', error)
+        setPostEngagements((previous) => ({
+          ...previous,
+          [id]: previousEngagement || { likeCount: 0, commentCount: 0, isLiked: wasLiked },
+        }))
+        setLikedEntryIds(likedEntryIds)
+        localStorage.setItem('the-commonplace.likes', JSON.stringify(likedEntryIds))
+      })
+    }
   }
 
   const toggleSaveEntry = (id: string) => {
+    const target = [...entries, ...personalizedFeed.items, ...publicFeedEntries].find((entry) => entry.id === id)
     setSavedEntryIds((prev) => {
-      const next = prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+      const nextSaved = !prev.includes(id)
+      const next = nextSaved ? [...prev, id] : prev.filter((item) => item !== id)
       localStorage.setItem('the-commonplace.saves', JSON.stringify(next))
-      persistCloudState({ savedEntryIds: next })
+      if (cloudUserId) {
+        const pending = updatePendingSavedEntryChanges(loadPendingSavedEntryChanges(cloudUserId), id, nextSaved)
+        storePendingSavedEntryChanges(cloudUserId, pending)
+        void queueCloudSavedEntryChange(cloudUserId, id, nextSaved)
+      }
+      if (target) sendFeedSignal('save', target, nextSaved)
       return next
     })
   }
@@ -580,21 +819,98 @@ export default function AppController() {
     }
   }
   const [overlayEntry, setOverlayEntry] = useState<Entry | null>(null)
+  const [overlayNotificationFocus, setOverlayNotificationFocus] = useState<{
+    postId: string
+    commentId?: string
+    replyId?: string
+    requestId: string
+  } | null>(null)
+  const notificationOpenRequestRef = useRef('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [appFeedback, setAppFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+  const [showScrollToTop, setShowScrollToTop] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [logoutLoading, setLogoutLoading] = useState(false)
   const [logoutError, setLogoutError] = useState('')
   const [collectionTarget, setCollectionTarget] = useState<ProfileCollectionItem | null>(null)
   const gridRef = useRef<HTMLElement>(null)
+  const feedSentinelRef = useRef<HTMLDivElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const [searchLimit, setSearchLimit] = useState(SEARCH_INITIAL_RESULT_LIMIT)
   const [persistedEntityCache, setPersistedEntityCache] = useState<Record<string, UniversalMediaEntity>>({})
+
+  const sendFeedSignal = (
+    action: Parameters<typeof recordFeedSignal>[1],
+    entry: Pick<Entry, 'type' | 'creator' | 'genre'>,
+    active?: boolean,
+  ) => {
+    if (!currentUser || !personalizedHomeFeedEnabled) return
+    void recordFeedSignal(currentUser, action, feedSignalSubject(entry), active)
+      .catch((error) => console.error('Unable to update Home recommendations.', error))
+  }
+
+  const openEntryOverlay = (entry: Entry) => {
+    notificationOpenRequestRef.current = ''
+    setOverlayNotificationFocus(null)
+    setOverlayEntry(entry)
+    if (currentUser?.uid && shouldRecordEntryOpen(currentUser.uid, entry.id)) {
+      sendFeedSignal('open', entry)
+    }
+  }
+
+  const closeEntryOverlay = () => {
+    notificationOpenRequestRef.current = ''
+    setOverlayEntry(null)
+    setOverlayNotificationFocus(null)
+  }
 
   useEffect(() => {
     void migrateUnsafeIdentityCaches()
     purgeLegacySeedStorage()
   }, [])
+
+  useEffect(() => {
+    const updateScrollToTopVisibility = () => setShowScrollToTop(window.scrollY > 0)
+    updateScrollToTopVisibility()
+    window.addEventListener('scroll', updateScrollToTopVisibility, { passive: true })
+    return () => window.removeEventListener('scroll', updateScrollToTopVisibility)
+  }, [])
+
+  useEffect(() => {
+    if (!profileMenuOpen) return
+    const closeProfileMenuOutside = (event: MouseEvent) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target as Node)) {
+        setProfileMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', closeProfileMenuOutside)
+    return () => document.removeEventListener('mousedown', closeProfileMenuOutside)
+  }, [profileMenuOpen])
+
+  useEffect(() => {
+    setProfileMenuOpen(false)
+    setNotificationsOpen(false)
+    setSearchOpen(false)
+    setMobileMenuOpen(false)
+  }, [location.pathname])
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [mobileMenuOpen])
+
+  useEffect(() => {
+    if (!appFeedback) return
+    const timeout = window.setTimeout(() => setAppFeedback(null), 3500)
+    return () => window.clearTimeout(timeout)
+  }, [appFeedback])
 
   useEffect(() => {
     if (!selectedEntityId || UNIVERSAL_MEDIA_ENTITIES[selectedEntityId] || searchEntityCacheRef.current.has(selectedEntityId)) {
@@ -636,9 +952,21 @@ export default function AppController() {
     if (!currentUser) {
       if (section === 'register') {
         setActiveView('register')
-      } else {
+      } else if (!section || section === 'login') {
         setActiveView('login')
         if (section !== 'login') navigate('/login', { replace: true })
+      } else if (
+        section === 'profile'
+        || section === 'settings'
+        || section === 'activity'
+        || section === 'help'
+        || section === 'users'
+        || Boolean(entityTypeByRouteSegment[section])
+      ) {
+        setActiveView('login')
+        navigate('/login', { replace: true })
+      } else {
+        setActiveView('not-found')
       }
       setSelectedProfileHandle(null)
       setSelectedEntityId(null)
@@ -687,6 +1015,14 @@ export default function AppController() {
       return
     }
 
+    if (section === 'activity' || section === 'help') {
+      setActiveView(section)
+      setSelectedProfileHandle(null)
+      setSelectedEntityId(null)
+      setSelectedEntityType(null)
+      return
+    }
+
     if (section === 'users' && rawId) {
       const cleanHandle = rawId.replace(/^@/, '')
       setActiveView('profile')
@@ -706,7 +1042,10 @@ export default function AppController() {
       return
     }
 
-    navigate('/', { replace: true })
+    setActiveView('not-found')
+    setSelectedProfileHandle(null)
+    setSelectedEntityId(null)
+    setSelectedEntityType(null)
   }, [authLoading, currentUser, location.pathname, navigate, userProfile.handle])
 
   useEffect(() => {
@@ -751,24 +1090,20 @@ export default function AppController() {
     })
   }, [])
 
+  const shouldSearchIdentities = searchMediaFilter === 'all' || searchMediaFilter === 'people'
+
   useEffect(() => {
     const normalizedQuery = query.trim()
-    if (!searchOpen || searchTab !== 'media' || normalizedQuery.length < 2) {
-      setHeaderMediaResults([])
+    if (!searchOpen || searchTab !== 'media' || normalizedQuery.length < 2 || !shouldSearchIdentities) {
       setHeaderIdentityResults([])
-      setHeaderMediaSearchLoading(false)
+      setHeaderIdentitySearchLoading(false)
       return
     }
 
     const abortController = new AbortController()
+    setHeaderIdentitySearchLoading(true)
+    setHeaderIdentityResults([])
     const timer = window.setTimeout(() => {
-      const typesToSearch = entryTypes.map((entryType) => entryType.id)
-      setHeaderMediaSearchLoading(true)
-
-      let pendingSearches = typesToSearch.length + 1
-      setHeaderMediaResults([])
-      setHeaderIdentityResults([])
-
       searchIdentities(normalizedQuery, abortController.signal, 10)
         .then((result) => {
           if (!abortController.signal.aborted) {
@@ -779,9 +1114,51 @@ export default function AppController() {
           if ((err as Error)?.name === 'AbortError') return
         })
         .finally(() => {
-          pendingSearches -= 1
-          if (pendingSearches === 0 && !abortController.signal.aborted) setHeaderMediaSearchLoading(false)
+          if (!abortController.signal.aborted) setHeaderIdentitySearchLoading(false)
         })
+    }, 160)
+
+    return () => {
+      abortController.abort()
+      window.clearTimeout(timer)
+    }
+  }, [query, searchOpen, searchTab, shouldSearchIdentities])
+
+  useEffect(() => {
+    const normalizedQuery = query.trim()
+    const selectedType = searchMediaFilter === 'all' || searchMediaFilter === 'people'
+      ? undefined
+      : SEARCH_ENTRY_TYPE_BY_FILTER[searchMediaFilter]
+    const typesToSearch = selectedType
+      ? [selectedType]
+      : searchMediaFilter === 'people'
+        ? []
+        : entryTypes.map((entryType) => entryType.id)
+
+    if (!searchOpen || searchTab !== 'media' || normalizedQuery.length < 2) {
+      setHeaderMediaResults([])
+      setHeaderMetadataSearchLoading(false)
+      return
+    }
+    if (typesToSearch.length === 0) {
+      // Keep any provider-derived people already returned by the All search while
+      // its dedicated identity request continues. The People filter hides the
+      // unrelated catalog rows, so clearing here only causes an avoidable flash.
+      setHeaderMetadataSearchLoading(false)
+      return
+    }
+
+    const abortController = new AbortController()
+    setHeaderMetadataSearchLoading(true)
+    setHeaderMediaResults([])
+    const timer = window.setTimeout(() => {
+      let pendingSearches = typesToSearch.length
+      const markSearchComplete = () => {
+        pendingSearches -= 1
+        if (pendingSearches === 0 && !abortController.signal.aborted) {
+          setHeaderMetadataSearchLoading(false)
+        }
+      }
 
       typesToSearch.forEach((type) => {
         searchMetadata(type, normalizedQuery, abortController.signal)
@@ -793,20 +1170,15 @@ export default function AppController() {
           .catch((err) => {
             if ((err as Error)?.name === 'AbortError') return
           })
-          .finally(() => {
-            pendingSearches -= 1
-            if (pendingSearches === 0 && !abortController.signal.aborted) {
-              setHeaderMediaSearchLoading(false)
-            }
-          })
+          .finally(markSearchComplete)
       })
-    }, 350)
+    }, 220)
 
     return () => {
       abortController.abort()
       window.clearTimeout(timer)
     }
-  }, [query, searchOpen, searchTab])
+  }, [query, searchMediaFilter, searchOpen, searchTab])
 
   const mediaSearchResults = useMemo(() => {
     const normalizedQuery = normalizeSearchText(query)
@@ -901,9 +1273,15 @@ export default function AppController() {
       localStorage.setItem('the-commonplace.following-users', JSON.stringify(next))
       persistCloudState({ followedUserHandles: next })
       if (cloudUserId) {
-        void saveFollowRelationship(cloudUserId, clean, next.includes(clean)).catch((error) => {
-          console.error('Unable to sync follow relationship to Firebase.', error)
+        void saveFollowRelationship(cloudUserId, clean, next.includes(clean), {
+          name: userProfileName,
+          handle: userProfile.handle,
         })
+          .then(() => personalizedFeed.refresh())
+          .catch((error) => {
+            console.error('Unable to sync follow relationship to Firebase.', error)
+            setAppFeedback({ kind: 'error', message: 'The follow change could not be saved. Please try again.' })
+          })
       }
       return next
     })
@@ -959,7 +1337,9 @@ export default function AppController() {
       setHomeDataStatus('loading')
       return
     }
-    if (!cloudUserId) {
+
+    if (!cloudUserId || !authProfile) {
+      setPublicFeedEntries([])
       setHomeDataStatus('ready')
       return
     }
@@ -969,42 +1349,164 @@ export default function AppController() {
     }
     setHomeDataStatus('loading')
     cloudHydratedUserRef.current = cloudUserId
+    const hydrationEntriesRevision = entriesRevisionRef.current
     let cancelled = false
 
-    void loadOrMigrateUserData(cloudUserId, localMigrationSnapshotRef.current)
-      .then(async (snapshot) => {
-        const [createdCollections, savedCollections] = await Promise.all([
-          loadOrMigrateUserCollections(
-            cloudUserId,
-            'created',
-            loadProfileCollections(snapshot.profile.handle),
-          ),
-          loadOrMigrateUserCollections(
-            cloudUserId,
-            'saved',
-            loadSavedProfileCollections(snapshot.profile.handle),
-          ),
-        ])
+    const pendingRegistration = pendingSignupProfileForUser(
+      authProfile,
+      localStorage.getItem(PENDING_SIGNUP_PROFILE_KEY),
+    )
+    const storedMigrationSnapshot = localMigrationSnapshotRef.current
+    const reuseLocalData = canReuseLocalAccountData(authProfile)
+    const accountHasLocalEntries = hasAccountEntryStorage(cloudUserId)
+    const canRecoverLocalEntries = accountHasLocalEntries || reuseLocalData
+    const accountLocalEntries = accountHasLocalEntries
+      ? loadEntries(cloudUserId)
+      : reuseLocalData
+        ? storedMigrationSnapshot.entries
+        : []
+    const migrationSnapshot = reuseLocalData
+      ? {
+          ...storedMigrationSnapshot,
+          profile: pendingRegistration
+              ? profileFromAuthUser(
+                authProfile,
+                pendingRegistration.displayName,
+                pendingRegistration.handle,
+                pendingRegistration.birthday,
+              )
+            : loadLocalUserProfile(authProfile),
+          entries: accountLocalEntries,
+        }
+      : {
+          profile: accountProfileForUser(authProfile),
+          entries: accountLocalEntries,
+          state: emptyCloudState(),
+        }
+
+    void loadOrMigrateUserData(cloudUserId, migrationSnapshot)
+      .then(async (loadedSnapshot) => {
+        let snapshot = loadedSnapshot
+        const resetLegacyAccount = shouldResetLegacyDemoProfile(snapshot.profile, authProfile)
+        if (resetLegacyAccount) {
+          const cleanExistingHandle = snapshot.profile.handle.replace(/^@/, '').trim().toLowerCase()
+          const repairedAccountProfile = accountProfileForUser(authProfile)
+          const repairedProfile = await saveUserProfile(cloudUserId, {
+            ...repairedAccountProfile,
+            handle: /^[a-z0-9_]{3,20}$/.test(cleanExistingHandle) && cleanExistingHandle !== 'jimboii'
+              ? cleanExistingHandle
+              : repairedAccountProfile.handle,
+            createdAt: snapshot.profile.createdAt,
+          })
+          snapshot = { profile: repairedProfile, entries: [], state: emptyCloudState() }
+        }
+        if (!snapshot.profile.createdAt) {
+          const createdAt = authProfile.metadata?.creationTime || new Date().toISOString()
+          const repairedProfile = await saveUserProfile(cloudUserId, {
+            ...snapshot.profile,
+            createdAt,
+          })
+          snapshot = { ...snapshot, profile: repairedProfile }
+        }
+        if (pendingRegistration && snapshot.profile.handle !== pendingRegistration.handle) {
+          const registeredProfile = profileFromAuthUser(
+            authProfile,
+            pendingRegistration.displayName,
+            pendingRegistration.handle,
+            pendingRegistration.birthday,
+          )
+          const repairedProfile = await saveUserProfile(cloudUserId, {
+            ...snapshot.profile,
+            firstName: registeredProfile.firstName,
+            lastName: registeredProfile.lastName,
+            showFullName: registeredProfile.showFullName,
+            handle: pendingRegistration.handle,
+            email: registeredProfile.email,
+            birthday: snapshot.profile.birthday || registeredProfile.birthday,
+          })
+          snapshot = { ...snapshot, profile: repairedProfile }
+        }
+        const [createdCollections, savedCollections] = resetLegacyAccount
+          ? [[], []]
+          : await Promise.all([
+              loadOrMigrateUserCollections(
+                cloudUserId,
+                'created',
+                reuseLocalData ? loadProfileCollections(snapshot.profile.handle) : [],
+              ),
+              loadOrMigrateUserCollections(
+                cloudUserId,
+                'saved',
+                reuseLocalData ? loadSavedProfileCollections(snapshot.profile.handle) : [],
+              ),
+            ])
+        const loadedPublicEntries = personalizedHomeFeedEnabled
+          ? []
+          : await loadPublicFeedEntries(cloudUserId).catch(() => [])
         if (cancelled) return
-        const cleanEntries = snapshot.entries.filter((entry) => !isLegacySeedEntry(entry))
+        const cleanCloudEntries = snapshot.entries.filter((entry) => !isLegacySeedEntry(entry))
+        const pendingEntrySync = loadPendingEntrySync(cloudUserId)
+        const entriesChangedDuringHydration = entriesRevisionRef.current !== hydrationEntriesRevision
+        const localEntries = (entriesChangedDuringHydration
+          ? entriesRef.current
+          : migrationSnapshot.entries
+        ).filter((entry) => !isLegacySeedEntry(entry))
+        const cleanEntries = pendingEntrySync || entriesChangedDuringHydration
+          ? localEntries
+          : canRecoverLocalEntries
+            ? reconcileEntrySnapshots(cleanCloudEntries, localEntries)
+            : cleanCloudEntries
         const cleanCreatedCollections = createdCollections.filter((collection) => !isLegacySeedCollection(collection))
         const cleanSavedCollections = savedCollections.filter((collection) => !isLegacySeedCollection(collection))
+        const visibleNotifications = await Promise.all(snapshot.state.notifications
+          .filter((notification) => !isLegacySeedHandle(notification.actorHandle))
+          .map(async (notification) => {
+            if (!notification.actorHandle) return notification
+            const identity = await loadPublicAccountIdentityByHandle(notification.actorHandle).catch(() => null)
+            if (!identity?.isDeactivated) return notification
+            return {
+              ...notification,
+              actorName: identity.name,
+              actorAvatarUrl: '',
+            }
+          }))
+        if (cancelled) return
+        const greetingId = birthdayNotificationId(snapshot.profile.birthday || '')
+        const notificationsWithBirthday = greetingId && !visibleNotifications.some(({ id }) => id === greetingId)
+          ? [{
+              id: greetingId,
+              type: 'birthday' as const,
+              read: false,
+              createdAt: new Date().toISOString(),
+            }, ...visibleNotifications]
+          : visibleNotifications
+        const pendingSavedChanges = loadPendingSavedEntryChanges(cloudUserId)
+        const recoveredSavedEntryIds = applyPendingSavedEntryChanges(
+          removeLegacySeedEntryIds(snapshot.state.savedEntryIds),
+          pendingSavedChanges,
+        )
         const cleanState = {
           ...snapshot.state,
           likedEntryIds: removeLegacySeedEntryIds(snapshot.state.likedEntryIds),
-          savedEntryIds: removeLegacySeedEntryIds(snapshot.state.savedEntryIds),
-          disabledCommentEntryIds: removeLegacySeedEntryIds(snapshot.state.disabledCommentEntryIds),
+          savedEntryIds: recoveredSavedEntryIds,
+          disabledCommentEntryIds: removeLegacySeedEntryIds(
+            pendingEntrySync?.disabledCommentEntryIds || snapshot.state.disabledCommentEntryIds,
+          ),
           followedUserHandles: removeLegacySeedHandles(snapshot.state.followedUserHandles),
           followRequestedHandles: removeLegacySeedHandles(snapshot.state.followRequestedHandles),
-          notifications: snapshot.state.notifications.filter(
-            (notification) => !isLegacySeedHandle(notification.actorHandle),
-          ),
+          notifications: notificationsWithBirthday,
         }
+
+        Object.entries(pendingSavedChanges).forEach(([entryId, saved]) => {
+          void queueCloudSavedEntryChange(cloudUserId, entryId, saved)
+        })
 
         saveProfileCollections(snapshot.profile.handle, cleanCreatedCollections)
         saveSavedProfileCollections(snapshot.profile.handle, cleanSavedCollections)
         setUserProfile(snapshot.profile)
+        entriesRef.current = cleanEntries
         setEntries(cleanEntries)
+        setPublicFeedEntries(loadedPublicEntries)
         setLikedEntryIds(cleanState.likedEntryIds)
         setSavedEntryIds(cleanState.savedEntryIds)
         setDisabledCommentEntryIds(cleanState.disabledCommentEntryIds)
@@ -1013,7 +1515,8 @@ export default function AppController() {
         setNotifications(cleanState.notifications)
 
         localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(snapshot.profile))
-        saveEntriesToStorage(cleanEntries)
+        localStorage.removeItem(PENDING_SIGNUP_PROFILE_KEY)
+        saveEntriesToStorage(cleanEntries, cloudUserId)
         localStorage.setItem('the-commonplace.likes', JSON.stringify(cleanState.likedEntryIds))
         localStorage.setItem('the-commonplace.saves', JSON.stringify(cleanState.savedEntryIds))
         localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(cleanState.disabledCommentEntryIds))
@@ -1021,14 +1524,26 @@ export default function AppController() {
         localStorage.setItem('the-commonplace.follow-requests', JSON.stringify(cleanState.followRequestedHandles))
         localStorage.setItem('the-commonplace.notifications', JSON.stringify(cleanState.notifications))
 
-        const cleanupNeeded = cleanEntries.length !== snapshot.entries.length
+        const entriesNeedSync = Boolean(pendingEntrySync)
+          || !entrySnapshotsMatch(cleanEntries, snapshot.entries)
+        if (entriesNeedSync) {
+          const pending = pendingEntrySync || markEntriesPendingSync(cloudUserId, cleanState.disabledCommentEntryIds)
+          void saveUserEntries(cloudUserId, cleanEntries, cleanState.disabledCommentEntryIds)
+            .then(() => clearPendingEntrySync(cloudUserId, pending.token))
+            .catch((error) => console.error('Unable to recover local posts in Firebase; they will retry next time.', error))
+        }
+
+        const cleanupNeeded = resetLegacyAccount
           || cleanCreatedCollections.length !== createdCollections.length
           || cleanSavedCollections.length !== savedCollections.length
           || JSON.stringify(cleanState) !== JSON.stringify(snapshot.state)
         if (cleanupNeeded) {
+          const cloudStateCleanup = { ...cleanState }
+          if (Object.keys(pendingSavedChanges).length > 0) {
+            Reflect.deleteProperty(cloudStateCleanup, 'savedEntryIds')
+          }
           void Promise.all([
-            saveUserEntries(cloudUserId, cleanEntries, cleanState.disabledCommentEntryIds),
-            saveUserCloudState(cloudUserId, cleanState),
+            saveUserCloudState(cloudUserId, cloudStateCleanup),
             saveUserCollections(cloudUserId, 'created', cleanCreatedCollections),
             saveUserCollections(cloudUserId, 'saved', cleanSavedCollections),
           ]).catch((error) => console.error('Unable to remove legacy demo data from Firebase.', error))
@@ -1048,7 +1563,7 @@ export default function AppController() {
         cloudHydratedUserRef.current = null
       }
     }
-  }, [authLoading, cloudUserId])
+  }, [authLoading, authProfile, cloudUserId])
 
   const persistCloudState = (patch: Parameters<typeof saveUserCloudState>[1]) => {
     if (!cloudUserId) return
@@ -1062,36 +1577,144 @@ export default function AppController() {
       const next = prev.map((n) => ({ ...n, read: true }))
       localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
       persistCloudState({ notifications: next })
+      if (cloudUserId) {
+        const cloudIds = prev.filter((notification) => notification.type !== 'birthday').map(({ id }) => id)
+        void setCloudNotificationsRead(cloudUserId, cloudIds)
+          .catch((error) => console.error('Unable to mark cloud notifications as read.', error))
+      }
       return next
     })
   }
 
-  const dismissNotification = (id: string) => {
+  const dismissNotification = (ids: string | string[]) => {
+    const notificationIds = Array.isArray(ids) ? ids : [ids]
     setNotifications((prev) => {
-      const next = prev.filter((n) => n.id !== id)
+      const idSet = new Set(notificationIds)
+      const next = prev.filter((notification) => !idSet.has(notification.id))
       localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
       persistCloudState({ notifications: next })
+      const cloudIds = prev
+        .filter((notification) => idSet.has(notification.id) && notification.type !== 'birthday')
+        .map(({ id }) => id)
+      if (cloudUserId && cloudIds.length > 0) {
+        void deleteCloudNotifications(cloudUserId, cloudIds)
+          .catch((error) => console.error('Unable to dismiss cloud notification.', error))
+      }
       return next
     })
   }
 
   const clearAllNotifications = () => {
+    const cloudIds = notifications
+      .filter((notification) => notification.type !== 'birthday')
+      .map(({ id }) => id)
     setNotifications([])
     localStorage.removeItem('the-commonplace.notifications')
     persistCloudState({ notifications: [] })
+    if (cloudUserId) {
+      void deleteCloudNotifications(cloudUserId, cloudIds)
+        .catch((error) => console.error('Unable to clear cloud notifications.', error))
+    }
   }
 
   const ownProfileEntries = useMemo(() => entries.map((e) => ({
       ...e,
+      ownerId: cloudUserId || e.ownerId,
       authorHandle: userProfile.handle,
       authorName: userProfileName,
       authorAvatarUrl: userProfile.avatarUrl,
-    })), [entries, userProfile.handle, userProfile.avatarUrl, userProfileName])
+    })), [cloudUserId, entries, userProfile.handle, userProfile.avatarUrl, userProfileName])
 
   const allHomepageEntries = useMemo(() => {
-    return [...ownProfileEntries]
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-  }, [ownProfileEntries])
+    if (!personalizedFeed.enabled) {
+      return [...ownProfileEntries, ...publicFeedEntries]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    }
+    const ownEntriesById = new Map(ownProfileEntries.map((entry) => [entry.id, entry]))
+    const currentRemoteEntries = personalizedFeed.items
+      .filter((entry) => entry.ownerId !== cloudUserId || ownEntriesById.has(entry.id))
+      .map((entry) => entry.ownerId === cloudUserId
+        ? { ...entry, ...ownEntriesById.get(entry.id), visibility: entry.visibility }
+        : entry)
+    const remoteIds = new Set(currentRemoteEntries.map((entry) => entry.id))
+    const missingOwnEntries = ownProfileEntries.filter((entry) => (
+      !remoteIds.has(entry.id) && (typeFilter === 'all' || entry.type === typeFilter)
+    ))
+
+    // Masonry assigns columns from array order, so newest-first guarantees that
+    // every newly created card occupies the leftmost slot before older cards.
+    return [...currentRemoteEntries, ...missingOwnEntries]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+  }, [cloudUserId, ownProfileEntries, personalizedFeed.enabled, personalizedFeed.items, publicFeedEntries, typeFilter])
+
+  const homepagePostIds = useMemo(
+    () => allHomepageEntries.map((entry) => entry.id).sort().join('|'),
+    [allHomepageEntries],
+  )
+
+  useEffect(() => subscribePostEngagements(
+    homepagePostIds ? homepagePostIds.split('|') : [],
+    cloudUserId,
+    setPostEngagements,
+  ), [cloudUserId, homepagePostIds])
+
+  const handleOpenNotification = (notification: AppNotification) => {
+    if (notification.type === 'follow' && notification.actorHandle) {
+      notificationOpenRequestRef.current = notification.id
+      setOverlayEntry(null)
+      setOverlayNotificationFocus(null)
+      handleOpenUserProfile(notification.actorHandle)
+      return
+    }
+
+    const postId = notification.postId
+    if (!postId) return
+
+    const commentId = notification.type === 'reply'
+      ? notification.parentInteractionId
+      : notification.type === 'comment'
+        ? notification.interactionId
+        : undefined
+    const replyId = notification.type === 'reply' ? notification.interactionId : undefined
+    notificationOpenRequestRef.current = notification.id
+    setOverlayNotificationFocus({
+      postId,
+      commentId,
+      replyId,
+      requestId: notification.id,
+    })
+    setSelectedEntityId(null)
+    setSelectedEntityType(null)
+    setSelectedProfileHandle(null)
+    setActiveView('feed')
+    navigate('/')
+
+    const availableEntry = allHomepageEntries.find(({ id }) => id === postId)
+      || cloudExternalProfile?.data.entries.find(({ id }) => id === postId)
+    if (availableEntry) {
+      setOverlayEntry(availableEntry)
+      return
+    }
+
+    setOverlayEntry(null)
+    void loadPostEntry(postId)
+      .then((entry) => {
+        if (entry && notificationOpenRequestRef.current === notification.id) setOverlayEntry(entry)
+      })
+      .catch((error) => console.error('Unable to open the post from this notification.', error))
+  }
+
+  useEffect(() => {
+    if (!cloudUserId || homeDataStatus !== 'ready') return
+    return subscribeUserNotifications(cloudUserId, (remoteNotifications) => {
+      setNotifications((previous) => {
+        const localOnlyNotifications = previous.filter((notification) => notification.type === 'birthday')
+        const next = [...localOnlyNotifications, ...remoteNotifications]
+        localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+        return next
+      })
+    })
+  }, [cloudUserId, homeDataStatus])
 
   const filteredEntries = useMemo(() => {
     if (typeFilter !== 'all') {
@@ -1104,11 +1727,13 @@ export default function AppController() {
     gridRef,
     filteredEntries.length,
     expandedCardId,
-    `${activeView}:${authLoading ? 'loading' : 'ready'}`,
+    `${activeView}:${authLoading ? 'loading' : 'ready'}:${typeFilter}:${filteredEntries.map((entry) => entry.id).join('|')}`,
   )
+  const positionedCardIdsRef = useRef(new Set<string>())
   const [isInitialRender, setIsInitialRender] = useState(true)
   const [isFilterSwitching, setIsFilterSwitching] = useState(false)
   const showHomeSkeleton = homeDataStatus === 'loading'
+    || personalizedFeed.loading
     || isFilterSwitching
     || (filteredEntries.length > 0 && !masonryLayout)
 
@@ -1119,11 +1744,33 @@ export default function AppController() {
   }
 
   const handleQueryChange = (val: string) => {
-    setIsFilterSwitching(true)
     setQuery(val)
   }
 
+  const personalizedFeedEnabled = personalizedFeed.enabled
+  const personalizedFeedHasMore = personalizedFeed.hasMore
+  const loadMorePersonalizedFeed = personalizedFeed.loadMore
+
   useEffect(() => {
+    const sentinel = feedSentinelRef.current
+    if (!personalizedFeedEnabled || !sentinel || !personalizedFeedHasMore) return
+    const observer = new IntersectionObserver((observations) => {
+      if (observations[0]?.isIntersecting) loadMorePersonalizedFeed()
+    }, { rootMargin: '600px 0px' })
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [loadMorePersonalizedFeed, personalizedFeedEnabled, personalizedFeedHasMore])
+
+  useEffect(() => {
+    positionedCardIdsRef.current = new Set(masonryLayout?.positions.keys() ?? [])
+  }, [masonryLayout])
+
+  useEffect(() => {
+    if (filteredEntries.length === 0) {
+      setIsInitialRender(false)
+      setIsFilterSwitching(false)
+      return
+    }
     if (masonryLayout) {
       const timer = setTimeout(() => {
         setIsInitialRender(false)
@@ -1131,20 +1778,31 @@ export default function AppController() {
       }, 120)
       return () => clearTimeout(timer)
     }
-  }, [masonryLayout, typeFilter, query])
+  }, [filteredEntries.length, masonryLayout, typeFilter])
 
   const saveEntries = (nextEntries: Entry[], nextDisabledCommentEntryIds = disabledCommentEntryIds) => {
+    entriesRef.current = nextEntries
+    entriesRevisionRef.current += 1
     setEntries(nextEntries)
-    saveEntriesToStorage(nextEntries)
+    saveEntriesToStorage(nextEntries, cloudUserId)
     if (cloudUserId) {
-      void saveUserEntries(cloudUserId, nextEntries, nextDisabledCommentEntryIds).catch((error) => {
-        console.error('Unable to sync posts to Firebase.', error)
-      })
+      const pending = markEntriesPendingSync(cloudUserId, nextDisabledCommentEntryIds)
+      void saveUserEntries(cloudUserId, nextEntries, nextDisabledCommentEntryIds)
+        .then(() => {
+          clearPendingEntrySync(cloudUserId, pending.token)
+          personalizedFeed.refresh()
+        })
+        .catch((error) => {
+          console.error('Unable to sync posts to Firebase; they will retry next time.', error)
+        })
     }
   }
 
   const handleLogout = async () => {
     setLogoutError('')
+    setProfileMenuOpen(false)
+    setNotificationsOpen(false)
+    setSearchOpen(false)
     setLogoutConfirmOpen(true)
   }
 
@@ -1165,10 +1823,20 @@ export default function AppController() {
 
   const renderNotificationsGroup = () => (
     <NotificationBell
+      open={notificationsOpen}
       notifications={notifications}
       onMarkAllRead={markAllNotificationsRead}
       onClearAll={clearAllNotifications}
       onDismiss={dismissNotification}
+      onOpenNotification={handleOpenNotification}
+      onOpenChange={(open) => {
+        setNotificationsOpen(open)
+        if (open) {
+          setProfileMenuOpen(false)
+          setSearchOpen(false)
+          setMobileMenuOpen(false)
+        }
+      }}
     />
   )
 
@@ -1182,18 +1850,28 @@ export default function AppController() {
 
   const renderSearchBox = () => (
     <HeaderSearch
+      key={currentUser?.uid || 'guest-search'}
       open={searchOpen}
       query={query}
       mode={searchTab}
       mediaResults={mediaSearchResults}
       mediaLoading={headerMediaSearchLoading}
       resultLimit={searchLimit}
-      onOpenChange={setSearchOpen}
+      onOpenChange={(open) => {
+        setSearchOpen(open)
+        if (open) {
+          setNotificationsOpen(false)
+          setProfileMenuOpen(false)
+          setMobileMenuOpen(false)
+        }
+      }}
       onQueryChange={handleQueryChange}
       onModeChange={setSearchTab}
+      onMediaFilterChange={setSearchMediaFilter}
       onLoadMore={() => setSearchLimit((current) => Math.min(current + SEARCH_RESULTS_PER_PAGE, SEARCH_MAX_RESULT_LIMIT))}
       onOpenEntity={handleOpenSearchEntity}
       onOpenUser={handleOpenUserFromSearch}
+      storageScope={currentUser?.uid}
     />
   )
 
@@ -1205,17 +1883,18 @@ export default function AppController() {
     <header className={`global-app-header ${isHomeHeader ? 'is-home-page' : 'is-inner-page'}`}>
       <div className="global-app-header-layout">
         <div className="global-header-navigation">
-          {!isHomeHeader && (
-            <button
-              type="button"
-              className="global-header-nav-btn"
-              onClick={handleHome}
-              aria-label="Go home"
-              title="Home"
-            >
-              <Home aria-hidden="true" />
-            </button>
-          )}
+          <button
+            type="button"
+            className={`global-header-nav-btn ${isHomeHeader ? 'is-placeholder' : ''}`}
+            onClick={handleHome}
+            aria-label="Go home"
+            aria-hidden={isHomeHeader}
+            tabIndex={isHomeHeader ? -1 : undefined}
+            disabled={isHomeHeader}
+            title={isHomeHeader ? undefined : 'Home'}
+          >
+            <Home aria-hidden="true" />
+          </button>
         </div>
 
         <button
@@ -1242,7 +1921,15 @@ export default function AppController() {
           type="button"
           aria-label="User Profile & Settings"
           title="User Profile & Settings"
-          onClick={() => setProfileMenuOpen((v) => !v)}
+          onClick={() => {
+            const next = !profileMenuOpen
+            setProfileMenuOpen(next)
+            if (next) {
+              setNotificationsOpen(false)
+              setSearchOpen(false)
+              setMobileMenuOpen(false)
+            }
+          }}
         >
           {userProfile.avatarUrl ? (
             <img src={userProfile.avatarUrl} alt="Avatar" className="profile-avatar-img-sm" />
@@ -1253,31 +1940,35 @@ export default function AppController() {
 
         {profileMenuOpen && (
           <div className="profile-dropdown-menu">
-            <div className="menu-identity-block">
-              <div className="menu-identity-avatar">
+            <button
+              type="button"
+              className="menu-identity-block"
+              onClick={() => {
+                handleOpenUserProfile(userProfile.handle)
+                setProfileMenuOpen(false)
+              }}
+              aria-label={`View @${userProfile.handle.replace(/^@/, '')} profile`}
+            >
+              <span className="menu-identity-avatar">
                 {userProfile.avatarUrl ? (
                   <img src={userProfile.avatarUrl} alt="Avatar" className="menu-identity-avatar-img" />
                 ) : (
                   <User aria-hidden="true" />
                 )}
-              </div>
-              <div className="menu-identity-info">
+              </span>
+              <span className="menu-identity-info">
                 <span className="menu-user-name">
                   {userProfile.showFullName ? `${userProfile.firstName} ${userProfile.lastName}` : userProfile.firstName}
                 </span>
-                <button
-                  type="button"
-                  className="menu-view-profile-link"
-                  onClick={() => {
-                    handleOpenUserProfile(userProfile.handle)
-                    setProfileMenuOpen(false)
-                  }}
-                >
-                  View Profile
-                </button>
-              </div>
-            </div>
-            <div className="menu-divider" />
+                <span className="menu-user-handle">
+                  @{userProfile.handle.replace(/^@/, '')}
+                </span>
+              </span>
+            </button>
+            <button type="button" className="menu-item" onClick={handleOpenActivity}>
+              <Activity aria-hidden="true" />
+              <span>Activity</span>
+            </button>
             <button
               type="button"
               className="menu-item"
@@ -1286,17 +1977,72 @@ export default function AppController() {
               <Settings aria-hidden="true" />
               <span>Settings</span>
             </button>
-            <div className="menu-divider" />
+            <button type="button" className="menu-item" onClick={handleOpenHelp}>
+              <CircleHelp aria-hidden="true" />
+              <span>Help &amp; Support</span>
+            </button>
             <button type="button" className="menu-item" onClick={handleLogout}>
               <LogOut aria-hidden="true" />
-              <span>Logout</span>
+              <span>Log out</span>
             </button>
           </div>
         )}
           </div>
+          <button
+            type="button"
+            className="mobile-menu-toggle"
+            aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-navigation"
+            onClick={() => {
+              const next = !mobileMenuOpen
+              setMobileMenuOpen(next)
+              if (next) {
+                setNotificationsOpen(false)
+                setSearchOpen(false)
+                setProfileMenuOpen(false)
+              }
+            }}
+          >
+            {mobileMenuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
+          </button>
         </div>
       </div>
     </header>
+    <AnimatePresence>
+      {mobileMenuOpen && (
+        <>
+          <motion.button
+            type="button"
+            className="mobile-menu-backdrop"
+            aria-label="Close menu"
+            onClick={() => setMobileMenuOpen(false)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          />
+          <motion.nav
+            id="mobile-navigation"
+            className="mobile-menu-drawer"
+            aria-label="Mobile navigation"
+            initial={{ opacity: 0, x: 28 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 28 }}
+          >
+            <div className="mobile-menu-identity">
+              <strong>{userProfileName || `@${userProfile.handle}`}</strong>
+              <span>@{userProfile.handle.replace(/^@/, '')}</span>
+            </div>
+            <button type="button" onClick={() => { setMobileMenuOpen(false); handleHome() }}><Home aria-hidden="true" /> Home</button>
+            <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenUserProfile(userProfile.handle) }}><CircleUserRound aria-hidden="true" /> Profile</button>
+            <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenActivity() }}><Activity aria-hidden="true" /> Activity</button>
+            <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenSettings() }}><Settings aria-hidden="true" /> Settings</button>
+            <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenHelp() }}><CircleHelp aria-hidden="true" /> Help &amp; Support</button>
+            <button type="button" className="danger" onClick={() => { setMobileMenuOpen(false); void handleLogout() }}><LogOut aria-hidden="true" /> Log out</button>
+          </motion.nav>
+        </>
+      )}
+    </AnimatePresence>
     {(activeView === 'feed' || activeView === 'profile')
       && !currentUser?.emailVerified
       && !verificationBannerDismissed && (
@@ -1342,6 +2088,19 @@ export default function AppController() {
       }}
       onConfirm={confirmLogout}
     />
+    <AnimatePresence>
+      {appFeedback && (
+        <motion.div
+          className={`app-feedback-toast ${appFeedback.kind}`}
+          role={appFeedback.kind === 'error' ? 'alert' : 'status'}
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+        >
+          {appFeedback.message}
+        </motion.div>
+      )}
+    </AnimatePresence>
     </>
     )
   }
@@ -1355,11 +2114,15 @@ export default function AppController() {
     initialDraft: EntryDraft | null = null,
     initialLyrics = '',
   ) => {
+    if (cloudUserId && homeDataStatus !== 'ready') return
     if (!currentUser?.emailVerified) {
       setVerificationPromptOpen(true)
       return
     }
     setEditingEntry(entry)
+    setProfileMenuOpen(false)
+    setNotificationsOpen(false)
+    setSearchOpen(false)
     setComposerInitialDraft(entry ? null : initialDraft)
     setComposerInitialLyrics(entry ? '' : initialLyrics)
     setComposerOpen(true)
@@ -1417,6 +2180,7 @@ export default function AppController() {
   }
 
   const handleSave = (draft: EntryDraft, disableComments?: boolean) => {
+    if (cloudUserId && homeDataStatus !== 'ready') return
     if (!currentUser?.emailVerified) {
       closeComposer()
       setVerificationPromptOpen(true)
@@ -1442,6 +2206,7 @@ export default function AppController() {
         persistCloudState({ disabledCommentEntryIds: nextDisabledCommentEntryIds })
       }
       setExpandedCardId(editingEntry.id)
+      setAppFeedback({ kind: 'success', message: 'Entry changes saved.' })
     } else {
       const newId = makeEntryId()
       const newEntry: Entry = {
@@ -1454,12 +2219,14 @@ export default function AppController() {
         ? [...disabledCommentEntryIds, newId]
         : disabledCommentEntryIds
       saveEntries([newEntry, ...entries], nextDisabledCommentEntryIds)
+      sendFeedSignal('catalog', newEntry, true)
       if (disableComments) {
         setDisabledCommentEntryIds(nextDisabledCommentEntryIds)
         localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(nextDisabledCommentEntryIds))
         persistCloudState({ disabledCommentEntryIds: nextDisabledCommentEntryIds })
       }
       setExpandedCardId('')
+      setAppFeedback({ kind: 'success', message: 'New entry published.' })
     }
 
     closeComposer()
@@ -1475,9 +2242,12 @@ export default function AppController() {
   }
 
   const deleteEntry = (entryId: string) => {
+    const removedEntry = entries.find((entry) => entry.id === entryId)
     const nextEntries = entries.filter((entry) => entry.id !== entryId)
     saveEntries(nextEntries)
+    if (removedEntry) sendFeedSignal('catalog', removedEntry, false)
     if (expandedCardId === entryId) setExpandedCardId('')
+    setAppFeedback({ kind: 'success', message: 'Entry deleted.' })
   }
 
   const renderEmailVerificationPrompt = () => (
@@ -1536,9 +2306,21 @@ export default function AppController() {
   }
 
   if (!currentUser) {
+    if (activeView === 'not-found') {
+      return <NotFoundPage onHome={() => navigate('/login')} onBack={() => navigate(-1)} />
+    }
     return location.pathname === '/register'
       ? <RegisterPage onSwitchToLogin={() => navigate('/login')} />
       : <LoginPage onSwitchToRegister={() => navigate('/register')} />
+  }
+
+  if (activeView === 'not-found') {
+    return (
+      <>
+        {renderGlobalHeader()}
+        <NotFoundPage onHome={handleHome} onBack={handlePageBack} />
+      </>
+    )
   }
 
   if (activeView === 'profile') {
@@ -1572,15 +2354,15 @@ export default function AppController() {
           publicCollections={externalProfileData?.collections}
           publicSavedCollections={publicSavedCollections}
           likedEntryIds={likedEntryIds}
+          postEngagements={postEngagements}
           disabledCommentEntryIds={disabledCommentEntryIds}
-          onSelectEntry={(entry) => setOverlayEntry(entry)}
+          onSelectEntry={openEntryOverlay}
           onOpenMediaProfile={handleOpenCollectionMedia}
           onToggleLike={toggleLikeEntry}
           onToggleSave={toggleSaveEntry}
           onToggleCommentsDisabled={toggleCommentsDisabled}
           userProfile={currentProfileData.profile}
           onUpdateProfile={isViewingOwn ? persistUserProfile : undefined}
-          onNavigateToSettings={handleOpenSettings}
           onDeleteEntry={(id) => promptDeleteEntry(id)}
           onEditEntry={(entry) => openComposer(entry)}
           categoryFilter={profileCategoryFilter}
@@ -1602,18 +2384,38 @@ export default function AppController() {
             setSelectedProfileCollectionId(null)
             navigate(`/users/${routeSegment(currentProfileData.profile.handle)}`)
           }}
+          privateContentLocked={!isViewingOwn && externalProfileData?.isContentLocked === true}
         />
+        {isViewingOwn && (
+          <div className="fab-stack">
+            <button
+              className="fab"
+              type="button"
+              aria-label="Add new entry"
+              title="Add new entry"
+              disabled={Boolean(cloudUserId && homeDataStatus !== 'ready')}
+              onClick={() => openComposer()}
+            >
+              <Plus aria-hidden="true" />
+            </button>
+          </div>
+        )}
         <CardOverlayModal
           entry={overlayEntry}
-          onClose={() => setOverlayEntry(null)}
-          isLiked={overlayEntry ? likedEntryIds.includes(overlayEntry.id) : false}
+          onClose={closeEntryOverlay}
+          focusCommentId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.commentId : undefined}
+          focusReplyId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.replyId : undefined}
+          focusRequestId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.requestId : undefined}
+          isLiked={overlayEntry ? (postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)) : false}
           isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
+          likeCount={overlayEntry ? postEngagements[overlayEntry.id]?.likeCount || 0 : 0}
           onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
           onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
           onOpenProfile={(handle) => {
             setOverlayEntry(null)
             handleOpenUserProfile(handle)
           }}
+          currentUserHandle={userProfile.handle}
         />
         <AnimatePresence>
           {deletingEntry && (
@@ -1657,6 +2459,7 @@ export default function AppController() {
               onClose={closeComposer}
               onSave={handleSave}
               commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
+              communityEntries={allHomepageEntries}
             />
           ) : null}
         </AnimatePresence>
@@ -1764,13 +2567,13 @@ export default function AppController() {
           cleanName,
           isSong ? 'Song' : isAlbum ? 'Album' : fallbackType,
         ),
-        description: `Official catalog entry for ${cleanName} in The Commonplace community reflections archive.`,
+        description: '',
         metadataChips: isHuman
           ? [{ label: 'Profession', value: fallbackType.charAt(0).toUpperCase() + fallbackType.slice(1) }]
           : [
               { label: isAlbum || isSong ? 'Artist' : isGame ? 'Studio' : 'Creator', value: mapItem?.artist || 'Unknown' },
               { label: 'Category', value: fallbackType === 'movie' ? 'Film' : fallbackType.replace('_', ' ') },
-              { label: 'Release Year', value: mapItem?.year || '2023' },
+              ...(mapItem?.year ? [{ label: 'Release Year', value: mapItem.year }] : []),
               ...(mapItem?.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
             ],
         communityRating: {
@@ -1791,7 +2594,7 @@ export default function AppController() {
             onHome={handleHome}
             showLocalNavigation={false}
             communityEntries={allHomepageEntries}
-            onSelectEntry={setOverlayEntry}
+            onSelectEntry={openEntryOverlay}
             onOpenUserProfile={handleOpenUserProfile}
             onNavigateToEntity={handleNavigateEntityBreadcrumb}
             onCanonicalMediaResolved={handleCanonicalMediaResolved}
@@ -1801,6 +2604,7 @@ export default function AppController() {
               if (item) setCollectionTarget(item)
             }}
             likedEntryIds={likedEntryIds}
+            postEngagements={postEngagements}
             savedEntryIds={savedEntryIds}
             disabledCommentEntryIds={disabledCommentEntryIds}
             onToggleLike={toggleLikeEntry}
@@ -1808,15 +2612,20 @@ export default function AppController() {
           />
           <CardOverlayModal
             entry={overlayEntry}
-            onClose={() => setOverlayEntry(null)}
-            isLiked={overlayEntry ? likedEntryIds.includes(overlayEntry.id) : false}
+            onClose={closeEntryOverlay}
+            focusCommentId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.commentId : undefined}
+            focusReplyId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.replyId : undefined}
+            focusRequestId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.requestId : undefined}
+            isLiked={overlayEntry ? (postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)) : false}
             isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
+            likeCount={overlayEntry ? postEngagements[overlayEntry.id]?.likeCount || 0 : 0}
             onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
             onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
             onOpenProfile={(handle) => {
               setOverlayEntry(null)
               handleOpenUserProfile(handle)
             }}
+            currentUserHandle={userProfile.handle}
           />
           <AnimatePresence>
             {composerOpen ? (
@@ -1827,6 +2636,7 @@ export default function AppController() {
                 onClose={closeComposer}
                 onSave={handleSave}
                 commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
+                communityEntries={allHomepageEntries}
               />
             ) : null}
           </AnimatePresence>
@@ -1846,6 +2656,64 @@ export default function AppController() {
     }
   }
 
+  if (activeView === 'activity') {
+    return (
+      <>
+        {renderGlobalHeader()}
+        <ActivityPage
+          entries={ownProfileEntries}
+          availableEntries={allHomepageEntries}
+          engagements={postEngagements}
+          likedEntryIds={likedEntryIds}
+          likedCount={likedEntryIds.length}
+          savedCount={savedEntryIds.length}
+          followingCount={followedUserHandles.length}
+          currentUserId={cloudUserId || undefined}
+          currentUserHandle={userProfile.handle}
+          onOpenEntry={(entry, focus) => {
+            openEntryOverlay(entry)
+            if (focus?.commentId) {
+              setOverlayNotificationFocus({
+                postId: entry.id,
+                commentId: focus.commentId,
+                replyId: focus.replyId,
+                requestId: `activity-${entry.id}-${focus.replyId || focus.commentId}`,
+              })
+            }
+          }}
+        />
+        <CardOverlayModal
+          entry={overlayEntry}
+          onClose={closeEntryOverlay}
+          focusCommentId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.commentId : undefined}
+          focusReplyId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.replyId : undefined}
+          focusRequestId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.requestId : undefined}
+          isLiked={overlayEntry ? (postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)) : false}
+          isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
+          likeCount={overlayEntry ? postEngagements[overlayEntry.id]?.likeCount || 0 : 0}
+          onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
+          onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
+          onOpenProfile={(handle) => {
+            setOverlayEntry(null)
+            handleOpenUserProfile(handle)
+          }}
+          currentUserHandle={userProfile.handle}
+        />
+        {renderEmailVerificationPrompt()}
+      </>
+    )
+  }
+
+  if (activeView === 'help') {
+    return (
+      <>
+        {renderGlobalHeader()}
+        <HelpSupportPage onOpenSettings={handleOpenSettings} />
+        {renderEmailVerificationPrompt()}
+      </>
+    )
+  }
+
   if (activeView === 'settings') {
     return (
       <>
@@ -1855,6 +2723,11 @@ export default function AppController() {
           showLocalNavigation={false}
           userProfile={userProfile}
           onSaveProfile={persistUserProfile}
+          onResetHomeRecommendations={async () => {
+            if (!currentUser) return
+            await resetFeedPreferences(currentUser)
+            personalizedFeed.refresh()
+          }}
         />
         {renderEmailVerificationPrompt()}
       </>
@@ -1863,11 +2736,11 @@ export default function AppController() {
 
   return (
     <div className="app-shell">
+      {renderGlobalHeader()}
       {/* Main content */}
       <main className="main-content">
-        {renderGlobalHeader()}
 
-        <div className="homepage-filter-shell">
+          <div className="homepage-filter-shell">
           {/* Type filter tabs with animated pill */}
           <div className="filter-row">
             <nav className="type-tabs" aria-label="Filter by type">
@@ -1910,32 +2783,38 @@ export default function AppController() {
               })}
             </nav>
           </div>
-        </div>
+          </div>
 
-        {showHomeSkeleton ? (
-          <CardSkeletonGrid count={8} />
-        ) : null}
+        <div className="home-card-stage">
+          {showHomeSkeleton ? (
+            <CardSkeletonGrid count={8} />
+          ) : null}
 
-        {/* Card grid — JS absolute-position masonry, newest top-left */}
-        <section
-          className="card-grid"
-          ref={gridRef as React.RefObject<HTMLElement>}
-          style={{
-            position: 'relative',
-            height: masonryLayout ? masonryLayout.height : 'auto',
-            minHeight: filteredEntries.length === 0 ? 320 : undefined,
-            visibility: !showHomeSkeleton ? 'visible' : 'hidden',
-            opacity: !showHomeSkeleton ? 1 : 0,
-            transition: !showHomeSkeleton
-              ? 'opacity 140ms ease-out'
-              : 'none',
-          }}
-          aria-label="Saved entries"
-          aria-busy={showHomeSkeleton}
-        >
+          {/* Card grid — JS absolute-position masonry, newest top-left */}
+          <section
+            className="card-grid"
+            ref={gridRef as React.RefObject<HTMLElement>}
+            style={{
+              position: showHomeSkeleton ? 'absolute' : 'relative',
+              inset: showHomeSkeleton ? 0 : undefined,
+              height: masonryLayout ? masonryLayout.height : 'auto',
+              minHeight: filteredEntries.length === 0 ? 320 : undefined,
+              visibility: !showHomeSkeleton ? 'visible' : 'hidden',
+              opacity: !showHomeSkeleton ? 1 : 0,
+              transition: 'none',
+              pointerEvents: showHomeSkeleton ? 'none' : undefined,
+            }}
+            aria-label="Saved entries"
+            aria-busy={showHomeSkeleton}
+            aria-hidden={showHomeSkeleton}
+          >
           {filteredEntries.map((entry) => {
             const pos = masonryLayout?.positions.get(entry.id)
+            const hadMeasuredPosition = positionedCardIdsRef.current.has(entry.id)
             const typeMeta = getTypeMeta(entry.type)
+            const isOwnEntry = Boolean(cloudUserId && entry.ownerId === cloudUserId)
+              || entries.some((ownedEntry) => ownedEntry.id === entry.id)
+            const engagement = postEngagements[entry.id]
             return (
               <div
                 key={entry.id}
@@ -1947,7 +2826,7 @@ export default function AppController() {
                   left: 0,
                   width: pos.width,
                   transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
-                  transition: (isInitialRender || isFilterSwitching)
+                  transition: (isInitialRender || isFilterSwitching || !hadMeasuredPosition)
                     ? 'none'
                     : 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
                   willChange: 'transform',
@@ -1956,15 +2835,17 @@ export default function AppController() {
                 <Card
                   entry={entry}
                   expanded={expandedCardId === entry.id}
-                  onDelete={() => promptDeleteEntry(entry.id)}
-                  onEdit={() => openComposer(entry)}
+                  onDelete={isOwnEntry ? () => promptDeleteEntry(entry.id) : undefined}
+                  onEdit={isOwnEntry ? () => openComposer(entry) : undefined}
                   onToggle={() => toggleCardExpanded(entry.id)}
-                  onExpandOverlay={() => setOverlayEntry(entry)}
+                  onExpandOverlay={() => openEntryOverlay(entry)}
                   onOpenProfile={() => handleOpenUserProfile(entry.authorHandle)}
                   typeIcon={typeMeta.Icon}
                   typeLabel={typeMeta.label}
-                  isLiked={likedEntryIds.includes(entry.id)}
+                  isLiked={engagement?.isLiked ?? likedEntryIds.includes(entry.id)}
                   isSaved={savedEntryIds.includes(entry.id)}
+                  likeCount={engagement?.likeCount || 0}
+                  commentCount={engagement?.commentCount || 0}
                   onToggleLike={() => toggleLikeEntry(entry.id)}
                   onToggleSave={() => toggleSaveEntry(entry.id)}
                   commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
@@ -2013,20 +2894,38 @@ export default function AppController() {
               )}
             </div>
           )}
-        </section>
+          </section>
+        </div>
+
+        {personalizedFeed.enabled && personalizedFeed.error && (
+          <div className="feed-status" role="alert">
+            <span>{personalizedFeed.error}</span>
+            <button type="button" className="ghost-btn" onClick={personalizedFeed.retry}>Retry</button>
+          </div>
+        )}
+        {personalizedFeed.enabled && personalizedFeed.hasMore && !personalizedFeed.error && (
+          <div ref={feedSentinelRef} className="feed-sentinel" aria-hidden="true">
+            {personalizedFeed.loadingMore && <span>Gathering more entries…</span>}
+          </div>
+        )}
 
         {/* Reading Overlay Modal */}
         <CardOverlayModal
           entry={overlayEntry}
-          onClose={() => setOverlayEntry(null)}
-          isLiked={overlayEntry ? likedEntryIds.includes(overlayEntry.id) : false}
+          onClose={closeEntryOverlay}
+          focusCommentId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.commentId : undefined}
+          focusReplyId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.replyId : undefined}
+          focusRequestId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.requestId : undefined}
+          isLiked={overlayEntry ? (postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)) : false}
           isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
+          likeCount={overlayEntry ? postEngagements[overlayEntry.id]?.likeCount || 0 : 0}
           onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
           onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
           onOpenProfile={(handle) => {
             setOverlayEntry(null)
             handleOpenUserProfile(handle)
           }}
+          currentUserHandle={userProfile.handle}
         />
 
         {/* Confirm Delete Card Modal */}
@@ -2079,21 +2978,24 @@ export default function AppController() {
 
       {/* Floating action buttons stack */}
       <div className="fab-stack">
-        <button
-          className="fab fab-scroll-top"
-          type="button"
-          aria-label="Back to top"
-          title="Back to top"
-          onClick={scrollToTop}
-        >
-          <ChevronUp aria-hidden="true" />
-        </button>
+        {showScrollToTop ? (
+          <button
+            className="fab fab-scroll-top"
+            type="button"
+            aria-label="Back to top"
+            title="Back to top"
+            onClick={scrollToTop}
+          >
+            <ChevronUp aria-hidden="true" />
+          </button>
+        ) : null}
 
         <button
           className="fab"
           type="button"
           aria-label="Add new entry"
           title="Add new entry"
+          disabled={Boolean(cloudUserId && homeDataStatus !== 'ready')}
           onClick={() => openComposer()}
         >
           <Plus aria-hidden="true" />
@@ -2110,6 +3012,7 @@ export default function AppController() {
             onClose={closeComposer}
             onSave={handleSave}
             commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
+            communityEntries={allHomepageEntries}
           />
         ) : null}
       </AnimatePresence>

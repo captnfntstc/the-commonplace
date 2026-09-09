@@ -292,7 +292,7 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
           <section className="profile-catalog-section">
             <div className="profile-catalog-header">
               <h2 className="profile-catalog-title">
-                Community Reviews ({matchingEntries.length})
+                Community Reviews
               </h2>
 
               <div className="profile-search-bar">

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, waitForElementToBeRemoved } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, waitForElementToBeRemoved, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BrowserRouter } from 'react-router-dom'
 import type { User } from 'firebase/auth'
@@ -18,11 +18,12 @@ const TEST_USER = {
 function renderApplication({
   authenticated = true,
   verified = true,
-}: { authenticated?: boolean; verified?: boolean } = {}) {
+  user = TEST_USER,
+}: { authenticated?: boolean; verified?: boolean; user?: User } = {}) {
   return render(
     <BrowserRouter>
       <AuthProvider
-        initialUser={authenticated ? { ...TEST_USER, emailVerified: verified } as User : undefined}
+        initialUser={authenticated ? { ...user, emailVerified: verified } as User : undefined}
       >
         <ExpansionProvider>
           <AppController />
@@ -36,6 +37,7 @@ describe('application shell', () => {
   beforeEach(() => {
     localStorage.clear()
     window.history.replaceState({}, '', '/')
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
   })
 
   afterEach(() => {
@@ -46,9 +48,65 @@ describe('application shell', () => {
     renderApplication({ authenticated: false })
 
     expect(await screen.findByRole('heading', { name: 'Welcome back.' })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Keep me signed in' })).toBeChecked()
     expect(screen.queryByText(/Test login/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Continue as Guest/i })).not.toBeInTheDocument()
     await waitFor(() => expect(window.location.pathname).toBe('/login'))
+  })
+
+  it('checks registration usernames and offers verified alternatives when one is taken', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          handle: 'reader',
+          available: false,
+          suggestions: ['reader_314', 'reader_2718', 'reader_808'],
+        }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          handle: 'reader_314',
+          available: true,
+          suggestions: [],
+        }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    renderApplication({ authenticated: false })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create one' }))
+    const usernameInput = screen.getByRole('textbox', { name: 'Username' })
+    fireEvent.change(usernameInput, { target: { value: 'Reader' } })
+
+    expect(await screen.findByText('That username is already taken.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '@reader_314' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '@reader_2718' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '@reader_314' }))
+    expect(usernameInput).toHaveValue('reader_314')
+    expect(await screen.findByText('Username is available.')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/auth/handle-availability?handle=reader_314',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    )
+  })
+
+  it('requires a private date of birth and blocks registration below age 16', async () => {
+    renderApplication({ authenticated: false })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create one' }))
+    expect(screen.getByRole('checkbox', { name: /confirm that I am 16 or older/i })).toBeInTheDocument()
+    expect(screen.queryByText(/Kept private and used for eligibility and birthday greetings/i)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Learn more' }))
+    expect(screen.getByRole('dialog', { name: 'Age & Content Guide' })).toBeInTheDocument()
+    expect(screen.getByText(/Kept private and used for eligibility and birthday greetings/i)).toBeInTheDocument()
+    expect(screen.getByText('3. Country and regional requirements')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Understood' }))
+    fireEvent.change(screen.getByLabelText('Date of birth'), { target: { value: '2015-09-02' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }))
+
+    expect(await screen.findByText('You must be at least 16 years old to create an account.')).toBeInTheDocument()
   })
 
   it('uses a generic two-step forgot-password flow for email or username', async () => {
@@ -111,7 +169,9 @@ describe('application shell', () => {
   it('renders the feed and opens the entry composer', async () => {
     renderApplication()
     expect(await screen.findByText('The Commonplace.')).toBeInTheDocument()
-    expect(screen.getByRole('banner')).toHaveClass('global-app-header', 'is-home-page')
+    const header = screen.getByRole('banner')
+    expect(header).toHaveClass('global-app-header', 'is-home-page')
+    expect(header.closest('.main-content')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Go home' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Add new entry' }))
     const composerTitle = await screen.findByText('New Margin')
@@ -119,12 +179,65 @@ describe('application shell', () => {
     expect(composerTitle.closest('.modal-backdrop')).toBeInTheDocument()
   })
 
+  it('opens a dedicated mobile navigation menu', async () => {
+    renderApplication()
+    fireEvent.click(await screen.findByRole('button', { name: 'Open menu' }))
+
+    expect(screen.getByRole('navigation', { name: 'Mobile navigation' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Profile' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
+  })
+
+  it('renders a custom 404 page without rewriting an unknown URL', async () => {
+    window.history.replaceState({}, '', '/missing-page')
+    renderApplication()
+
+    expect(await screen.findByRole('heading', { name: 'This page slipped between the margins.' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/missing-page')
+  })
+
+  it('keeps an owned username even when old profile fields resemble the legacy demo', async () => {
+    localStorage.setItem('the-commonplace.user-profile.v1', JSON.stringify({
+      firstName: 'Jimmy',
+      lastName: 'Boy',
+      showFullName: true,
+      handle: 'jimboii',
+      email: 'jimmy@example.com',
+      bio: 'Collector of timeless passages, album impressions, cinematic notes, and personal reflections in one quiet place.',
+      avatarUrl: '',
+      coverUrl: '',
+      lastUsernameChangeDate: '2026-07-01T00:00:00.000Z',
+    }))
+
+    renderApplication()
+    await screen.findByText('The Commonplace.')
+    fireEvent.click(screen.getByRole('button', { name: 'User Profile & Settings' }))
+
+    expect(screen.getByRole('button', { name: 'View @jimboii profile' })).toBeInTheDocument()
+    expect(screen.queryByText('@jimmy_account')).not.toBeInTheDocument()
+  })
+
+  it('only shows the back-to-top control while the page is scrolled', async () => {
+    renderApplication()
+    await screen.findByText('The Commonplace.')
+
+    expect(screen.queryByRole('button', { name: 'Back to top' })).not.toBeInTheDocument()
+
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 240 })
+    fireEvent.scroll(window)
+    expect(screen.getByRole('button', { name: 'Back to top' })).toBeInTheDocument()
+
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 })
+    fireEvent.scroll(window)
+    expect(screen.queryByRole('button', { name: 'Back to top' })).not.toBeInTheDocument()
+  })
+
   it('opens an in-app sign-out confirmation instead of calling window.confirm', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm')
     renderApplication()
 
     fireEvent.click(await screen.findByRole('button', { name: 'User Profile & Settings' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Logout' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Log out' }))
 
     expect(await screen.findByRole('dialog', { name: 'Sign out?' })).toBeInTheDocument()
     expect(screen.getByText("You'll be returned to the login screen.")).toBeInTheDocument()
@@ -133,19 +246,78 @@ describe('application shell', () => {
     await waitForElementToBeRemoved(() => screen.queryByRole('dialog', { name: 'Sign out?' }))
 
     localStorage.setItem('the-commonplace.likes', '["entry-1"]')
+    localStorage.setItem('the_commonplace_recent_media_searches_v3:old-user', '[{"id":"old"}]')
     localStorage.setItem('unrelated.preference', 'keep-me')
-    fireEvent.click(screen.getByRole('button', { name: 'Logout' }))
+    fireEvent.click(screen.getByRole('button', { name: 'User Profile & Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Log out' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Sign Out' }))
 
     expect(await screen.findByRole('heading', { name: 'Welcome back.' })).toBeInTheDocument()
     expect(localStorage.getItem('the-commonplace.likes')).toBeNull()
+    expect(localStorage.getItem('the_commonplace_recent_media_searches_v3:old-user')).toBeNull()
     expect(localStorage.getItem('unrelated.preference')).toBe('keep-me')
   })
 
+  it('shows the simplified account menu and opens Activity', async () => {
+    renderApplication()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'User Profile & Settings' }))
+    expect(screen.queryByRole('button', { name: 'View Profile' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /View @.+ profile/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Activity' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Help & Support' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Activity' }))
+    expect(await screen.findByRole('heading', { name: 'Activity' })).toBeInTheDocument()
+    expect(screen.getByText('Personal Activity Logs')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /View My Liked Entries/ }))
+    expect(screen.getByRole('dialog', { name: /My Liked Entries/ })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/activity')
+  })
+
+  it('closes the profile menu when another header popup opens', async () => {
+    renderApplication()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'User Profile & Settings' }))
+    expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Notifications' }))
+    expect(screen.queryByRole('button', { name: 'Log out' })).not.toBeInTheDocument()
+    expect(screen.getByText("You're all caught up!")).toBeInTheDocument()
+  })
+
+  it('opens the profile from the complete account identity row', async () => {
+    renderApplication()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'User Profile & Settings' }))
+    const identityLink = screen.getByRole('button', { name: /View @.+ profile/ })
+    expect(identityLink.querySelector('.menu-identity-avatar')).not.toBeNull()
+    expect(identityLink.querySelector('.menu-user-name')).not.toBeNull()
+    expect(identityLink.querySelector('.menu-user-handle')).not.toBeNull()
+
+    fireEvent.click(identityLink)
+    expect(window.location.pathname).toMatch(/^\/users\//)
+  })
+
+  it('opens the Help & Support page from the account menu', async () => {
+    renderApplication()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'User Profile & Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Help & Support' }))
+    expect(await screen.findByRole('heading', { name: 'Help & Support' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open Settings' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/help')
+  })
+
   it('blocks posting until the signed-in email is verified', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
     renderApplication({ verified: false })
 
     expect(await screen.findByText(/Email hasn't been verified/i)).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Dismiss email verification reminder' })).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: 'Add new entry' }))
     expect(await screen.findByRole('dialog', { name: 'Verify your email first' })).toBeInTheDocument()
@@ -193,18 +365,58 @@ describe('application shell', () => {
   })
 
   it('renders a direct user profile route without an undefined profile callback', async () => {
-    window.history.replaceState({}, '', '/users/jimboii')
+    window.history.replaceState({}, '', '/users/jimmy_account')
     renderApplication()
-    expect(await screen.findByText('@jimboii')).toBeInTheDocument()
+    expect(await screen.findByText('@jimmy_account')).toBeInTheDocument()
     expect(screen.getByRole('banner')).toHaveClass('global-app-header', 'is-inner-page')
     expect(screen.getByRole('button', { name: 'Go home' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Back to Feed' })).not.toBeInTheDocument()
+    const newEntryButton = screen.getByRole('button', { name: 'Add new entry' })
+    expect(newEntryButton).toHaveClass('fab')
+    fireEvent.click(newEntryButton)
+    expect(await screen.findByText('New Margin')).toBeInTheDocument()
+  })
+
+  it('keeps the profile viewport stable and slides the created-catalog filter pill', async () => {
+    window.history.replaceState({}, '', '/users/jimmy_account')
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 640 })
+    const scrollToSpy = vi.spyOn(window, 'scrollTo')
+    renderApplication()
+
+    const filters = await screen.findByLabelText('Filter created catalog by media type')
+    const allButton = within(filters).getByText('All').closest('button')
+    const albumsButton = within(filters).getByText('Albums').closest('button')
+    expect(allButton?.querySelector('.profile-filter-pill')).toBeInTheDocument()
+
+    scrollToSpy.mockClear()
+    fireEvent.click(albumsButton!)
+
+    await waitFor(() => {
+      expect(albumsButton).toHaveClass('active')
+      expect(albumsButton?.querySelector('.profile-filter-pill')).toBeInTheDocument()
+    })
+    expect(allButton?.querySelector('.profile-filter-pill')).not.toBeInTheDocument()
+    expect(scrollToSpy).toHaveBeenCalledWith({ top: 640, behavior: 'auto' })
   })
 
   it('opens the default header search', async () => {
     renderApplication()
     fireEvent.click(await screen.findByRole('button', { name: 'Search' }))
     expect(screen.getByRole('textbox', { name: 'Search' })).toBeInTheDocument()
+  })
+
+  it('finishes a home filter transition when the selected type has no entries', async () => {
+    const scrollToSpy = vi.spyOn(window, 'scrollTo')
+    renderApplication()
+    expect(await screen.findByRole('heading', { name: 'Your commonplace is waiting.' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Books' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Saved entries' })).toHaveAttribute('aria-busy', 'false')
+    })
+    expect(screen.queryByRole('status', { name: 'Loading home entries' })).not.toBeInTheDocument()
+    expect(scrollToSpy).not.toHaveBeenCalled()
   })
 
   it('removes legacy demo content instead of rendering it on home', async () => {
@@ -234,7 +446,7 @@ describe('application shell', () => {
   })
 
   it('keeps a private Saved tab accessible to its owner and marks it with a lock', async () => {
-    window.history.replaceState({}, '', '/users/jimboii')
+    window.history.replaceState({}, '', '/users/jimmy_account')
     renderApplication()
 
     expect(await screen.findByRole('tab', { name: 'Catalogs' })).toHaveAttribute('aria-selected', 'true')
@@ -244,7 +456,7 @@ describe('application shell', () => {
     expect(screen.getByRole('tab', { name: /^Saved Collections/ })).toBeInTheDocument()
 
     fireEvent.click(savedTab)
-    await waitForElementToBeRemoved(() => screen.queryByRole('status', { name: 'Loading saved catalog' }))
+    await waitForElementToBeRemoved(() => screen.queryByRole('status', { name: 'Loading saved catalog entries' }))
     expect(savedTab).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('heading', { name: /Saved Catalog/ })).toBeInTheDocument()
   })
@@ -265,5 +477,91 @@ describe('application shell', () => {
     expect(savedVisibility).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     expect(await screen.findByText('Settings updated successfully!')).toBeInTheDocument()
+  })
+
+  it('requires typed confirmation before permanently deleting an account', async () => {
+    window.history.replaceState({}, '', '/settings')
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ deleted: true }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderApplication()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Account & Security' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Delete your account?' })
+    const permanentDelete = screen.getByRole('button', { name: 'Permanently delete account' })
+    expect(dialog).toBeInTheDocument()
+    expect(permanentDelete).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('Confirmation'), { target: { value: 'DELETE' } })
+    expect(permanentDelete).toBeEnabled()
+    fireEvent.click(permanentDelete)
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/auth/account', expect.objectContaining({
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer test-id-token' },
+    })))
+    expect(await screen.findByRole('heading', { name: 'Welcome back.' })).toBeInTheDocument()
+  })
+
+  it('collects deactivation timing and optional safety feedback', async () => {
+    window.history.replaceState({}, '', '/settings')
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ deactivated: true, reactivatesAt: null }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderApplication()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Account & Security' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Deactivate account' }))
+
+    expect(screen.getByRole('dialog', { name: 'Take a quiet break' })).toBeInTheDocument()
+    const submit = screen.getByRole('button', { name: 'Deactivate my account' })
+    expect(submit).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Why are you deactivating?'), {
+      target: { value: 'privacy_or_safety' },
+    })
+    fireEvent.change(screen.getByLabelText('When would you like to return?'), {
+      target: { value: 'in_my_own_time' },
+    })
+    fireEvent.click(screen.getByLabelText(/made me feel unsafe or unwelcome/i))
+    fireEvent.change(screen.getByLabelText(/Anything you would like us to understand/i), {
+      target: { value: 'Please add stronger blocking tools.' },
+    })
+    fireEvent.click(submit)
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      '/api/auth/account/deactivate',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer test-id-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reason: 'privacy_or_safety',
+          returnPlan: 'in_my_own_time',
+          safetyConcern: true,
+          feedback: 'Please add stronger blocking tools.',
+        }),
+      }),
+    ))
+    expect(await screen.findByRole('heading', { name: 'Welcome back.' })).toBeInTheDocument()
+  })
+
+  it('offers deactivation from the permanent deletion dialog', async () => {
+    window.history.replaceState({}, '', '/settings')
+    renderApplication()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Account & Security' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete account' }))
+    fireEvent.click(screen.getByRole('button', { name: 'deactivating your account instead' }))
+
+    expect(screen.queryByRole('dialog', { name: 'Delete your account?' })).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Take a quiet break' })).toBeInTheDocument()
   })
 })
