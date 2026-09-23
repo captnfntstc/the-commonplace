@@ -169,12 +169,13 @@ describe('application shell', () => {
   it('renders the feed and opens the entry composer', async () => {
     renderApplication()
     expect(await screen.findByText('The Commonplace.')).toBeInTheDocument()
+    expect(screen.getByText('Beta')).toBeInTheDocument()
     const header = screen.getByRole('banner')
     expect(header).toHaveClass('global-app-header', 'is-home-page')
     expect(header.closest('.main-content')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Go home' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Add new entry' }))
-    const composerTitle = await screen.findByText('New Margin')
+    const composerTitle = await screen.findByText('New Entry')
     expect(composerTitle).toBeInTheDocument()
     expect(composerTitle.closest('.modal-backdrop')).toBeInTheDocument()
   })
@@ -326,7 +327,7 @@ describe('application shell', () => {
     expect(screen.queryByRole('button', { name: 'Not now' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Resend email' })).not.toBeInTheDocument()
     expect(screen.getByText(/Email hasn't been verified/i)).toBeInTheDocument()
-    expect(screen.queryByText('New Margin')).not.toBeInTheDocument()
+    expect(screen.queryByText('New Entry')).not.toBeInTheDocument()
   })
 
   it('sends verification directly from the banner and starts the resend timer', async () => {
@@ -374,7 +375,7 @@ describe('application shell', () => {
     const newEntryButton = screen.getByRole('button', { name: 'Add new entry' })
     expect(newEntryButton).toHaveClass('fab')
     fireEvent.click(newEntryButton)
-    expect(await screen.findByText('New Margin')).toBeInTheDocument()
+    expect(await screen.findByText('New Entry')).toBeInTheDocument()
   })
 
   it('keeps the profile viewport stable and slides the created-catalog filter pill', async () => {
@@ -455,10 +456,17 @@ describe('application shell', () => {
     expect(screen.getByLabelText('Saved catalog is private')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /^Saved Collections/ })).toBeInTheDocument()
 
+    fireEvent.click(screen.getByRole('tab', { name: 'Collections' }))
+    await waitForElementToBeRemoved(() => screen.queryByRole('status', { name: 'Loading collections' }))
+    expect(screen.getByRole('heading', { name: 'Created Collections' })).toBeInTheDocument()
+
     fireEvent.click(savedTab)
+    expect(screen.queryByRole('heading', { name: 'Created Collections' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Saved Catalog' })).toBeInTheDocument()
     await waitForElementToBeRemoved(() => screen.queryByRole('status', { name: 'Loading saved catalog entries' }))
     expect(savedTab).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('heading', { name: /Saved Catalog/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Saved Catalog' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add new entry' })).not.toBeInTheDocument()
   })
 
   it('keeps saved activity private by default and exposes an opt-in privacy setting', async () => {
@@ -563,5 +571,35 @@ describe('application shell', () => {
 
     expect(screen.queryByRole('dialog', { name: 'Delete your account?' })).not.toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Take a quiet break' })).toBeInTheDocument()
+  })
+
+  it('opens an entry on a dedicated reading route instead of a dialog overlay', async () => {
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
+    window.history.replaceState({}, '', '/entries/reading-page-entry')
+    localStorage.setItem('the-commonplace.entries', JSON.stringify([{
+      id: 'reading-page-entry',
+      type: 'book',
+      title: 'A Dedicated Reading Page',
+      creator: 'Sample Author',
+      provider: 'Manual',
+      providerId: '',
+      rating: 4,
+      favoritePassage: 'A favorite line.',
+      reflection: 'A longer reflection for the reading page.',
+      createdAt: '2026-09-21T08:00:00.000Z',
+      updatedAt: '2026-09-21T08:00:00.000Z',
+      coverTone: 'blue',
+    }]))
+    const { container } = renderApplication()
+
+    expect(await screen.findByRole('heading', { name: 'A Dedicated Reading Page', level: 1 })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/entries/reading-page-entry')
+    expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Reflection', level: 2 })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Join the discussion', level: 2 })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Like/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Save/ })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'A Dedicated Reading Page' })).not.toBeInTheDocument()
+    expect(container.querySelector('.home-card-stage')).not.toBeInTheDocument()
   })
 })

@@ -10,6 +10,7 @@ import {
   type ProfileCollectionItem,
 } from '../../features/collections/profileCollections'
 import { loadOrMigrateUserCollections, saveUserCollections } from '../../services/cloudData'
+import { useAccessibleDialog } from '../../hooks/useAccessibleDialog'
 
 interface CollectionPickerModalProps {
   handle: string
@@ -23,6 +24,11 @@ export function CollectionPickerModal({ handle, userId = null, item, onClose }: 
   const [newCollectionName, setNewCollectionName] = useState('')
   const [duplicateCollectionId, setDuplicateCollectionId] = useState<string | null>(null)
   const duplicateCollection = collections.find((collection) => collection.id === duplicateCollectionId)
+  const dialogRef = useAccessibleDialog<HTMLElement>({ open: true, onClose })
+  const duplicateDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(duplicateCollection),
+    onClose: () => setDuplicateCollectionId(null),
+  })
 
   useEffect(() => {
     if (!userId) return
@@ -76,10 +82,12 @@ export function CollectionPickerModal({ handle, userId = null, item, onClose }: 
   return (
     <div className="collection-picker-backdrop" onClick={onClose}>
       <motion.section
+        ref={dialogRef}
         className="collection-picker-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="collection-picker-title"
+        tabIndex={-1}
         initial={{ opacity: 0, scale: 0.96, y: 10 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.96, y: 10 }}
@@ -138,10 +146,12 @@ export function CollectionPickerModal({ handle, userId = null, item, onClose }: 
           {duplicateCollection && (
             <div className="collection-remove-confirm-backdrop" onClick={() => setDuplicateCollectionId(null)}>
               <motion.div
+                ref={duplicateDialogRef}
                 className="collection-remove-confirm collection-duplicate-confirm"
                 role="alertdialog"
                 aria-modal="true"
                 aria-labelledby="collection-duplicate-title"
+                tabIndex={-1}
                 initial={{ opacity: 0, scale: 0.94, y: 8 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.94, y: 8 }}

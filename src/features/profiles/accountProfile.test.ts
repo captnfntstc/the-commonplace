@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isLegacyDemoProfile,
+  hasDistinctProfileDisplayName,
   pendingSignupProfileForUser,
   profileBelongsToAuthUser,
   profileFromAuthUser,
@@ -8,6 +9,11 @@ import {
 } from './accountProfile'
 
 describe('account profile initialization', () => {
+  it('does not treat a handle repeated as the display name as a second identity', () => {
+    expect(hasDistinctProfileDisplayName('jpatpatrojas_u6wmg3', '@jpatpatrojas_u6wmg3')).toBe(false)
+    expect(hasDistinctProfileDisplayName('Juan Pat Rojas', '@jpatpatrojas_u6wmg3')).toBe(true)
+  })
+
   it('builds a clean profile from the registered Firebase identity', () => {
     const profile = profileFromAuthUser({
       uid: 'firebase-user-ABC123',

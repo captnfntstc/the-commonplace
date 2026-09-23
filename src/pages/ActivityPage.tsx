@@ -9,6 +9,7 @@ import {
   type PostEngagement,
 } from '../services/cloudData'
 import { formatFullDateTime, formatRelativeTime } from '../utils/dateUtils'
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 
 type ActivityEntryFocus = {
   commentId?: string
@@ -166,6 +167,10 @@ export const ActivityPage: React.FC<ActivityPageProps> = ({
     setActivityModalLoading(false)
     setActivityModalError('')
   }
+  const activityDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(activeActivityModal),
+    onClose: closeActivityModal,
+  })
 
   return (
     <main className="page-wrapper account-utility-page">
@@ -248,10 +253,12 @@ export const ActivityPage: React.FC<ActivityPageProps> = ({
       {activeActivityModal && (
         <div className="modal-backdrop" onClick={closeActivityModal}>
           <div
+            ref={activityDialogRef}
             className="settings-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="activity-log-modal-title"
+            tabIndex={-1}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="settings-header">

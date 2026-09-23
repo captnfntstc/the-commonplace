@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { motion } from 'framer-motion'
 import { User, X, Save, AtSign, FileText } from 'lucide-react'
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 
 export type UserProfileData = {
   name: string
@@ -24,6 +25,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [name, setName] = useState(profile.name)
   const [handle, setHandle] = useState(profile.handle.replace(/^@/, ''))
   const [bio, setBio] = useState(profile.bio)
+  const dialogRef = useAccessibleDialog<HTMLDivElement>({ open: isOpen, onClose })
 
   if (!isOpen) return null
 
@@ -40,7 +42,12 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <motion.div
+        ref={dialogRef}
         className="settings-modal edit-profile-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-profile-title"
+        tabIndex={-1}
         initial={{ opacity: 0, scale: 0.94, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.94, y: 15 }}
@@ -50,7 +57,7 @@ export const EditProfileModal: React.FC<EditProfileModalProps> = ({
         <div className="settings-header">
           <div className="settings-header-title">
             <User aria-hidden="true" />
-            <h2>Edit Profile</h2>
+            <h2 id="edit-profile-title">Edit Profile</h2>
           </div>
           <button
             type="button"

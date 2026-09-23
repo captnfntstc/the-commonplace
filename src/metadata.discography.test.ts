@@ -28,7 +28,7 @@ describe('iTunes discography release classification', () => {
 
   it('collapses clean/explicit pairs to explicit while keeping named editions separate', () => {
     const releases = preferExplicitAlbumEditions([
-      { id: 'album-1', title: 'GUTS', subtitle: '', artworkUrl: '', year: '2023', category: 'album', explicit: false },
+      { id: 'album-1', title: 'GUTS', subtitle: '', artworkUrl: '', year: '2024', category: 'album', explicit: false },
       { id: 'album-2', title: 'GUTS (Explicit)', subtitle: '', artworkUrl: '', year: '2023', category: 'album', explicit: true },
       { id: 'album-3', title: 'GUTS (spilled)', subtitle: '', artworkUrl: '', year: '2024', category: 'album', explicit: true },
     ])

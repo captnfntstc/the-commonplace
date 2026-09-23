@@ -1,14 +1,17 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle,
+  ArrowLeft,
   BookOpen,
+  FileText,
   Loader2,
-  MessageSquareOff,
   Music4,
   Quote,
   Save,
   Search,
   Star,
+  Trash2,
+  WifiOff,
   X,
 } from 'lucide-react'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
@@ -20,8 +23,10 @@ import {
 } from '../../../metadata'
 import { FormattingToolbar } from '../../../components/FormattingToolbar/FormattingToolbar'
 import { RichTextEditor } from '../../../components/RichTextEditor/RichTextEditor'
+import { type Alignment } from '../../../components/CommonplaceCard/FormattedText'
 import { AdaptiveGameArtwork } from '../../../components/GameArtwork/AdaptiveGameArtwork'
 import { resolveArtworkUrl } from '../../../utils/artwork'
+import { useAccessibleDialog } from '../../../hooks/useAccessibleDialog'
 import {
   localGameMetadataResults,
   mergeMetadataSearchResults,
@@ -38,9 +43,13 @@ import {
   type EntryDraft,
   type EntryType,
 } from '../model'
+import { entryDraftsMatch, type SavedEntryDraft } from '../draftStorage'
 
 const WARN_UNRATED_KEY = 'the-commonplace.warn-unrated'
+const MAX_SELECTED_LYRIC_LINES = 4
+const MAX_NOTABLE_LINE_CHARACTERS = 250
 const EMPTY_COMMUNITY_ENTRIES: Entry[] = []
+const EMPTY_SAVED_DRAFTS: SavedEntryDraft[] = []
 
 function getWarnUnratedPreference(): boolean {
   const stored = localStorage.getItem(WARN_UNRATED_KEY)
@@ -73,20 +82,7 @@ function getMatchingLyricIndexes(lyricsText: string, favoritePassageText: string
         (passageLine.includes(normalizedLine) || normalizedLine.includes(passageLine))),
     )) matched.push(index)
   })
-  return matched
-}
-
-function isDraftDirty(current: EntryDraft, base: EntryDraft): boolean {
-  return (
-    current.type !== base.type ||
-    current.title.trim() !== base.title.trim() ||
-    current.creator.trim() !== base.creator.trim() ||
-    current.rating !== base.rating ||
-    current.favoritePassage.trim() !== base.favoritePassage.trim() ||
-    current.reflection.trim() !== base.reflection.trim() ||
-    current.coverTone !== base.coverTone ||
-    current.enableDropCap !== base.enableDropCap
-  )
+  return matched.slice(0, MAX_SELECTED_LYRIC_LINES)
 }
 
 function TypeIconBar({
@@ -136,18 +132,29 @@ export function EntryComposer({
   initialLyrics = '',
   onClose,
   onSave,
-  commentsDisabled = false,
   communityEntries = EMPTY_COMMUNITY_ENTRIES,
+  savedDrafts = EMPTY_SAVED_DRAFTS,
+  activeDraftId = null,
+  draftsInitiallyOpen = false,
+  onSaveDraft,
+  onSelectDraft,
+  onDeleteDraft,
+  isOnline = true,
 }: {
   entry: Entry | null
   initialDraft?: EntryDraft | null
   initialLyrics?: string
   onClose: () => void
-  onSave: (draft: EntryDraft, disableComments?: boolean) => void
-  commentsDisabled?: boolean
+  onSave: (draft: EntryDraft) => void
   communityEntries?: Entry[]
+  savedDrafts?: SavedEntryDraft[]
+  activeDraftId?: string | null
+  draftsInitiallyOpen?: boolean
+  onSaveDraft?: (draft: EntryDraft, lyrics: string, metadataQuery: string, draftId: string | null) => void
+  onSelectDraft?: (draftId: string | null) => void
+  onDeleteDraft?: (draftId: string) => void
+  isOnline?: boolean
 }) {
-  const [isCommentsDisabled, setIsCommentsDisabled] = useState(commentsDisabled)
   const initialDraft = entry
     ? {
         type: entry.type,
@@ -158,6 +165,7 @@ export function EntryComposer({
         genre: entry.genre,
         year: entry.year,
         rating: entry.rating,
+        lyrics: entry.lyrics,
         favoritePassage: entry.favoritePassage,
         reflection: entry.reflection,
         reflectionAlign: entry.reflectionAlign || 'left',
@@ -173,25 +181,29 @@ export function EntryComposer({
   const [draft, setDraft] = useState<EntryDraft>(
     initialDraft,
   )
+  const [baselineDraft, setBaselineDraft] = useState<EntryDraft>(initialDraft)
   const [metadataQuery, setMetadataQuery] = useState(initialDraft.title)
+  const [baselineMetadataQuery, setBaselineMetadataQuery] = useState(initialDraft.title)
   const [metadataResults, setMetadataResults] = useState<MetadataResult[]>([])
   const [searchStatus, setSearchStatus] = useState<
     'idle' | 'searching' | 'ready' | 'error'
   >('idle')
   const [statusMessage, setStatusMessage] = useState('')
+  const restoredLyrics = initialLyrics || initialDraft.lyrics || ''
   const [selectedLyricIndexes, setSelectedLyricIndexes] = useState<number[]>(() =>
-    initialLyrics && initialDraft.favoritePassage
-      ? getMatchingLyricIndexes(initialLyrics, initialDraft.favoritePassage)
+    restoredLyrics && initialDraft.favoritePassage
+      ? getMatchingLyricIndexes(restoredLyrics, initialDraft.favoritePassage)
       : [],
   )
   const [showPassage, setShowPassage] = useState(() => Boolean(initialDraft.favoritePassage?.trim()))
   const [lyricsStatus, setLyricsStatus] = useState<
     'idle' | 'loading' | 'ready' | 'not-found'
-  >(initialLyrics || initialDraftSeed?.favoritePassage ? 'ready' : 'idle')
-  const isEditMode = Boolean(entry)
-  const [lyrics, setLyrics] = useState(initialLyrics)
+  >(restoredLyrics ? 'ready' : 'idle')
+  const [lyrics, setLyrics] = useState(restoredLyrics)
   const [showUnratedConfirm, setShowUnratedConfirm] = useState(false)
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false)
+  const [showDraftLibrary, setShowDraftLibrary] = useState(draftsInitiallyOpen)
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(activeDraftId)
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const [pendingDraft, setPendingDraft] = useState<EntryDraft | null>(null)
   const lyricsFetchId = useRef(0)
@@ -203,16 +215,44 @@ export function EntryComposer({
 
   const activeRef = activeTarget === 'favoritePassage' ? passageRef : reflectionRef
   const activeValue = activeTarget === 'favoritePassage' ? draft.favoritePassage : draft.reflection
+  const activeAlignment = activeTarget === 'favoritePassage'
+    ? draft.passageAlign || 'left'
+    : draft.reflectionAlign || 'left'
   const setActiveValue = (val: string) => setDraft((cur) => ({ ...cur, [activeTarget]: val }))
+  const setActiveAlignment = (alignment: Alignment) => setDraft((cur) => ({
+    ...cur,
+    [activeTarget === 'favoritePassage' ? 'passageAlign' : 'reflectionAlign']: alignment,
+  }))
+  const hasUnsavedChanges = !entryDraftsMatch(draft, baselineDraft)
+    || metadataQuery.trim() !== baselineMetadataQuery.trim()
 
   const handleRequestClose = () => {
-    if (isDraftDirty(draft, initialDraft)) {
+    if (hasUnsavedChanges) {
       setShowDiscardConfirm(true)
     } else {
       onClose()
     }
   }
-
+  const handleComposerClose = () => {
+    if (showDraftLibrary) {
+      setShowDraftLibrary(false)
+      return
+    }
+    handleRequestClose()
+  }
+  const composerDialogRef = useAccessibleDialog<HTMLFormElement>({
+    open: true,
+    onClose: handleComposerClose,
+    closeOnEscape: !showDiscardConfirm && !showUnratedConfirm,
+  })
+  const discardDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: showDiscardConfirm,
+    onClose: () => setShowDiscardConfirm(false),
+  })
+  const unratedDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: showUnratedConfirm,
+    onClose: () => setShowUnratedConfirm(false),
+  })
   const isMusicEntry = draft.type === 'song' || draft.type === 'album'
   const lyricSourceText = lyrics || (draft.type === 'song' ? draft.favoritePassage : '')
   const lyricLines = lyricSourceText
@@ -238,7 +278,7 @@ export function EntryComposer({
   }, [lyricsStatus, selectedLyricIndexes])
 
   useEffect(() => {
-    if (initialLyrics || initialDraftSeed?.favoritePassage) return
+    if (restoredLyrics) return
     if (draft.type !== 'song' || !draft.title || !draft.creator) return
     if (lyricsStatus !== 'idle') return
 
@@ -274,7 +314,7 @@ export function EntryComposer({
       })
 
     return () => abortController.abort()
-  }, [isEditMode, initialDraftSeed?.favoritePassage, initialLyrics, draft.type, draft.title, draft.creator, lyricsStatus, draft.favoritePassage])
+  }, [restoredLyrics, draft.type, draft.title, draft.creator, draft.explicit, draft.provider, lyricsStatus, draft.favoritePassage])
 
   useEffect(() => {
     const normalizedQuery = metadataQuery.trim()
@@ -319,7 +359,7 @@ export function EntryComposer({
     const abortController = new AbortController()
 
     const timeout = window.setTimeout(() => {
-      searchMetadata(draft.type, normalizedQuery, abortController.signal)
+      searchMetadata(draft.type, normalizedQuery, abortController.signal, { priority: 'high' })
         .then((results) => {
           if (cancelled) return
           const mergedResults = rankMetadataSearchResults(
@@ -384,6 +424,7 @@ export function EntryComposer({
       creator: '',
       provider: '',
       providerId: '',
+      lyrics: undefined,
       coverUrl: undefined,
       summary: undefined,
       preferWikipediaArtwork: undefined,
@@ -396,7 +437,7 @@ export function EntryComposer({
 
   const selectMetadata = async (result: MetadataResult) => {
     const fetchId = ++lyricsFetchId.current
-    setDraft((cur) => draftFromMetadata(result, cur))
+    setDraft((cur) => ({ ...draftFromMetadata(result, cur), lyrics: undefined }))
     setMetadataQuery(result.title)
     setMetadataResults([])
     setSearchStatus('idle')
@@ -436,7 +477,10 @@ export function EntryComposer({
   }
 
   const toggleLyricLine = (index: number) => {
-    const nextIndexes = selectedLyricIndexes.includes(index)
+    const isSelected = selectedLyricIndexes.includes(index)
+    if (!isSelected && selectedLyricIndexes.length >= MAX_SELECTED_LYRIC_LINES) return
+
+    const nextIndexes = isSelected
       ? selectedLyricIndexes.filter((selectedIndex) => selectedIndex !== index)
       : [...selectedLyricIndexes, index].sort((a, b) => a - b)
 
@@ -446,6 +490,29 @@ export function EntryComposer({
       ...cur,
       favoritePassage: nextIndexes.map((lineIndex) => lyricLines[lineIndex]).join('\n'),
     }))
+  }
+
+  const loadSavedDraft = (saved: SavedEntryDraft) => {
+    const restoredDraft = { ...emptyDraft, ...saved.draft }
+    const restoredLyrics = saved.lyrics || ''
+    setDraft(restoredDraft)
+    setBaselineDraft(restoredDraft)
+    setSelectedDraftId(saved.id)
+    setMetadataQuery(saved.metadataQuery)
+    setBaselineMetadataQuery(saved.metadataQuery)
+    setMetadataResults([])
+    setSearchStatus('idle')
+    setStatusMessage('')
+    setLyrics(restoredLyrics)
+    setLyricsStatus(restoredLyrics ? 'ready' : 'idle')
+    setSelectedLyricIndexes(
+      restoredLyrics && restoredDraft.favoritePassage
+        ? getMatchingLyricIndexes(restoredLyrics, restoredDraft.favoritePassage)
+        : [],
+    )
+    setShowPassage(Boolean(restoredDraft.favoritePassage?.trim()))
+    setShowDraftLibrary(false)
+    onSelectDraft?.(saved.id)
   }
 
   const submitDraft = (event: FormEvent<HTMLFormElement>) => {
@@ -463,6 +530,7 @@ export function EntryComposer({
       creator: draft.creator.trim(),
       provider: draft.provider.trim(),
       providerId: draft.providerId.trim(),
+      lyrics: draft.type === 'song' ? (lyrics || draft.lyrics || undefined) : undefined,
       favoritePassage: draft.favoritePassage.trim(),
       reflection: draft.reflection.trim(),
     }
@@ -473,7 +541,7 @@ export function EntryComposer({
       return
     }
 
-    onSave(finalDraft, isCommentsDisabled)
+    onSave(finalDraft)
   }
 
   return (
@@ -482,21 +550,86 @@ export function EntryComposer({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      onClick={(e) => { if (e.target === e.currentTarget) handleRequestClose() }}
+      onClick={(e) => { if (e.target === e.currentTarget) handleComposerClose() }}
     >
       <motion.form
+        ref={composerDialogRef}
         className={`composer${showDiscardConfirm || showUnratedConfirm ? ' composer--confirmation-open' : ''}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="entry-composer-title"
+        tabIndex={-1}
         onSubmit={submitDraft}
         initial={{ opacity: 0, y: 20, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 20, scale: 0.98 }}
         transition={{ duration: 0.2 }}
       >
+        {showDraftLibrary ? (
+          <>
+            <div className="composer-header composer-header--landscape">
+              <button
+                className="composer-back-btn"
+                type="button"
+                onClick={() => setShowDraftLibrary(false)}
+                aria-label="Back to New Entry"
+                title="Back to New Entry"
+              >
+                <ArrowLeft aria-hidden="true" />
+              </button>
+              <div className="composer-title">
+                <h2 id="entry-composer-title">Drafts</h2>
+                <div className="composer-title-rule" />
+              </div>
+              <div className="composer-header-spacer" />
+            </div>
+
+            <section className="entry-drafts-page">
+              {savedDrafts.length === 0 ? (
+                <div className="entry-drafts-empty">
+                  <FileText aria-hidden="true" />
+                  <p>No saved drafts yet.</p>
+                </div>
+              ) : (
+                <div className="entry-drafts-list">
+                  {savedDrafts.map((saved) => {
+                    const typeLabel = getTypeMeta(saved.draft.type).label.replace(/s$/, '')
+                    const title = saved.draft.title.trim() || `Untitled ${typeLabel}`
+                    return (
+                      <div className={`entry-draft-row${selectedDraftId === saved.id ? ' is-active' : ''}`} key={saved.id}>
+                        <button className="entry-draft-select" type="button" onClick={() => loadSavedDraft(saved)}>
+                          <strong>{title}</strong>
+                          <span>{typeLabel} &bull; Saved {new Date(saved.updatedAt).toLocaleString()}</span>
+                        </button>
+                        <button
+                          className="entry-draft-delete"
+                          type="button"
+                          onClick={() => {
+                            onDeleteDraft?.(saved.id)
+                            if (selectedDraftId === saved.id) {
+                              setSelectedDraftId(null)
+                              onSelectDraft?.(null)
+                            }
+                          }}
+                          aria-label={`Delete draft ${title}`}
+                          title="Delete draft"
+                        >
+                          <Trash2 aria-hidden="true" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+          </>
+        ) : (
+          <>
         <div className="composer-header composer-header--landscape">
           <div className="composer-header-spacer" />
           <div className="composer-title">
-            <p className="composer-eyebrow">{entry ? 'Edit entry' : 'New entry'}</p>
-            <h2>{entry ? entry.title : 'New Margin'}</h2>
+            {entry && <p className="composer-eyebrow">Edit entry</p>}
+            <h2 id="entry-composer-title">{entry ? entry.title : 'New Entry'}</h2>
             <div className="composer-title-rule" />
           </div>
           <button
@@ -508,6 +641,16 @@ export function EntryComposer({
             <X aria-hidden="true" />
           </button>
         </div>
+
+        {!isOnline && (
+          <div className="composer-offline-notice" role="status">
+            <WifiOff aria-hidden="true" />
+            <span>
+              <strong>No internet connection.</strong>
+              Changes will be saved once the internet returns.
+            </span>
+          </div>
+        )}
 
         <div className="composer-landscape">
           <section className="composer-left">
@@ -694,6 +837,9 @@ export function EntryComposer({
               <div className="full-label lyrics-section">
                 <div className="passage-header">
                   <span>Favorite lyrics</span>
+                  <small className="lyrics-selection-limit">
+                    {selectedLyricIndexes.length} / {MAX_SELECTED_LYRIC_LINES} lines
+                  </small>
                 </div>
                 <div className="lyrics-box" ref={lyricsBoxRef}>
                   {lyricsStatus === 'idle' && (
@@ -725,6 +871,15 @@ export function EntryComposer({
                           key={`${line}-${index}`}
                           data-lyric-index={index}
                           type="button"
+                          disabled={
+                            !selectedLyricIndexes.includes(index) &&
+                            selectedLyricIndexes.length >= MAX_SELECTED_LYRIC_LINES
+                          }
+                          title={
+                            !selectedLyricIndexes.includes(index) && selectedLyricIndexes.length >= MAX_SELECTED_LYRIC_LINES
+                              ? `You can select up to ${MAX_SELECTED_LYRIC_LINES} lyric lines.`
+                              : undefined
+                          }
                           onClick={() => toggleLyricLine(index)}
                         >
                           {line}
@@ -757,11 +912,13 @@ export function EntryComposer({
                 <RichTextEditor
                   editorRef={passageRef}
                   value={draft.favoritePassage}
+                  align={draft.passageAlign}
                   onFocus={() => setActiveTarget('favoritePassage')}
                   onChange={(html) =>
                     setDraft((cur) => ({ ...cur, favoritePassage: html }))
                   }
                   minHeight={100}
+                  maxCharacters={MAX_NOTABLE_LINE_CHARACTERS}
                   placeholder={
                     draft.type === 'album'
                       ? 'A lyric or line from this album that stayed with you…'
@@ -782,11 +939,12 @@ export function EntryComposer({
 
             <div className="full-label composer-review">
               <div className="passage-header">
-                <span>Review / Reflection</span>
+                <span>Your Thoughts</span>
               </div>
               <RichTextEditor
                 editorRef={reflectionRef}
                 value={draft.reflection}
+                align={draft.reflectionAlign}
                 onFocus={() => setActiveTarget('reflection')}
                 onChange={(html) =>
                   setDraft((cur) => ({ ...cur, reflection: html }))
@@ -802,6 +960,8 @@ export function EntryComposer({
                   editorRef={activeRef}
                   value={activeValue}
                   onChange={setActiveValue}
+                  alignment={activeAlignment}
+                  onAlignmentChange={setActiveAlignment}
                   enableDropCap={Boolean(draft.enableDropCap)}
                   onToggleDropCap={() =>
                     setDraft((cur) => ({
@@ -810,14 +970,17 @@ export function EntryComposer({
                     }))
                   }
                 />
-                <button
-                  type="button"
-                  className={`disable-comments-square-btn ${isCommentsDisabled ? 'active' : ''}`}
-                  title={isCommentsDisabled ? 'Comments disabled for this entry' : 'Disable comments for this entry'}
-                  onClick={() => setIsCommentsDisabled((v) => !v)}
-                >
-                  <MessageSquareOff size={15} />
-                </button>
+                {!entry && (
+                  <button
+                    className="composer-toolbar-drafts-btn"
+                    type="button"
+                    onClick={() => setShowDraftLibrary(true)}
+                    aria-label="Open drafts"
+                    title="Drafts"
+                  >
+                    <FileText aria-hidden="true" />
+                  </button>
+                )}
               </div>
               <div className="composer-action-btns">
                 <button className="ghost-btn" type="button" onClick={handleRequestClose}>
@@ -831,6 +994,8 @@ export function EntryComposer({
             </div>
           </section>
         </div>
+          </>
+        )}
       </motion.form>
 
       {/* Confirmation modal when discarding unsaved changes */}
@@ -842,7 +1007,12 @@ export function EntryComposer({
             onClick={() => setShowDiscardConfirm(false)}
           >
             <motion.div
+              ref={discardDialogRef}
               className="settings-modal"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="discard-entry-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
@@ -851,30 +1021,42 @@ export function EntryComposer({
               <div className="settings-header">
                 <div className="settings-header-title">
                   <AlertCircle style={{ color: '#e57373' }} aria-hidden="true" />
-                  <h2>Discard Unsaved Changes?</h2>
+                  <h2 id="discard-entry-title">Discard Unsaved Changes?</h2>
                 </div>
               </div>
               <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 20 }}>
                 You have unsaved changes in this entry. Are you sure you want to discard them?
               </p>
 
-              <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+              <div className="discard-confirm-actions">
                 <button
                   type="button"
-                  className="ghost-btn"
-                  onClick={() => setShowDiscardConfirm(false)}
-                >
-                  Keep Editing
-                </button>
-                <button
-                  type="button"
-                  className="action-btn danger"
+                  className="discard-confirm-btn discard-confirm-btn--danger"
                   onClick={() => {
                     setShowDiscardConfirm(false)
                     onClose()
                   }}
                 >
-                  Discard Changes
+                  Discard
+                </button>
+                {!entry && onSaveDraft && (
+                  <button
+                    className="discard-confirm-btn"
+                    type="button"
+                  onClick={() => {
+                    setShowDiscardConfirm(false)
+                    onSaveDraft(draft, lyrics, metadataQuery, selectedDraftId)
+                  }}
+                >
+                    Save to Draft
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="discard-confirm-btn"
+                  onClick={() => setShowDiscardConfirm(false)}
+                >
+                  Cancel
                 </button>
               </div>
             </motion.div>
@@ -891,7 +1073,12 @@ export function EntryComposer({
             onClick={() => setShowUnratedConfirm(false)}
           >
             <motion.div
+              ref={unratedDialogRef}
               className="settings-modal"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="unrated-entry-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
@@ -900,7 +1087,7 @@ export function EntryComposer({
               <div className="settings-header">
                 <div className="settings-header-title">
                   <AlertCircle style={{ color: '#f5b74c' }} aria-hidden="true" />
-                  <h2>Publish Without Rating?</h2>
+                  <h2 id="unrated-entry-title">Publish Without Rating?</h2>
                 </div>
               </div>
               <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 16 }}>

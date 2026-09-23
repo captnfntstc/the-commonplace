@@ -90,15 +90,19 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
 }) => {
   const typeIcon = getTypeIcon(entity.type)
   const [activeTab, setActiveTab] = useState<'top5' | 'reviews'>('top5')
-  const [apiCoverUrl, setApiCoverUrl] = useState<string | null>(null)
-  const [apiSummary, setApiSummary] = useState<string | null>(null)
-  const [isLoadingApi, setIsLoadingApi] = useState(false)
+  const [apiData, setApiData] = useState<{
+    entityId: string
+    coverUrl: string | null
+    summary: string | null
+  }>({ entityId: '', coverUrl: null, summary: null })
+  const apiCoverUrl = apiData.entityId === entity.id ? apiData.coverUrl : null
+  const apiSummary = apiData.entityId === entity.id ? apiData.summary : null
+  const isLoadingApi = apiData.entityId !== entity.id
   const [searchFilter, setSearchFilter] = useState('')
 
   // Live API Fetch for Entity Information & Pictures
   useEffect(() => {
     let isMounted = true
-    setIsLoadingApi(true)
     const metaType = mapEntityToMetaType(entity.type)
 
     searchMetadata(metaType, entity.title)
@@ -108,19 +112,23 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
           const match = entity.type === 'game'
             ? results.find((result) => result.title.localeCompare(entity.title, undefined, { sensitivity: 'base' }) === 0) || results[0]
             : results[0]
-          if (match.coverUrl) setApiCoverUrl(match.coverUrl)
-          if (match.summary) setApiSummary(match.summary)
+          setApiData({
+            entityId: entity.id,
+            coverUrl: match.coverUrl || null,
+            summary: match.summary || null,
+          })
+        } else {
+          setApiData({ entityId: entity.id, coverUrl: null, summary: null })
         }
       })
-      .catch(() => {})
-      .finally(() => {
-        if (isMounted) setIsLoadingApi(false)
+      .catch(() => {
+        if (isMounted) setApiData({ entityId: entity.id, coverUrl: null, summary: null })
       })
 
     return () => {
       isMounted = false
     }
-  }, [entity.title, entity.type])
+  }, [entity.id, entity.title, entity.type])
 
   const preferredCoverUrl = entity.type === 'game'
     ? entity.coverUrl || apiCoverUrl

@@ -12,6 +12,7 @@ interface CardHeaderProps {
   createdAt?: string
   onOpenProfile?: () => void
   visibility?: 'public' | 'mutual'
+  isFriend?: boolean
 }
 
 export function StarRating({ rating }: { rating: number }) {
@@ -41,8 +42,10 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
   createdAt,
   onOpenProfile,
   visibility = 'public',
+  isFriend = false,
 }) => {
   const displayHandle = authorHandle.replace(/^@/, '')
+  const showFriend = isFriend || visibility === 'mutual'
 
   return (
     <div className="card-toprow">
@@ -66,11 +69,7 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
           </div>
           <span className="username">@{displayHandle}</span>
         </button>
-        {createdAt && (
-          <span className="card-timestamp" title={formatFullDateTime(createdAt)}>
-            &bull; {formatRelativeTime(createdAt)}
-          </span>
-        )}
+        {showFriend && <span className="card-friend-label">&bull; Friend</span>}
         {visibility === 'mutual' && (
           <span
             className="card-mutual-visibility"
@@ -81,8 +80,15 @@ export const CardHeader: React.FC<CardHeaderProps> = ({
           </span>
         )}
       </div>
-      <div className="card-type-icon" aria-label={typeLabel} title={typeLabel}>
-        <Icon aria-hidden="true" />
+      <div className="card-header-meta">
+        {createdAt && (
+          <span className="card-timestamp" title={formatFullDateTime(createdAt)}>
+            {formatRelativeTime(createdAt)}
+          </span>
+        )}
+        <div className="card-type-icon" aria-label={typeLabel} title={typeLabel}>
+          <Icon aria-hidden="true" />
+        </div>
       </div>
     </div>
   )

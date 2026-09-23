@@ -1,25 +1,116 @@
 import React from 'react'
+import { stripHtmlAlignment, type Alignment } from './formattedTextUtils'
+import {
+  cleanDisplayText,
+  decodeHtmlEntities,
+  isQuotedParagraph,
+  normalizeQuotedParagraphBlocks,
+} from '../../utils/text'
 
-export type Alignment = 'left' | 'center' | 'right' | 'justify'
+export type { Alignment } from './formattedTextUtils'
 
-export function stripHtmlAlignment(text: string): { cleanText: string; align?: Alignment } {
-  if (!text) return { cleanText: '' }
-  let align: Alignment | undefined = undefined
-
-  const match = text.match(/(?:<div|<p)[^>]*style="[^"]*text-align:\s*(left|center|right|justify)/i) ||
-                text.match(/<div align="(left|center|right|justify)"/i)
-  if (match) {
-    align = match[1].toLowerCase() as Alignment
-  }
-
-  return { cleanText: text, align }
-}
+const allowedRichTextTags = new Set([
+  'A', 'B', 'BLOCKQUOTE', 'BR', 'DEL', 'DIV', 'EM', 'I', 'LI', 'OL', 'P', 'S', 'SPAN', 'STRONG', 'U', 'UL',
+])
 
 function cleanHtmlContent(html: string): string {
   if (!html) return ''
-  return html
+  const normalized = html
     .replace(/<div><br><\/div>/gi, '<br>')
     .replace(/<p><br><\/p>/gi, '<br>')
+  if (typeof document === 'undefined') return cleanDisplayText(normalized)
+
+  const source = document.createElement('template')
+  source.innerHTML = normalized
+  const output = document.createElement('div')
+
+  const copyNode = (node: Node, parent: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      parent.appendChild(document.createTextNode(decodeHtmlEntities(node.textContent || '')))
+      return
+    }
+    if (!(node instanceof HTMLElement)) return
+    if (['IFRAME', 'OBJECT', 'SCRIPT', 'STYLE'].includes(node.tagName)) return
+    if (!allowedRichTextTags.has(node.tagName)) {
+      node.childNodes.forEach((child) => copyNode(child, parent))
+      return
+    }
+
+    const element = document.createElement(node.tagName.toLowerCase())
+    const alignment = node.style.textAlign || node.getAttribute('align') || ''
+    if (/^(left|center|right|justify)$/i.test(alignment)) element.style.textAlign = alignment.toLowerCase()
+    if (node.tagName === 'A') {
+      const href = node.getAttribute('href') || ''
+      if (/^(https?:|mailto:)/i.test(href)) {
+        element.setAttribute('href', href)
+        element.setAttribute('rel', 'noopener noreferrer')
+      }
+    }
+    node.childNodes.forEach((child) => copyNode(child, element))
+    parent.appendChild(element)
+  }
+
+  source.content.childNodes.forEach((node) => copyNode(node, output))
+  return output.innerHTML
+}
+
+function reflowHtmlLineBlocks(html: string): string {
+  if (!html || typeof document === 'undefined') return html
+
+  const source = document.createElement('template')
+  source.innerHTML = html
+  const output = document.createElement('div')
+  let paragraph: HTMLParagraphElement | null = null
+  let paragraphAlignment = ''
+
+  const flushParagraph = () => {
+    if (!paragraph) return
+    output.appendChild(paragraph)
+    paragraph = null
+    paragraphAlignment = ''
+  }
+
+  const appendLine = (node: Node, alignment = '') => {
+    if (!paragraph || paragraphAlignment !== alignment) {
+      flushParagraph()
+      paragraph = document.createElement('p')
+      paragraphAlignment = alignment
+      if (alignment) paragraph.style.textAlign = alignment
+    } else if (paragraph.textContent?.trim()) {
+      paragraph.appendChild(document.createTextNode(' '))
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      paragraph.appendChild(document.createTextNode(node.textContent?.trim() || ''))
+      return
+    }
+
+    const element = node as HTMLElement
+    Array.from(element.childNodes).forEach((child) => paragraph?.appendChild(child.cloneNode(true)))
+  }
+
+  Array.from(source.content.childNodes).forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (node.textContent?.trim()) appendLine(node)
+      return
+    }
+    if (!(node instanceof HTMLElement)) return
+
+    const isLineBlock = ['DIV'].includes(node.tagName)
+      && !node.querySelector('blockquote, div, ol, p, ul')
+      && Boolean(node.textContent?.trim())
+    if (isLineBlock) {
+      appendLine(node, node.style.textAlign || node.getAttribute('align') || '')
+      return
+    }
+
+    flushParagraph()
+    if (node.textContent?.trim() || !['DIV', 'P'].includes(node.tagName)) {
+      output.appendChild(node.cloneNode(true))
+    }
+  })
+  flushParagraph()
+  return output.innerHTML
 }
 
 function parseInlineFormatting(raw: string): React.ReactNode[] {
@@ -57,14 +148,16 @@ export const FormattedText: React.FC<{
   text: string
   align?: Alignment
   className?: string
-}> = ({ text, align, className }) => {
+  reflowPlainText?: boolean
+}> = ({ text, align, className, reflowPlainText = false }) => {
   if (!text) return null
 
   const isHtml = /<[a-z][\s\S]*>/i.test(text)
 
   if (isHtml) {
     // HTML from the rich text editor: render as block HTML, let CSS handle spacing
-    const cleaned = cleanHtmlContent(text)
+    const normalized = normalizeQuotedParagraphBlocks(text)
+    const cleaned = cleanHtmlContent(reflowPlainText ? reflowHtmlLineBlocks(normalized) : normalized)
     const { align: extractedAlign } = stripHtmlAlignment(text)
     const finalAlign = align || extractedAlign
 
@@ -82,6 +175,17 @@ export const FormattedText: React.FC<{
   }
 
   // Plain text (no HTML tags): use pre-wrap to preserve newlines
+  const cleanedText = cleanDisplayText(text)
+  const displayText = reflowPlainText
+    ? cleanedText
+        .split(/\r?\n\s*\r?\n+/)
+        .map((paragraph) => paragraph.replace(/\s*\r?\n\s*/g, ' ').trim())
+        .filter(Boolean)
+        .join('\n\n')
+    : cleanedText
+  const paragraphs = displayText.split(/\r?\n+/).filter((paragraph) => paragraph.trim())
+  const hasQuoteParagraph = paragraphs.some(isQuotedParagraph)
+
   return (
     <div
       className={`formatted-text-content rich-rendered-text ${className || ''}`}
@@ -92,7 +196,11 @@ export const FormattedText: React.FC<{
         width: '100%',
       }}
     >
-      {parseInlineFormatting(text)}
+      {hasQuoteParagraph
+        ? paragraphs.map((paragraph, index) => isQuotedParagraph(paragraph)
+            ? <blockquote key={`quote-${index}`}>{parseInlineFormatting(paragraph.trim())}</blockquote>
+            : <p key={`paragraph-${index}`}>{parseInlineFormatting(paragraph)}</p>)
+        : parseInlineFormatting(displayText)}
     </div>
   )
 }

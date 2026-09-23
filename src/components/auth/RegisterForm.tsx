@@ -49,7 +49,7 @@ async function checkHandleAvailability(handle: string, signal?: AbortSignal) {
 
 export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) => {
   const navigate = useNavigate()
-  const { signup, loginWithGoogle } = useAuth()
+  const { signup, loginWithApple, loginWithGoogle } = useAuth()
   const [name, setName] = useState('')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
@@ -163,13 +163,13 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
   }
 
   const handleSelectProvider = async (provider: string) => {
-    if (provider !== 'Google') return
+    if (provider !== 'Google' && provider !== 'Apple') return
     if (!birthday || !isEligibleBirthday(birthday)) {
       setErrors((current) => ({
         ...current,
         birthday: birthday
           ? `You must be at least ${MINIMUM_ACCOUNT_AGE} years old to create an account.`
-          : 'Enter your date of birth before continuing with Google.',
+          : `Enter your date of birth before continuing with ${provider}.`,
       }))
       return
     }
@@ -182,13 +182,14 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
     }
     try {
       setLoading(true)
-      await loginWithGoogle(false, birthday)
-      setToastMessage('✦ Signed up with Google successfully!')
+      if (provider === 'Apple') await loginWithApple(false, birthday)
+      else await loginWithGoogle(false, birthday)
+      setToastMessage(`✦ Signed up with ${provider} successfully!`)
       setTimeout(() => {
         navigate('/')
       }, 600)
     } catch (err: unknown) {
-      setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Google sign up failed.')
+      setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || `${provider} sign up failed.`)
     } finally {
       setLoading(false)
     }

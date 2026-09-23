@@ -1,5 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // metadata.ts
+/* eslint-disable @typescript-eslint/no-explicit-any -- External provider payloads are heterogeneous and normalized defensively in this adapter. */
 // Fast, multi-provider API adapters with caching & fallbacks:
 //   📚 Books      → Google Books API
 //   🎬 Films/TV   → TMDB API
@@ -18,6 +19,7 @@ import {
   getBrowserCacheValue,
   setBrowserCacheValue,
 } from './services/browserCache'
+import { metadataRequestScheduler, type RequestPriority } from './services/requestScheduler'
 
 export type MetadataType = 'book' | 'album' | 'song' | 'film' | 'tv' | 'game'
 
@@ -37,6 +39,8 @@ export type MetadataResult = {
   year?: string
   summary?: string
   explicit?: boolean
+  /** Provider explicitly identifies this as a censored/clean alternate. */
+  clean?: boolean
   preferWikipediaArtwork?: boolean
   /** Game-only relevance returned by the IGDB query matcher. */
   gameSearchRelevance?: number
@@ -699,6 +703,32 @@ function normalizeAlbumTitleForMatch(title: string): string {
     .replace(/\s+/g, ' ')
 }
 
+function albumPrimaryArtistKey(artistName: string): string {
+  if (!artistName) return ''
+  const [primaryArtist = artistName] = artistName.split(
+    /\s*(?:&|,|\/|\bfeat(?:uring)?\.?\b|\bwith\b|\bx\b)\s*/i,
+  )
+  return normalizeAlbumTitleForMatch(primaryArtist || artistName)
+}
+
+function isCollaborationArtistCredit(artistName: string): boolean {
+  return /(?:&|,|\/|\bfeat(?:uring)?\.?\b|\bwith\b|\bx\b)/i.test(artistName)
+}
+
+function albumArtistCreditsMatch(candidateArtist: string | undefined, requestedArtist?: string): boolean {
+  if (!requestedArtist) return true
+  const candidate = String(candidateArtist || '')
+  const exactCandidate = normalizeAlbumTitleForMatch(candidate)
+  const exactRequested = normalizeAlbumTitleForMatch(requestedArtist)
+  if (!exactCandidate || !exactRequested) return false
+  if (exactCandidate === exactRequested) return true
+
+  return (
+    albumPrimaryArtistKey(candidate) === albumPrimaryArtistKey(requestedArtist) &&
+    (isCollaborationArtistCredit(candidate) || isCollaborationArtistCredit(requestedArtist))
+  )
+}
+
 function catalogVariantSignals(title: string): Set<string> {
   const normalized = normalizeAlbumTitleForMatch(title)
   const signals = new Set<string>()
@@ -848,8 +878,7 @@ function collectionIdFromAlbumEntityId(id: string): string | undefined {
 }
 
 function isOfficialArtistMatch(candidateArtist: string | undefined, requestedArtist?: string): boolean {
-  if (!requestedArtist) return true
-  return normalizeAlbumTitleForMatch(candidateArtist || '') === normalizeAlbumTitleForMatch(requestedArtist)
+  return albumArtistCreditsMatch(candidateArtist, requestedArtist)
 }
 
 function selectBestAlbumCollection(
@@ -991,7 +1020,7 @@ export async function fetchItunesAlbumVersionFamily(
   if (!cleanAlbum || !cleanArtist || !/^\d+$/.test(collectionId)) return null
 
   const cacheKey = [
-    'itunes-album-version-family-v3',
+    'itunes-album-version-family-v4',
     normalizeAlbumTitleForMatch(cleanAlbum),
     normalizeAlbumTitleForMatch(cleanArtist),
     context.year || '',
@@ -1044,8 +1073,14 @@ export async function fetchItunesAlbumVersionFamily(
       for (const candidate of [currentCollection, ...(searchData.results || []), ...(artistData.results || [])]) {
         const candidateId = String(candidate.collectionId || '')
         if (!candidateId || !candidate.collectionName) continue
-        if (currentArtistId && candidate.artistId && Number(candidate.artistId) !== currentArtistId) continue
-        if (!isOfficialArtistMatch(candidate.artistName || candidate.collectionArtistName, cleanArtist)) continue
+        const candidateArtist = candidate.artistName || candidate.collectionArtistName
+        if (!isOfficialArtistMatch(candidateArtist, cleanArtist)) continue
+        if (
+          currentArtistId &&
+          candidate.artistId &&
+          Number(candidate.artistId) !== currentArtistId &&
+          !albumArtistCreditsMatch(candidateArtist, currentItem.artist)
+        ) continue
         const titleRelationship = albumVersionTitleRelationship(candidate.collectionName, cleanAlbum)
         const candidateYear = Number(yearFrom(candidate.releaseDate) || 0)
         const candidateTrackCount = Number(candidate.trackCount || 0)
@@ -1112,8 +1147,10 @@ export async function fetchItunesAlbumVersionFamily(
       const canonical = [...hydrated]
         .sort((left, right) => {
           const score = (candidate: HydratedAlbumVersion) =>
+            // Explicit is the canonical storefront release. A clean standard
+            // must never outrank an explicit edition in the same album family.
+            (candidate.item.explicit ? 10000 : 0) +
             (candidate.item.versionKind === 'standard' ? 1000 : 0) +
-            (candidate.item.explicit ? 200 : 0) +
             Math.max(0, 100 - Math.abs(Number(candidate.item.year || context.year || 0) - Number(context.year || candidate.item.year || 0)))
           return score(right) - score(left) || left.item.title.localeCompare(right.item.title)
         })[0]?.item || current.item
@@ -1243,6 +1280,7 @@ function mapItunesAlbumResult(item: ITunesSearchResult): MetadataResult {
   const year = yearFrom(item.releaseDate) || ''
   const artist = item.artistName ?? ''
   const explicit = isExplicitItunesItem(item)
+  const clean = isCleanItunesItem(item)
 
   albumEntityMap.set(id, {
     id,
@@ -1283,6 +1321,7 @@ function mapItunesAlbumResult(item: ITunesSearchResult): MetadataResult {
     coverUrl,
     year,
     explicit,
+    clean,
   }
 }
 
@@ -1320,20 +1359,14 @@ async function fetchItunesExactArtistId(artistName: string, signal?: AbortSignal
 
 function isStrictDiscographyArtistMatch(album: ITunesSearchResult, requestedArtist: string, artistId?: number | null) {
   if (artistId && Number(album.artistId || 0) === artistId) return true
-
-  const requested = normalizeAlbumTitleForMatch(requestedArtist)
-  if (!requested) return false
-
-  const albumArtist = normalizeAlbumTitleForMatch(album.artistName || '')
-  const collectionArtist = normalizeAlbumTitleForMatch(album.collectionArtistName || '')
-  return albumArtist === requested || collectionArtist === requested
+  return albumArtistCreditsMatch(album.artistName, requestedArtist) ||
+    albumArtistCreditsMatch(album.collectionArtistName, requestedArtist)
 }
 
-function albumEditionBaseKey(title: string, artist: string, year?: string) {
+function albumEditionBaseKey(title: string, artist: string) {
   return [
     albumContentRatingTitle(title),
-    normalizeAlbumTitleForMatch(artist),
-    year || '',
+    albumPrimaryArtistKey(artist),
   ].join(':')
 }
 
@@ -1344,7 +1377,6 @@ export function preferExplicitAlbumEditions(items: DiscographyItem[]): Discograp
   for (const item of items) {
     const key = [
       albumContentRatingTitle(item.title),
-      item.year || '',
       item.category,
     ].join(':')
     const existing = byEdition.get(key)
@@ -1480,8 +1512,8 @@ export async function fetchItunesDiscography(
   verifiedArtistId?: string,
 ): Promise<DiscographyItem[]> {
   const cacheKey = verifiedArtistId
-    ? `itunes-discography-v4:id:${verifiedArtistId}`
-    : `itunes-discography-v4:${normalizeAlbumTitleForMatch(artistName)}`
+    ? `itunes-discography-v5:id:${verifiedArtistId}`
+    : `itunes-discography-v5:${normalizeAlbumTitleForMatch(artistName)}`
   return cachedApiRequest(cacheKey, signal, async () => {
     try {
       const artistId = verifiedArtistId && /^\d+$/.test(verifiedArtistId)
@@ -1530,7 +1562,7 @@ export async function fetchItunesDiscography(
       const items = results
         .filter((album: ITunesSearchResult) => {
           const cleanTitle = normalizeAlbumTitleForMatch(album.collectionName || '')
-          const cleanArtist = normalizeAlbumTitleForMatch(album.artistName || artistName)
+          const cleanArtist = albumPrimaryArtistKey(album.artistName || artistName)
           const explicit = isExplicitItunesItem(album)
           const cleanYear = yearFrom(album.releaseDate) || ''
           const key = `${cleanTitle}:${cleanArtist}:${cleanYear}:${explicit ? 'explicit' : 'clean'}`
@@ -1764,7 +1796,7 @@ export async function fetchItunesAlbumDetails(
 
     if (songs.length === 0) return null
 
-    let chosenSongs: any[] = songs
+    const chosenSongs: any[] = songs
 
     const seenTracks = new Set<string>()
     const tracksToUse = chosenSongs
@@ -2014,7 +2046,6 @@ export async function fetchRelatedAlbums(
         const key = albumEditionBaseKey(
           item.collectionName || '',
           item.artistName || item.collectionArtistName || '',
-          yearFrom(item.releaseDate) || '',
         )
         const existing = preferredAlbumVariants.get(key)
         if (!existing || (!isExplicitItunesItem(existing.item) && isExplicitItunesItem(item))) {
@@ -2766,10 +2797,22 @@ const searchCache = new Map<string, MetadataResult[]>()
 const lyricsCache = new Map<string, string | undefined>()
 const apiResponseCache = new Map<string, unknown>()
 const pendingApiRequestCache = new Map<string, Promise<unknown>>()
-const API_CACHE_NAMESPACE = 'external-api-v7'
-const SEARCH_CACHE_NAMESPACE = 'metadata-search-v11'
+const API_CACHE_NAMESPACE = 'external-api-v8'
+const SEARCH_CACHE_NAMESPACE = 'metadata-search-v15'
 const STATIC_METADATA_TTL = 30 * 24 * 60 * 60 * 1000
 const SEARCH_METADATA_TTL = 14 * 24 * 60 * 60 * 1000
+const EMPTY_SEARCH_METADATA_TTL = 5 * 60 * 1000
+const MAX_MEMORY_SEARCHES = 120
+
+function rememberSearch(cacheKey: string, results: MetadataResult[]) {
+  searchCache.delete(cacheKey)
+  searchCache.set(cacheKey, results)
+  while (searchCache.size > MAX_MEMORY_SEARCHES) {
+    const oldestKey = searchCache.keys().next().value
+    if (!oldestKey) break
+    searchCache.delete(oldestKey)
+  }
+}
 
 export function clearMetadataCache() {
   searchCache.clear()
@@ -2893,7 +2936,17 @@ function isExplicitItunesItem(item: ITunesSearchResult | any): boolean {
     item.collectionExplicitness,
     item.trackExplicitness,
     item.contentAdvisoryRating,
-  ].some((value) => String(value || '').toLowerCase() === 'explicit')
+  ].some((value) => String(value || '').toLowerCase() === 'explicit') ||
+    /\bexplicit\b/i.test(String(item.collectionName || item.trackName || ''))
+}
+
+function isCleanItunesItem(item: ITunesSearchResult | any): boolean {
+  return [
+    item.collectionExplicitness,
+    item.trackExplicitness,
+    item.contentAdvisoryRating,
+  ].some((value) => /^(?:clean|cleaned)$/i.test(String(value || ''))) ||
+    /\b(?:clean|cleaned)\b/i.test(String(item.collectionName || item.trackName || ''))
 }
 
 export function isExplicitItunesTrack(item: {
@@ -3701,9 +3754,9 @@ export function publishedBookWorkTitle(title: string, personName: string): strin
 
   const authorPattern = escapeRegExp(author).replace(/\s+/g, '\\s+')
   value = value
-    .replace(new RegExp(`^${authorPattern}(?:'s)?\\s*[:\-–—]\\s*`, 'i'), '')
+    .replace(new RegExp(`^${authorPattern}(?:'s)?\\s*[:–—-]\\s*`, 'i'), '')
     .replace(new RegExp(`^${authorPattern}'s\\s+`, 'i'), '')
-    .replace(new RegExp(`\\s+(?:by\\s+|[:\-–—]\\s*)${authorPattern}\\s*$`, 'i'), '')
+    .replace(new RegExp(`\\s+(?:by\\s+|[:–—-]\\s*)${authorPattern}\\s*$`, 'i'), '')
     .trim()
 
   value = value.replace(/^the\s+annotated\s+/i, '').trim()
@@ -4337,12 +4390,12 @@ function normalizeMusicBrainzFacet(value: string) {
 }
 
 function escapeMusicBrainzSearchValue(value: string) {
-  return value.replace(/([+\-&|!(){}\[\]^"~*?:\\/])/g, '\\$1')
+  return value.replace(/[+\-&|!(){}\x5b\]^"~*?:\\\x2f]/g, '\\$&')
 }
 
 function musicBrainzGenreFacets(values: string[]) {
   return Array.from(new Set(values
-    .flatMap((value) => value.split(/[\/,|·]+/))
+    .flatMap((value) => value.split(/[/,|·]+/))
     .map((value) => normalizeMusicBrainzFacet(value))
     .filter((value) => value && !/^(?:music|album|albums|genre)$/.test(value))))
 }
@@ -4418,7 +4471,13 @@ async function fetchLastFmSimilarArtists(artistName: string, signal?: AbortSigna
           })
           .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
           .slice(0, 8)
-          .map(({ normalizedName: _normalizedName, ...artist }) => artist)
+          .map((artist) => ({
+            id: artist.id,
+            name: artist.name,
+            genres: artist.genres,
+            location: artist.location,
+            score: artist.score,
+          }))
 
         logApiCall({
           provider: 'Last.fm',
@@ -4442,7 +4501,6 @@ export async function fetchSimilarArtistsByGenreAndLocation(
   artistName: string,
   genres: string[],
   signal?: AbortSignal,
-  _musicBrainzId?: string,
 ): Promise<SimilarArtistMatch[]> {
   try {
     return await fetchLastFmSimilarArtists(artistName, signal)
@@ -4660,13 +4718,7 @@ async function searchSongs(
       if (data.results && data.results.length > 0) {
         const sortedRaw = [...data.results].sort((a, b) => songSearchScore(b, query) - songSearchScore(a, query))
 
-        const seen = new Set<string>()
-        const filtered = sortedRaw.filter((item) => {
-          const key = `${normalizeAlbumTitleForMatch(item.trackName || '')}:${normalizeAlbumTitleForMatch(item.artistName || '')}`
-          if (seen.has(key)) return false
-          seen.add(key)
-          return true
-        })
+        const filtered = preferExplicitSongSearchItems(sortedRaw)
 
         const hydratedItems = await Promise.all(
           filtered.slice(0, 15).map(async (item) => ({
@@ -4708,12 +4760,37 @@ async function searchSongs(
   return searchSongsMusicBrainz(query, signal)
 }
 
+function isCleanItunesTrack(item: ITunesSearchResult): boolean {
+  return isCleanItunesItem(item)
+}
+
+/**
+ * Collapse advisory variants of the same recording for search. Explicit is
+ * the canonical result; provider-labelled clean edits stay out of search.
+ */
+export function preferExplicitSongSearchItems<T extends ITunesSearchResult>(items: T[]): T[] {
+  const editions = new Map<string, T[]>()
+
+  items.forEach((item) => {
+    const title = albumContentRatingTitle(item.trackName || '')
+    const artist = albumPrimaryArtistKey(item.artistName || '')
+    const key = title && artist
+      ? `${title}:${artist}`
+      : `provider:${item.trackId || item.collectionId || editions.size}`
+    const group = editions.get(key) || []
+    group.push(item)
+    editions.set(key, group)
+  })
+
+  return [...editions.values()]
+    .map((group) => group.find((item) => isExplicitItunesItem(item)) || group.find((item) => !isCleanItunesTrack(item)))
+    .filter((item): item is T => Boolean(item))
+}
+
 // ─── Albums (iTunes primary + MusicBrainz fallback) ──────────────────────────
 
 function extractCoreArtist(artistName: string): string {
-  if (!artistName) return ''
-  const first = artistName.split(/[,&/]| \bfeat\b| \bfeaturing\b/i)[0] || artistName
-  return normalizeAlbumTitleForMatch(first)
+  return albumPrimaryArtistKey(artistName)
 }
 
 function albumSearchScore(result: MetadataResult, query: string, rawIndex = 0, topArtistNorm = ''): number {
@@ -4762,6 +4839,39 @@ function albumSearchEditionSignals(query: string) {
   return signals
 }
 
+/** Apple occasionally exposes a clean album only in album search while the
+ * original explicit collection appears solely on matching song records. */
+export function supplementCleanAlbumsWithExplicitCollections(
+  albums: ITunesSearchResult[],
+  tracks: ITunesSearchResult[],
+): ITunesSearchResult[] {
+  const cleanAlbums = albums.filter((album) => isCleanItunesItem(album))
+  if (cleanAlbums.length === 0) return albums
+
+  const knownCollectionIds = new Set(albums.map((album) => String(album.collectionId || '')).filter(Boolean))
+  const supplements: ITunesSearchResult[] = []
+
+  tracks.forEach((track) => {
+    const collectionId = String(track.collectionId || '')
+    if (!collectionId || knownCollectionIds.has(collectionId)) return
+    if (String(track.collectionExplicitness || '').toLowerCase() !== 'explicit') return
+
+    const cleanCounterpart = cleanAlbums.find((album) =>
+      albumContentRatingTitle(album.collectionName || '') === albumContentRatingTitle(track.collectionName || '') &&
+      albumArtistCreditsMatch(track.artistName || track.collectionArtistName, album.artistName || album.collectionArtistName),
+    )
+    if (!cleanCounterpart) return
+
+    knownCollectionIds.add(collectionId)
+    supplements.push({
+      ...track,
+      artistName: track.collectionArtistName || cleanCounterpart.artistName || track.artistName,
+    })
+  })
+
+  return [...albums, ...supplements]
+}
+
 export function preferAlbumSearchEditions(
   results: MetadataResult[],
   query: string,
@@ -4789,7 +4899,7 @@ export function preferAlbumSearchEditions(
       const explicitCandidates = edition.filter(({ result }) => result.explicit)
       const candidates = explicitCandidates.length > 0
         ? explicitCandidates
-        : edition.filter(({ result }) => !catalogVariantSignals(result.title).has('clean'))
+        : edition.filter(({ result }) => !result.clean && !catalogVariantSignals(result.title).has('clean'))
       return [...candidates].sort((left, right) =>
         Number(Boolean(right.result.explicit)) - Number(Boolean(left.result.explicit)) ||
         editionIntentScore(right.result) - editionIntentScore(left.result) ||
@@ -4824,10 +4934,27 @@ async function searchAlbums(
     if (res.ok) {
       const data = (await res.json()) as { results?: ITunesSearchResult[] }
       const rawResults = data.results || []
+      let searchableResults = rawResults
+
+      if (rawResults.some((item) => isCleanItunesItem(item))) {
+        try {
+          const songUrl = new URL('https://itunes.apple.com/search')
+          songUrl.searchParams.set('term', cleanQuery)
+          songUrl.searchParams.set('entity', 'song')
+          songUrl.searchParams.set('limit', '200')
+          const songResponse = await fetch(songUrl, { signal })
+          if (songResponse.ok) {
+            const songData = (await songResponse.json()) as { results?: ITunesSearchResult[] }
+            searchableResults = supplementCleanAlbumsWithExplicitCollections(rawResults, songData.results || [])
+          }
+        } catch (error) {
+          if ((error as Error)?.name === 'AbortError') throw error
+        }
+      }
 
       // Identify primary target artist for query using core artist name
       const artistScores: Record<string, number> = {}
-      for (const item of rawResults) {
+      for (const item of searchableResults) {
         if (!item.artistName) continue
         const normA = extractCoreArtist(item.artistName)
         artistScores[normA] = (artistScores[normA] || 0) + 1
@@ -4841,7 +4968,7 @@ async function searchAlbums(
         }
       }
 
-      const mapped = rawResults.map((item) => mapItunesAlbumResult(item))
+      const mapped = searchableResults.map((item) => mapItunesAlbumResult(item))
 
       const seenKeys = new Set<string>()
       const uniqueResults = mapped.filter((result) => {
@@ -5224,7 +5351,9 @@ export async function fetchLyrics(
             lyricsText = context.explicit === false ? maskExplicitLyrics(fallbackLyrics) : fallbackLyrics
           }
         }
-      } catch {}
+      } catch {
+        // Lyrics.ovh is a best-effort fallback; the primary provider error is reported below.
+      }
     }
 
     if (lyricsText) {
@@ -5526,8 +5655,8 @@ function steamGameToMetadataResult(item: SteamStoreSearchItem): MetadataResult {
 
 async function searchSteamGameCatalog(query: string, signal?: AbortSignal) {
   const startTime = performance.now()
-  let allItems: SteamStoreSearchItem[] = []
-  let responseStatus = 200
+  let allItems: SteamStoreSearchItem[]
+  let responseStatus: number
 
   try {
     const url = steamStoreSearchUrl('search/results/')
@@ -5576,7 +5705,7 @@ async function searchSteamGameCatalog(query: string, signal?: AbortSignal) {
     const fallbackResponse = await fetch(fallbackUrl, { signal })
     responseStatus = fallbackResponse.status
     if (!fallbackResponse.ok) {
-      throw new Error(`Steam Store game search failed with HTTP ${fallbackResponse.status}.`)
+      throw new Error(`Steam Store game search failed with HTTP ${fallbackResponse.status}.`, { cause: error })
     }
     const fallbackData = (await fallbackResponse.json()) as { items?: SteamStoreSearchItem[] }
     allItems = fallbackData.items ?? []
@@ -5899,6 +6028,7 @@ export async function searchMetadata(
   type: MetadataType,
   query: string,
   signal?: AbortSignal,
+  options: { priority?: RequestPriority } = {},
 ): Promise<MetadataResult[]> {
   const q = query.trim()
   if (q.length < 2) return []
@@ -5907,45 +6037,54 @@ export async function searchMetadata(
   const cacheKey = `${type}:${q.toLowerCase()}`
   if (searchCache.has(cacheKey)) {
     const cached = searchCache.get(cacheKey)!
-    if (cached.length > 0) {
-      logApiCall({
-        provider: providerMap[type] || 'Google Books',
-        queryOrUrl: `Search "${q}" (${type})`,
-        status: 'CACHE',
-        latencyMs: 0,
-        resultCount: cached.length,
-        cacheStatus: 'HIT',
-      })
-      return cached
-    }
-    searchCache.delete(cacheKey)
-  }
-
-  const persisted = await getBrowserCacheValue<MetadataResult[]>(SEARCH_CACHE_NAMESPACE, cacheKey)
-  signal?.throwIfAborted()
-  if (persisted && persisted.length > 0) {
-    searchCache.set(cacheKey, persisted)
     logApiCall({
       provider: providerMap[type] || 'Google Books',
       queryOrUrl: `Search "${q}" (${type})`,
       status: 'CACHE',
       latencyMs: 0,
-      resultCount: persisted.length,
+      resultCount: cached.length,
       cacheStatus: 'HIT',
     })
-    return persisted
+    return cached
   }
 
-  let results: MetadataResult[] = []
-  if (type === 'book') results = await searchBooks(providerQuery, signal)
-  else if (type === 'film' || type === 'tv') results = await searchTmdbByTitleOrPerson(type, providerQuery, signal)
-  else if (type === 'song') results = await searchSongs(providerQuery, signal)
-  else if (type === 'album') results = await searchAlbums(providerQuery, signal)
-  else if (type === 'game') results = await searchGames(providerQuery, signal)
+  return metadataRequestScheduler.schedule(
+    `metadata-search:${cacheKey}`,
+    async (requestSignal) => {
+      const memoryResult = searchCache.get(cacheKey)
+      if (memoryResult) return memoryResult
 
-  if (results.length > 0) {
-    searchCache.set(cacheKey, results)
-    void setBrowserCacheValue(SEARCH_CACHE_NAMESPACE, cacheKey, results, SEARCH_METADATA_TTL)
-  }
-  return results
+      const persisted = await getBrowserCacheValue<MetadataResult[]>(SEARCH_CACHE_NAMESPACE, cacheKey)
+      requestSignal.throwIfAborted()
+      if (persisted !== undefined) {
+        rememberSearch(cacheKey, persisted)
+        logApiCall({
+          provider: providerMap[type] || 'Google Books',
+          queryOrUrl: `Search "${q}" (${type})`,
+          status: 'CACHE',
+          latencyMs: 0,
+          resultCount: persisted.length,
+          cacheStatus: 'HIT',
+        })
+        return persisted
+      }
+
+      let results: MetadataResult[] = []
+      if (type === 'book') results = await searchBooks(providerQuery, requestSignal)
+      else if (type === 'film' || type === 'tv') results = await searchTmdbByTitleOrPerson(type, providerQuery, requestSignal)
+      else if (type === 'song') results = await searchSongs(providerQuery, requestSignal)
+      else if (type === 'album') results = await searchAlbums(providerQuery, requestSignal)
+      else if (type === 'game') results = await searchGames(providerQuery, requestSignal)
+
+      rememberSearch(cacheKey, results)
+      void setBrowserCacheValue(
+        SEARCH_CACHE_NAMESPACE,
+        cacheKey,
+        results,
+        results.length > 0 ? SEARCH_METADATA_TTL : EMPTY_SEARCH_METADATA_TTL,
+      )
+      return results
+    },
+    { signal, priority: options.priority },
+  )
 }

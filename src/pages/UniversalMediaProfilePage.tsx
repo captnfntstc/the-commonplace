@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 import {
   ArrowLeft,
   Home,
@@ -30,6 +31,7 @@ import { buildLinesThatStuck } from '../features/quotes/communityQuotes'
 import { buildMostQuotedWorks, type MostQuotedWork } from '../features/quotes/quotedWorks'
 import { StarRating } from '../components/CommonplaceCard/CardHeader'
 import { FormattedText } from '../components/CommonplaceCard/FormattedText'
+import { EntityLoadingSkeleton } from '../components/PageLoadingSkeleton'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../data/universalMediaEntities'
 import {
   type UniversalMediaEntity,
@@ -65,6 +67,8 @@ import {
   fetchBookEditions,
   fetchTmdbSimilarTitles,
   fetchTmdbCast,
+  fetchTmdbTvSeasons,
+  fetchTmdbTvSeasonEpisodes,
   entityImageCacheMap,
   albumEntityMap,
   scoreGameTitleMatch,
@@ -73,6 +77,8 @@ import {
   type MetadataResult,
   type AlbumVersionFamily,
   type TmdbCastMember,
+  type TmdbTvEpisode,
+  type TmdbTvSeason,
 } from '../metadata'
 import { ordinalize } from '../utils/songBio'
 import {
@@ -100,6 +106,29 @@ type ScoredRelatedEntityItem = RelatedEntityItem & {
   sortScore?: number
   preferWikipediaArtwork?: boolean
   resolvedEntity?: UniversalMediaEntity
+}
+
+type TvSeasonDisplay = TmdbTvSeason & {
+  episodes?: TmdbTvEpisode[]
+}
+
+function defaultTvSeasonNumber(seasons: TvSeasonDisplay[]) {
+  return seasons.find((season) => season.seasonNumber === 1)?.seasonNumber
+    ?? seasons.find((season) => season.seasonNumber > 0)?.seasonNumber
+    ?? seasons[0]?.seasonNumber
+    ?? null
+}
+
+function formatTvAirDate(value?: string) {
+  if (!value) return ''
+  const date = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(date)
 }
 
 type MostReviewedWorkType = 'song' | 'album' | 'film' | 'tv' | 'book'
@@ -363,13 +392,31 @@ function normalizeReviewSubjectText(value?: string) {
 
 function normalizeMusicEditionTitle(value?: string) {
   return normalizeReviewSubjectText(value)
-    .replace(/\b(clean|edited|censored|explicit|non explicit|radio edit|clean version|explicit version|edited version)\b/g, ' ')
+    .replace(/\b(?:non explicit|clean|explicit|edited|censored|radio edit)(?: version| edition)?\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
 function getChipValue(chips: MetadataChip[] | undefined, pattern: RegExp) {
   return chips?.find((chip) => pattern.test(chip.label))?.value || ''
+}
+
+function normalizeMusicLeadArtist(value?: string) {
+  const raw = String(value || '').trim()
+  const [lead = raw] = raw.split(/\s*(?:&|,|\/|\bfeat(?:uring)?\.?\b|\bwith\b|\bx\b)\s*/i)
+  return normalizeReviewSubjectText(lead || raw)
+}
+
+function musicArtistCreditsMatch(left?: string, right?: string) {
+  const normalizedLeft = normalizeReviewSubjectText(left)
+  const normalizedRight = normalizeReviewSubjectText(right)
+  if (!normalizedLeft || !normalizedRight || normalizedLeft === normalizedRight) {
+    return !normalizedLeft || !normalizedRight || normalizedLeft === normalizedRight
+  }
+
+  const collaborationPattern = /(?:&|,|\/|\bfeat(?:uring)?\.?\b|\bwith\b|\bx\b)/i
+  return (collaborationPattern.test(left || '') || collaborationPattern.test(right || '')) &&
+    normalizeMusicLeadArtist(left) === normalizeMusicLeadArtist(right)
 }
 
 function entryTypeForEntity(type: MediaEntityType): CardEntry['type'] | null {
@@ -421,7 +468,7 @@ function humanCreditCategoryLabel(category: HumanScreenCredit['category']) {
   }
 }
 
-function reviewMatchesEntity(entry: CardEntry, entity: UniversalMediaEntity, chips: MetadataChip[]) {
+export function reviewMatchesEntity(entry: CardEntry, entity: UniversalMediaEntity, chips: MetadataChip[]) {
   const entityName = normalizeReviewSubjectText(entity.name)
   const entryTitle = normalizeReviewSubjectText(entry.title)
   const entityType = entryTypeForEntity(entity.type)
@@ -437,10 +484,9 @@ function reviewMatchesEntity(entry: CardEntry, entity: UniversalMediaEntity, chi
   if (!entityType || entry.type !== entityType) return false
 
   if (entity.type === 'album' || entity.type === 'song') {
-    const entityArtist = normalizeReviewSubjectText(getChipValue(chips, /artist|creator/i))
-    const entryArtist = normalizeReviewSubjectText(entry.creator)
+    const entityArtist = getChipValue(chips, /artist|creator/i)
     const sameTitle = normalizeMusicEditionTitle(entry.title) === normalizeMusicEditionTitle(entity.name)
-    const sameArtist = !entityArtist || !entryArtist || entityArtist === entryArtist
+    const sameArtist = musicArtistCreditsMatch(entityArtist, entry.creator)
     return sameTitle && sameArtist
   }
 
@@ -501,16 +547,12 @@ const TrackRow: React.FC<{
   useParentArtwork?: boolean
 }> = ({ item, artistName, parentArtworkUrl, onNavigateToEntity, entityType, useParentArtwork = false }) => {
   const fallbackUrl = parentArtworkUrl || createArtworkPlaceholder(item.title, item.subtitle)
-  const initialArtworkUrl = item.artworkUrl ? resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle) : (parentArtworkUrl || '')
-  const [artworkUrl, setArtworkUrl] = useState(
-    initialArtworkUrl || fallbackUrl,
-  )
+  const baseArtworkUrl = item.artworkUrl
+    ? resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle)
+    : (parentArtworkUrl || '')
+  const [resolvedArtworkUrl, setResolvedArtworkUrl] = useState<string | null>(null)
+  const artworkUrl = resolvedArtworkUrl || baseArtworkUrl || fallbackUrl
   const [isResolvingTarget, setIsResolvingTarget] = useState(false)
-
-  useEffect(() => {
-    const nextArtworkUrl = item.artworkUrl ? resolveArtworkUrl(item.artworkUrl, item.title, item.subtitle) : (parentArtworkUrl || '')
-    setArtworkUrl(nextArtworkUrl || fallbackUrl)
-  }, [fallbackUrl, item.artworkUrl, item.subtitle, item.title, parentArtworkUrl])
 
   useEffect(() => {
     if (!artistName || useParentArtwork) return
@@ -522,7 +564,7 @@ const TrackRow: React.FC<{
       undefined
     fetchItunesSongArtwork(item.title, artistName, abortController.signal, providerTrackId)
       .then((url) => {
-        if (url) setArtworkUrl(resolveArtworkUrl(url, item.title, item.subtitle))
+        if (url) setResolvedArtworkUrl(resolveArtworkUrl(url, item.title, item.subtitle))
       })
       .catch(() => {})
 
@@ -603,7 +645,7 @@ const TrackRow: React.FC<{
         referrerPolicy="no-referrer"
         loading="eager"
         decoding="async"
-        onError={() => setArtworkUrl(fallbackUrl)}
+        onError={() => setResolvedArtworkUrl(fallbackUrl)}
       />
       <div className="row-info">
         <span className="row-title">
@@ -622,13 +664,79 @@ const TrackRow: React.FC<{
   )
 }
 
-const CollectionItemThumb: React.FC<{ title: string; defaultUrl: string }> = ({ title, defaultUrl }) => {
-  const [src, setSrc] = useState(resolveArtworkUrl(defaultUrl, title, 'Album'))
-  const fallbackSrc = createArtworkPlaceholder(title, 'Album')
+const TopMoviePosterTile: React.FC<{
+  item: TopContentItem | (CollectionItem & { rank?: number })
+  directorName: string
+  onNavigate?: (
+    entityId: string,
+    entityType?: MediaEntityType,
+    resolvedEntity?: UniversalMediaEntity,
+  ) => void
+}> = ({ item, directorName, onNavigate }) => {
+  const providerId = 'providerId' in item ? item.providerId?.trim() || '' : ''
+  const itemIdProvider = item.id.match(/^collection:film:(.+)$/i)?.[1] || ''
+  const resolvedProviderId = providerId || itemIdProvider
+  const titleSlug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const entityId = /^tmdb:(?:film|movie):/i.test(resolvedProviderId)
+    ? resolvedProviderId
+    : /^\d+$/.test(resolvedProviderId)
+      ? `tmdb:film:${resolvedProviderId}`
+      : `film-${titleSlug || item.id}`
+  const artworkUrl = resolveArtworkUrl(item.artworkUrl || '', item.title, 'Film')
+    || createArtworkPlaceholder(item.title, 'Film')
+  const year = ('year' in item && item.year) || item.subtitle.match(/\b(?:19|20)\d{2}\b/)?.[0] || ''
 
-  useEffect(() => {
-    setSrc(resolveArtworkUrl(defaultUrl, title, 'Album') || fallbackSrc)
-  }, [defaultUrl, title])
+  const openMovie = () => {
+    onNavigate?.(entityId, 'movie', {
+      id: entityId,
+      name: item.title,
+      type: 'movie',
+      categoryLabel: 'Film',
+      artworkUrl,
+      providerId: resolvedProviderId || undefined,
+      description: `${item.title}, directed by ${directorName}.`,
+      metadataChips: [
+        { label: 'Director', value: directorName },
+        ...(year ? [{ label: 'Release Year', value: year }] : []),
+      ],
+      communityRating: {
+        average: item.rating || 0,
+        count: 0,
+        distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+      },
+    })
+  }
+
+  return (
+    <button
+      type="button"
+      className="poster-media-tile top-movie-poster-tile"
+      onClick={openMovie}
+      aria-label={`Open ${item.title} movie profile`}
+    >
+      <span className="poster-media-frame">
+        <CollectionItemThumb title={item.title} defaultUrl={artworkUrl} />
+        {'rank' in item && item.rank ? (
+          <span className="top-movie-poster-rank">#{item.rank}</span>
+        ) : null}
+        {item.rating ? (
+          <span className="top-movie-poster-rating">
+            <Star size={11} fill="currentColor" aria-hidden="true" />
+            {item.rating.toFixed(1)}
+          </span>
+        ) : null}
+      </span>
+      <span className="poster-media-title">{item.title}</span>
+      <span className="poster-media-subtitle">{item.subtitle}</span>
+    </button>
+  )
+}
+
+const CollectionItemThumb: React.FC<{ title: string; defaultUrl: string }> = ({ title, defaultUrl }) => {
+  const fallbackSrc = createArtworkPlaceholder(title, 'Album')
+  const resolvedSrc = resolveArtworkUrl(defaultUrl, title, 'Album') || fallbackSrc
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  const src = failedSrc === resolvedSrc ? fallbackSrc : resolvedSrc
 
   return (
     <img
@@ -640,7 +748,7 @@ const CollectionItemThumb: React.FC<{ title: string; defaultUrl: string }> = ({ 
       decoding="async"
       onError={() => {
         if (src === fallbackSrc) return
-        setSrc(fallbackSrc)
+        setFailedSrc(resolvedSrc)
       }}
     />
   )
@@ -655,13 +763,9 @@ const MostQuotedSongCard: React.FC<{
     () => createArtworkPlaceholder(item.title, 'Song'),
     [item.title],
   )
-  const [artworkUrl, setArtworkUrl] = useState(
-    () => resolveArtworkUrl(item.coverUrl, item.title, 'Song') || fallbackArtwork,
-  )
-
-  useEffect(() => {
-    setArtworkUrl(resolveArtworkUrl(item.coverUrl, item.title, 'Song') || fallbackArtwork)
-  }, [fallbackArtwork, item.coverUrl, item.title])
+  const resolvedArtwork = resolveArtworkUrl(item.coverUrl, item.title, 'Song') || fallbackArtwork
+  const [failedArtwork, setFailedArtwork] = useState<string | null>(null)
+  const artworkUrl = failedArtwork === resolvedArtwork ? fallbackArtwork : resolvedArtwork
 
   const openSong = () => {
     const providerId = item.providerId?.trim() || ''
@@ -692,7 +796,7 @@ const MostQuotedSongCard: React.FC<{
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
-          onError={() => setArtworkUrl(fallbackArtwork)}
+          onError={() => setFailedArtwork(resolvedArtwork)}
         />
       </span>
       <span className="most-quoted-work-copy">
@@ -726,13 +830,9 @@ const MostReviewedWorkCard: React.FC<{
     () => createArtworkPlaceholder(item.title, categoryLabel),
     [categoryLabel, item.title],
   )
-  const [artworkUrl, setArtworkUrl] = useState(
-    () => resolveArtworkUrl(item.coverUrl, item.title, item.type) || fallbackArtwork,
-  )
-
-  useEffect(() => {
-    setArtworkUrl(resolveArtworkUrl(item.coverUrl, item.title, item.type) || fallbackArtwork)
-  }, [fallbackArtwork, item.coverUrl, item.title, item.type])
+  const resolvedArtwork = resolveArtworkUrl(item.coverUrl, item.title, item.type) || fallbackArtwork
+  const [failedArtwork, setFailedArtwork] = useState<string | null>(null)
+  const artworkUrl = failedArtwork === resolvedArtwork ? fallbackArtwork : resolvedArtwork
 
   const openWork = () => {
     const providerId = item.providerId?.trim() || ''
@@ -783,7 +883,7 @@ const MostReviewedWorkCard: React.FC<{
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
-          onError={() => setArtworkUrl(fallbackArtwork)}
+          onError={() => setFailedArtwork(resolvedArtwork)}
         />
       </span>
       <span className="most-reviewed-work-rank">#{rank}</span>
@@ -1045,16 +1145,12 @@ const SimilarArtistPortraitItem: React.FC<{
   const frameRef = useRef<HTMLSpanElement>(null)
   const [isVisible, setIsVisible] = useState(() =>
     // If image is already cached, skip IntersectionObserver and load immediately
-    initialUrl !== fallbackSvg,
+    initialUrl !== fallbackSvg || typeof IntersectionObserver === 'undefined',
   )
 
   // Delay portrait fetch until the frame enters the viewport (200px margin)
   useEffect(() => {
     if (isVisible) return
-    if (!('IntersectionObserver' in window)) {
-      setIsVisible(true)
-      return
-    }
     const el = frameRef.current
     if (!el) return
     const observer = new IntersectionObserver(
@@ -1073,21 +1169,6 @@ const SimilarArtistPortraitItem: React.FC<{
   useEffect(() => {
     if (!isVisible) return
     let isMounted = true
-
-    const cachedFanart = personType === 'artist'
-      ? entityImageCacheMap.get(getSimilarArtistPortraitCacheKey(artist.title))
-        || entityImageCacheMap.get(getArtistPortraitCacheKey(artist.title))
-      : null
-    if (cachedFanart) {
-      setPortraitUrl(cachedFanart)
-      return () => { isMounted = false }
-    }
-
-    const cachedWiki = entityImageCacheMap.get(`wiki-portrait-v6:${cleanTitle}`)
-    if (cachedWiki && personType !== 'artist') {
-      setPortraitUrl(cachedWiki)
-      return () => { isMounted = false }
-    }
 
     const portraitRequest = personType === 'artist'
       ? fetchSimilarArtistPortrait(artist.title)
@@ -1186,6 +1267,9 @@ const RelatedAlbumTile: React.FC<{
         <span className="media-title-overlay" aria-hidden="true">
           <span>{item.title}</span>
         </span>
+      )}
+      {titleOnHover && item.explicit && (
+        <span className="explicit-badge explicit-badge--inline media-overlay-explicit-badge" aria-label="Explicit">E</span>
       )}
     </span>
     {!titleOnHover && (
@@ -1408,15 +1492,6 @@ const FilmographyTile: React.FC<{
 function primaryArtistGenre(entity: UniversalMediaEntity | undefined, fallback?: string) {
   if (!entity) return fallback || ''
 
-  const overrides: Record<string, string> = {
-    'taylor-swift': 'Pop',
-    'olivia-rodrigo': 'Pop',
-    'noah-kahan': 'Indie Folk',
-    'hollow-coves': 'Indie Folk',
-  }
-
-  if (overrides[entity.id]) return overrides[entity.id]
-
   const genreChip = entity?.metadataChips?.find((chip) => chip.label.toLowerCase() === 'genre')?.value
   const genreText = genreChip || fallback || ''
   if (/pop/i.test(genreText)) return 'Pop'
@@ -1426,53 +1501,6 @@ function primaryArtistGenre(entity: UniversalMediaEntity | undefined, fallback?:
   return genreText.split('/')[0]?.trim() || fallback || ''
 }
 
-function getArtistMonthlyListeners(
-  name: string,
-  _ratingCount = 0,
-  _collectionCount = 0,
-): { value: string; sub: string } {
-  const normalized = name.toLowerCase().trim()
-  const knownListeners: Record<string, string> = {
-    'taylor swift': '104.5M',
-    'olivia rodrigo': '62.8M',
-    'noah kahan': '28.4M',
-    'hollow coves': '5.2M',
-    'drake': '84.1M',
-    'the weeknd': '112.3M',
-    'billie eilish': '99.4M',
-    'ariana grande': '82.6M',
-    'ed sheeran': '77.9M',
-    'sabrina carpenter': '74.2M',
-    'chappell roan': '45.8M',
-    'kendrick lamar': '68.3M',
-    'gracie abrams': '33.1M',
-    'phoebe bridgers': '14.6M',
-    'lana del rey': '58.2M',
-    'bruno mars': '118.9M',
-    'coldplay': '88.7M',
-    'dua lipa': '71.5M',
-    'post malone': '64.3M',
-    'sza': '69.1M',
-  }
-
-  if (knownListeners[normalized]) {
-    return {
-      value: knownListeners[normalized],
-      sub: 'Spotify & Apple Music',
-    }
-  }
-
-  const baseSeed = Array.from(normalized).reduce((acc, char) => acc + char.charCodeAt(0), 0)
-  const multiplier = (baseSeed % 85) + 12
-  const decimal = baseSeed % 9
-  const estimatedMillions = (multiplier + decimal / 10).toFixed(1)
-
-  return {
-    value: `${estimatedMillions}M`,
-    sub: 'Estimated Monthly Listeners',
-  }
-}
-
 function extractYearsActive(
   description?: string,
   discographyYears?: string[],
@@ -1480,7 +1508,7 @@ function extractYearsActive(
   const isDeceased = Boolean(
     description && (
       /\b(?:died|death)\b/i.test(description) ||
-      /\b(?:1[5-9]\d{2}|20[01]\d)\s*[–\-\u2013\u2014]\s*(?:(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+)?(?:1[5-9]\d{2}|20[0-2]\d)\b/i.test(description) ||
+      /\b(?:1[5-9]\d{2}|20[01]\d)\s*[-–\u2013\u2014]\s*(?:(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+)?(?:1[5-9]\d{2}|20[0-2]\d)\b/i.test(description) ||
       /\(\s*(?:born\s+[^;]+;\s*)?(?:[A-Za-z]+\s+\d{1,2},\s+)?\d{4}\s*[–\-\u2013\u2014]\s*(?:[A-Za-z]+\s+\d{1,2},\s+)?\d{4}\s*\)/i.test(description)
     )
   )
@@ -1532,7 +1560,7 @@ function getGenreTokens(genreText: string) {
   if (/electronic|dance|edm/.test(normalized)) tokens.add('electronic')
 
   if (tokens.size === 0 && normalized.trim()) {
-    tokens.add(normalized.split(/[\/,·&|]+/)[0]?.trim() || normalized.trim())
+    tokens.add(normalized.split(/[/,·&|]+/)[0]?.trim() || normalized.trim())
   }
 
   return tokens
@@ -1649,19 +1677,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   const [selectedLyricIndexes, setSelectedLyricIndexes] = useState<number[]>([])
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false)
 
-  useEffect(() => {
-    setActiveTab('overview')
-    setShowAllTopContent(false)
-    setShowAllCollection(false)
-    setShowAllAlbums(false)
-    setShowAllEps(false)
-    setShowAllSingles(false)
-    setShowAllLive(false)
-    setExpandedFilmographyCategories({})
-    setSelectedLyricIndexes([])
-    setIsDescriptionExpanded(false)
-  }, [entity.id])
-
   // Live API Fetch for artwork, discography & tracklist details
   const isPortraitProfile = isPortraitEntity(entity.type)
   const canAddToCollection = ['album', 'song', 'book', 'movie', 'tv', 'game'].includes(entity.type)
@@ -1671,29 +1686,56 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     null
   const [apiCoverUrl, setApiCoverUrl] = useState<string | null>(cachedInitial)
   const [apiSummary, setApiSummary] = useState<string | null>(null)
-  const [isLoadingApi, setIsLoadingApi] = useState(false)
+  const [isLoadingApi, setIsLoadingApi] = useState(true)
   const [failedHeroArtworkUrl, setFailedHeroArtworkUrl] = useState<string | null>(null)
 
   const [liveCollectionItems, setLiveCollectionItems] = useState<CollectionItem[] | null>(null)
   const [liveTrackItems, setLiveTrackItems] = useState<TopContentItem[] | null>(null)
   const [liveCastMembers, setLiveCastMembers] = useState<TmdbCastMember[] | null>(null)
+  const [liveTvSeasonResult, setLiveTvSeasonResult] = useState<{
+    entityId: string
+    seriesId: string
+    seasons: TvSeasonDisplay[]
+  } | null>(null)
+  const [selectedTvSeasonState, setSelectedTvSeasonState] = useState<{
+    entityId: string
+    seasonNumber: number | null
+  }>(() => ({
+    entityId: entity.id,
+    seasonNumber: defaultTvSeasonNumber(entity.tvMetadata?.seasons || []),
+  }))
+  const [liveTvEpisodeResult, setLiveTvEpisodeResult] = useState<{
+    entityId: string
+    seriesId: string
+    seasonNumber: number
+    episodes: TmdbTvEpisode[]
+  } | null>(null)
   const [liveScreenCredits, setLiveScreenCredits] = useState<HumanScreenCredit[] | null>(null)
   const [livePublishedWorks, setLivePublishedWorks] = useState<CollectionItem[] | null>(null)
   const [liveAlbumChips, setLiveAlbumChips] = useState<MetadataChip[] | null>(null)
   const [liveRelatedAlbums, setLiveRelatedAlbums] = useState<CollectionItem[] | null>(null)
   const [liveSongAppearances, setLiveSongAppearances] = useState<CollectionItem[] | null>(null)
-  const [liveArtistDiscographies, setLiveArtistDiscographies] = useState<Record<string, CollectionItem[]>>({})
   const [liveSongLyrics, setLiveSongLyrics] = useState<string | null>(null)
   const [liveGameMetadata, setLiveGameMetadata] = useState<GameMetadata | null>(null)
   const [gameArtworkFallbackActive, setGameArtworkFallbackActive] = useState(false)
   const [liveRelatedArtists, setLiveRelatedArtists] = useState<ScoredRelatedEntityItem[] | null>(null)
   const [liveRelatedTitles, setLiveRelatedTitles] = useState<ScoredRelatedEntityItem[] | null>(null)
   const [isRatingModalOpen, setIsRatingModalOpen] = useState(false)
+  const ratingDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: isRatingModalOpen,
+    onClose: () => setIsRatingModalOpen(false),
+  })
   const warmAbortRef = useRef<AbortController | null>(null)
-  const humanProfessions = entity.identity?.professions?.length
-    ? entity.identity.professions
-    : entity.humanProfile?.professions || []
-  const humanProviderIds = entity.identity?.providerIds || entity.humanProfile?.providerIds
+  const humanProfessions = useMemo(
+    () => entity.identity?.professions?.length
+      ? entity.identity.professions
+      : entity.humanProfile?.professions || [],
+    [entity],
+  )
+  const humanProviderIds = useMemo(
+    () => entity.identity?.providerIds || entity.humanProfile?.providerIds,
+    [entity],
+  )
   const verifiedItunesArtistId = humanProviderIds?.itunesArtistId
   const isMusicianHumanProfile = entity.type === 'human' && humanProfessions.some(isMusicProfession)
 
@@ -1713,7 +1755,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       directing: Boolean(base?.directing) || (liveScreenCredits?.some((credit) => credit.category === 'directing') || false),
       creating: Boolean(base?.creating),
     }
-  }, [entity.humanProfile, entity.identity, entity.type, isMusicianHumanProfile, liveCollectionItems, livePublishedWorks, liveScreenCredits, liveTrackItems])
+  }, [entity.humanProfile, entity.type, humanProfessions, isMusicianHumanProfile, liveCollectionItems, livePublishedWorks, liveScreenCredits, liveTrackItems])
   const tabs = useMemo(() => {
     if (entity.type === 'human' && entity.humanProfile) {
       return getDynamicHumanTabs({
@@ -1729,30 +1771,32 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   useEffect(() => {
     let isMounted = true
     const albumController = new AbortController()
-    setFailedHeroArtworkUrl(null)
-    setLiveCollectionItems(null)
-    setLiveTrackItems(null)
-    setLiveCastMembers(null)
-    setLiveScreenCredits(null)
-    setLivePublishedWorks(null)
-    setLiveAlbumChips(null)
-    setLiveRelatedAlbums(null)
-    setLiveAlbumVersionFamily(null)
-    setLiveSongAppearances(null)
-    setLiveArtistDiscographies({})
-    setLiveSongLyrics(null)
-    setLiveGameMetadata(null)
-    setLiveRelatedArtists(null)
-    setLiveRelatedTitles(null)
-    setGameArtworkFallbackActive(false)
-    setApiSummary(null)
-
-    const cachedForEntity =
-      entityImageCacheMap.get(imageCacheKey) ||
-      null
-    setApiCoverUrl(cachedForEntity)
+    let artistCatalogPromise: Promise<unknown> | null = null
+    let artistRelatedPromise: Promise<unknown> | null = null
 
     const suppliedTmdbId = (entity.providerId || entity.id.match(/^tmdb:(?:film|movie|tv):(\d+)$/i)?.[1] || '').trim()
+
+    const loadTvSeasons = (seriesId: string) => {
+      if (!/^\d+$/.test(seriesId)) return
+      fetchTmdbTvSeasons(seriesId, albumController.signal)
+        .then((seasons) => {
+          if (!isMounted || albumController.signal.aborted) return
+          setLiveTvSeasonResult({ entityId: entity.id, seriesId, seasons })
+          setSelectedTvSeasonState((current) => ({
+            entityId: entity.id,
+            seasonNumber: current.entityId === entity.id && current.seasonNumber !== null
+              && seasons.some((season) => season.seasonNumber === current.seasonNumber)
+              ? current.seasonNumber
+              : defaultTvSeasonNumber(seasons),
+          }))
+        })
+        .catch(() => {
+          if (isMounted && !albumController.signal.aborted) {
+            setLiveTvSeasonResult({ entityId: entity.id, seriesId, seasons: [] })
+          }
+        })
+    }
+
     if ((entity.type === 'movie' || entity.type === 'tv') && /^\d+$/.test(suppliedTmdbId)) {
       fetchTmdbCast(entity.type === 'movie' ? 'film' : 'tv', suppliedTmdbId, albumController.signal)
         .then((cast) => {
@@ -1762,6 +1806,9 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         .catch(() => {
           if (isMounted && !albumController.signal.aborted) setLiveCastMembers([])
         })
+    }
+    if (entity.type === 'tv' && /^\d+$/.test(suppliedTmdbId)) {
+      loadTvSeasons(suppliedTmdbId)
     }
 
     const gameMetadataSource = entity.gameMetadata?.metadataSource || ''
@@ -1773,7 +1820,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         /igdb|steam/i.test(gameMetadataSource))
 
     if (hasApiGameIdentity && entity.providerId) {
-      setIsLoadingApi(true)
       fetchGameDetails(entity.providerId, gameMetadataSource)
         .then((details) => {
           if (!isMounted) return
@@ -1798,19 +1844,21 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     }
 
     if (entity.type === 'artist' || (isMusicianHumanProfile && verifiedItunesArtistId)) {
-      fetchItunesDiscography(entity.name, albumController.signal, verifiedItunesArtistId)
+      const discographyPromise = fetchItunesDiscography(entity.name, albumController.signal, verifiedItunesArtistId)
         .then((items) => {
           if (!isMounted) return
           setLiveCollectionItems(items || [])
         })
         .catch(() => {})
 
-      fetchItunesTopSongs(entity.name, albumController.signal)
+      const topSongsPromise = fetchItunesTopSongs(entity.name, albumController.signal)
         .then((items) => {
           if (!isMounted) return
           setLiveTrackItems(items || [])
         })
         .catch(() => {})
+
+      artistCatalogPromise = Promise.allSettled([discographyPromise, topSongsPromise])
     }
 
     if (entity.type === 'artist' || isMusicianHumanProfile) {
@@ -1823,7 +1871,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         .flatMap((chip) => chip.value.split(/[,/|]+/))
         .map((genre) => genre.trim())
         .filter(Boolean)
-      fetchSimilarArtistsByGenreAndLocation(entity.name, artistGenres, warmController.signal)
+      artistRelatedPromise = fetchSimilarArtistsByGenreAndLocation(entity.name, artistGenres, warmController.signal)
         .then((artists) => {
           if (!isMounted || warmController.signal.aborted) return
           if (artists && artists.length > 0) {
@@ -1861,7 +1909,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         entity.providerId || entity.id,
         releaseYearChip,
       )
-        .then((details) => {
+        .then(async (details) => {
           if (!isMounted) return
           if (details) {
             if (details.coverUrl) {
@@ -1881,18 +1929,21 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             ])
             const albumArtist = details.artist || artistChip || ''
             if (albumArtist) {
-              fetchWikipediaStudioAlbumNumber(entity.name, albumArtist, albumController.signal)
-                .then((studioAlbumNumber) => {
-                  if (!isMounted) return
-                  const albumOrdinal = studioAlbumNumber ? ` ${ordinalize(studioAlbumNumber)}` : ''
-                  const yearText = details.year ? `, released in ${details.year}` : ''
-                  setApiSummary(`${entity.name} is the${albumOrdinal} studio album by ${albumArtist}${yearText}.`)
-                })
-                .catch(() => {
-                  if (!isMounted) return
-                  const yearText = details.year ? `, released in ${details.year}` : ''
-                  setApiSummary(`${entity.name} is a studio album by ${albumArtist}${yearText}.`)
-                })
+              try {
+                const studioAlbumNumber = await fetchWikipediaStudioAlbumNumber(
+                  entity.name,
+                  albumArtist,
+                  albumController.signal,
+                )
+                if (!isMounted || albumController.signal.aborted) return
+                const albumOrdinal = studioAlbumNumber ? ` ${ordinalize(studioAlbumNumber)}` : ''
+                const yearText = details.year ? `, released in ${details.year}` : ''
+                setApiSummary(`${entity.name} is the${albumOrdinal} studio album by ${albumArtist}${yearText}.`)
+              } catch {
+                if (!isMounted || albumController.signal.aborted) return
+                const yearText = details.year ? `, released in ${details.year}` : ''
+                setApiSummary(`${entity.name} is a studio album by ${albumArtist}${yearText}.`)
+              }
             }
             const familyPromise = fetchItunesAlbumVersionFamily({
               albumName: details.title,
@@ -1902,12 +1953,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               trackCount: details.trackCount,
             }, albumController.signal).catch(() => null)
 
-            familyPromise.then((family) => {
-              if (!isMounted || albumController.signal.aborted) return
-              setLiveAlbumVersionFamily(family)
-            })
-
-            fetchRelatedAlbums(
+            const relatedPromise = fetchRelatedAlbums(
               details.title,
               details.artist || artistChip,
               details.genre,
@@ -1915,20 +1961,21 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
               albumController.signal,
               details.explicit,
               details.year,
-            )
-              .then((items) => {
-                if (!isMounted || albumController.signal.aborted) return
-                setLiveRelatedAlbums(items)
-              })
-              .catch(() => {
-                if (isMounted && !albumController.signal.aborted) setLiveRelatedAlbums([])
-              })
+            ).catch(() => [] as CollectionItem[])
+
+            const [family, relatedAlbums] = await Promise.all([familyPromise, relatedPromise])
+            if (!isMounted || albumController.signal.aborted) return
+            setLiveAlbumVersionFamily(family)
+            setLiveRelatedAlbums(relatedAlbums)
           } else {
             setLiveRelatedAlbums([])
           }
         })
         .catch(() => {
           if (isMounted && !albumController.signal.aborted) setLiveRelatedAlbums([])
+        })
+        .finally(() => {
+          if (isMounted && !albumController.signal.aborted) setIsLoadingApi(false)
         })
     }
 
@@ -1955,11 +2002,11 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             }
             if (details.lyrics) setLiveSongLyrics(details.lyrics)
             if (details.summary) setApiSummary(details.summary)
-            const resolvedGenre = details.genre || primaryArtistGenre(entity) || 'Pop'
+            const resolvedGenre = details.genre || primaryArtistGenre(entity)
             setLiveAlbumChips([
               { label: 'Artist', value: details.artist || artistChip || 'Artist' },
               { label: 'Album', value: details.album || 'Single' },
-              { label: 'Genre', value: resolvedGenre },
+              ...(resolvedGenre ? [{ label: 'Genre', value: resolvedGenre }] : []),
               { label: 'Duration', value: details.duration },
               { label: 'Track #', value: `#${details.trackNumber}` },
               { label: 'Release Year', value: details.year },
@@ -1978,18 +2025,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           setLiveSongAppearances(items.length > 0 ? items : null)
         })
         .catch(() => {})
-    }
-
-    const existingCache =
-      entityImageCacheMap.get(imageCacheKey) ||
-      null
-
-    if (existingCache) {
-      setApiCoverUrl(resolveArtworkUrl(existingCache, entity.name, entity.categoryLabel))
+        .finally(() => {
+          if (isMounted && !albumController.signal.aborted) setIsLoadingApi(false)
+        })
     }
 
     if (isPortraitProfile) {
-      if (!existingCache) setIsLoadingApi(true)
       const primaryHumanProfession = entity.humanProfile?.primaryProfession || entity.identity?.primaryProfession || entity.humanProfile?.context
       const normalizedPrimaryProfession = professionFromLegacyContext(primaryHumanProfession)
       const personType = (entity.type === 'human'
@@ -2010,7 +2051,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         ? fetchArtistPortrait(entity.name, albumController.signal).then((fanartUrl) => fanartUrl || null).catch(() => null)
         : Promise.resolve<string | null>(null)
 
-      Promise.all([
+      const profilePromise = Promise.all([
         portraitPromise,
         fetchWikipediaProfile(entity.name, personType, albumController.signal),
       ]).then(([bandFanartUrl, profile]) => {
@@ -2092,15 +2133,19 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           }
         })
         .catch(() => {})
-        .finally(() => {
-          if (isMounted) setIsLoadingApi(false)
-        })
+
+      const artistReadinessTasks: Promise<unknown>[] = [profilePromise]
+      if (artistCatalogPromise) artistReadinessTasks.push(artistCatalogPromise)
+      if (artistRelatedPromise) artistReadinessTasks.push(artistRelatedPromise)
+      const profileReadiness = Promise.allSettled(artistReadinessTasks)
+      void profileReadiness.finally(() => {
+        if (isMounted && !albumController.signal.aborted) setIsLoadingApi(false)
+      })
     }
 
     // Catalog items (books, movies, tv, games) call searchMetadata.
     // Albums, songs, and human/portrait profiles have dedicated resolvers above.
     if (entity.type !== 'album' && entity.type !== 'song' && !isPortraitProfile) {
-      setIsLoadingApi(true)
       const metaType = mapToMetaType(entity.type)
       searchMetadata(metaType, entity.name, albumController.signal)
         .then((results) => {
@@ -2150,9 +2195,19 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                     if (isMounted && !albumController.signal.aborted) setLiveCastMembers([])
                   })
               }
+              if (metaType === 'tv' && !/^\d+$/.test(suppliedTmdbId)) {
+                if (/^\d+$/.test(match.providerId)) {
+                  loadTvSeasons(match.providerId)
+                } else {
+                  setLiveTvSeasonResult({ entityId: entity.id, seriesId: '', seasons: [] })
+                }
+              }
             } else if (entity.type === 'movie' || entity.type === 'tv') {
               setLiveRelatedTitles([])
               setLiveCastMembers([])
+              if (entity.type === 'tv' && !/^\d+$/.test(suppliedTmdbId)) {
+                setLiveTvSeasonResult({ entityId: entity.id, seriesId: '', seasons: [] })
+              }
             }
 
             if (entity.type === 'book') {
@@ -2176,6 +2231,9 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             }
           } else if (entity.type === 'movie' || entity.type === 'tv') {
             setLiveRelatedTitles([])
+            if (entity.type === 'tv' && !/^\d+$/.test(suppliedTmdbId)) {
+              setLiveTvSeasonResult({ entityId: entity.id, seriesId: '', seasons: [] })
+            }
           } else if (entity.type === 'book') {
             setLiveRelatedTitles([])
           }
@@ -2184,6 +2242,9 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           if (isMounted && (entity.type === 'movie' || entity.type === 'tv' || entity.type === 'book')) {
             setLiveRelatedTitles([])
             if (entity.type === 'movie' || entity.type === 'tv') setLiveCastMembers([])
+            if (entity.type === 'tv' && !/^\d+$/.test(suppliedTmdbId)) {
+              setLiveTvSeasonResult({ entityId: entity.id, seriesId: '', seasons: [] })
+            }
           }
         })
         .finally(() => {
@@ -2206,7 +2267,53 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       albumController.abort()
       warmAbortRef.current?.abort()
     }
-  }, [entity.id, entity.name, entity.providerId, entity.type, imageCacheKey, isMusicianHumanProfile, isPortraitProfile, verifiedItunesArtistId])
+  }, [
+    entity,
+    humanProfessions,
+    humanProviderIds,
+    imageCacheKey,
+    isMusicianHumanProfile,
+    isPortraitProfile,
+    onCanonicalHumanResolved,
+    verifiedItunesArtistId,
+  ])
+
+  useEffect(() => {
+    const selectedSeasonNumber = selectedTvSeasonState.entityId === entity.id
+      ? selectedTvSeasonState.seasonNumber
+      : defaultTvSeasonNumber(entity.tvMetadata?.seasons || [])
+    if (entity.type !== 'tv' || activeTab !== 'collection' || selectedSeasonNumber === null) return
+
+    const embeddedSeason = entity.tvMetadata?.seasons.find(
+      (season) => season.seasonNumber === selectedSeasonNumber,
+    )
+    const currentSeasonResult = liveTvSeasonResult?.entityId === entity.id ? liveTvSeasonResult : null
+    const isUsingEmbeddedSeasons = !currentSeasonResult?.seasons.length && Boolean(embeddedSeason?.episodes.length)
+    if (isUsingEmbeddedSeasons || !currentSeasonResult?.seriesId) return
+
+    const controller = new AbortController()
+    fetchTmdbTvSeasonEpisodes(currentSeasonResult.seriesId, selectedSeasonNumber, controller.signal)
+      .then((episodes) => {
+        if (controller.signal.aborted) return
+        setLiveTvEpisodeResult({
+          entityId: entity.id,
+          seriesId: currentSeasonResult.seriesId,
+          seasonNumber: selectedSeasonNumber,
+          episodes,
+        })
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setLiveTvEpisodeResult({
+          entityId: entity.id,
+          seriesId: currentSeasonResult.seriesId,
+          seasonNumber: selectedSeasonNumber,
+          episodes: [],
+        })
+      })
+
+    return () => controller.abort()
+  }, [activeTab, entity.id, entity.tvMetadata?.seasons, entity.type, liveTvSeasonResult, selectedTvSeasonState])
 
   const fallbackArtwork = createArtworkPlaceholder(entity.name, entity.categoryLabel)
   const preferredArtworkUrl = entity.type === 'game'
@@ -2284,7 +2391,10 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     [entity.type, humanProfessions, humanWorkReviews, liveCapabilities, matchingReviews],
   )
 
-  const collectionItems = liveCollectionItems || entity.secondaryCollection?.items || []
+  const collectionItems = useMemo(
+    () => liveCollectionItems || entity.secondaryCollection?.items || [],
+    [entity.secondaryCollection?.items, liveCollectionItems],
+  )
 
   const livePerformancesGroup = useMemo(() => {
     return collectionItems.filter((i) => {
@@ -2353,7 +2463,10 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     return buildLinesThatStuck(matchingReviews)
   }, [entity.type, matchingReviews])
 
-  const topItems = liveTrackItems || entity.primaryCollection?.items || []
+  const topItems = useMemo(
+    () => liveTrackItems || entity.primaryCollection?.items || [],
+    [entity.primaryCollection?.items, liveTrackItems],
+  )
   const castMembers = useMemo<TmdbCastMember[]>(() => {
     if (liveCastMembers?.length) return liveCastMembers
     if (entity.type !== 'movie' && entity.type !== 'tv') return []
@@ -2371,6 +2484,31 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     && liveCastMembers === null
     && castMembers.length === 0
     && isLoadingApi
+  const embeddedTvSeasons = entity.tvMetadata?.seasons || []
+  const currentTvSeasonResult = liveTvSeasonResult?.entityId === entity.id ? liveTvSeasonResult : null
+  const liveTvSeasons = currentTvSeasonResult?.seasons || null
+  const liveTvSeriesId = currentTvSeasonResult?.seriesId || null
+  const selectedTvSeasonNumber = selectedTvSeasonState.entityId === entity.id
+    ? selectedTvSeasonState.seasonNumber
+    : defaultTvSeasonNumber(embeddedTvSeasons)
+  const tvSeasons: TvSeasonDisplay[] = liveTvSeasons?.length ? liveTvSeasons : embeddedTvSeasons
+  const selectedTvSeason = tvSeasons.find((season) => season.seasonNumber === selectedTvSeasonNumber)
+  const selectedEmbeddedEpisodes = selectedTvSeason?.episodes
+  const selectedLiveEpisodes = liveTvEpisodeResult?.entityId === entity.id
+    && liveTvEpisodeResult.seriesId === liveTvSeriesId
+    && liveTvEpisodeResult.seasonNumber === selectedTvSeasonNumber
+    ? liveTvEpisodeResult.episodes
+    : undefined
+  const selectedTvEpisodes = selectedEmbeddedEpisodes || selectedLiveEpisodes || []
+  const isTvSeasonsLoading = entity.type === 'tv' && liveTvSeasons === null && tvSeasons.length === 0
+  const areTvEpisodesLoading = Boolean(
+    selectedTvSeason &&
+    !selectedEmbeddedEpisodes &&
+    liveTvSeriesId &&
+    (liveTvEpisodeResult?.entityId !== entity.id
+      || liveTvEpisodeResult.seriesId !== liveTvSeriesId
+      || liveTvEpisodeResult.seasonNumber !== selectedTvSeasonNumber),
+  )
   const lyricLines = useMemo(
     () =>
       (liveSongLyrics || '')
@@ -2380,9 +2518,6 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         .map(sentenceCaseLyricLine),
     [liveSongLyrics],
   )
-  useEffect(() => {
-    setSelectedLyricIndexes([])
-  }, [liveSongLyrics])
   const selectedLyricsText = useMemo(
     () => selectedLyricIndexes.map((index) => lyricLines[index]).filter(Boolean).join('\n'),
     [lyricLines, selectedLyricIndexes],
@@ -2588,7 +2723,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
     const catalogCandidates = relatedCandidates
       .map((candidate, index) => {
-        const candidateGenreProfile = getLatestAlbumGenreProfile(candidate, liveArtistDiscographies[candidate.id])
+        const candidateGenreProfile = getLatestAlbumGenreProfile(candidate)
         const sharedGenreCount = Array.from(candidateGenreProfile.tokens).filter((token) =>
           currentGenreProfile.tokens.has(token),
         ).length
@@ -2644,7 +2779,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       })
     })
     return Array.from(communityArtists.values()).slice(0, 8)
-  }, [communityEntries, collectionItems, entity, isMusicianHumanProfile, liveAlbumChips, liveArtistDiscographies, liveGameMetadata, liveRelatedArtists, liveRelatedTitles])
+  }, [communityEntries, collectionItems, entity, isMusicianHumanProfile, liveAlbumChips, liveGameMetadata, liveRelatedArtists, liveRelatedTitles])
 
   const visibleTopItems = useMemo(() => {
     if (entity.type === 'album') {
@@ -2654,7 +2789,10 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     return showAllTopContent ? topItems : topItems.slice(0, 5)
   }, [entity.type, activeTab, topItems, showAllTopContent])
 
-  const allCurrentChips = liveAlbumChips || entity.metadataChips || []
+  const allCurrentChips = useMemo(
+    () => liveAlbumChips || entity.metadataChips || [],
+    [entity.metadataChips, liveAlbumChips],
+  )
   const trackNumberChip = entity.type === 'song'
     ? allCurrentChips.find((c) => /track.?#|track.?number/i.test(c.label))
     : undefined
@@ -2677,55 +2815,46 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       return { average, count: total, distribution, counts }
     }
 
-    const avg = entity.communityRating?.average || 4.7
     const count = entity.communityRating?.count || 0
-    const defaultDist: Record<number, number> = entity.communityRating?.distribution || {
-      5: 78,
-      4: 16,
-      3: 4,
-      2: 1,
-      1: 1,
-    }
+    const avg = count > 0 ? entity.communityRating?.average || 0 : 0
+    const defaultDist: Record<number, number> = count > 0
+      ? entity.communityRating?.distribution || { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
+      : { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
     return { average: avg, count, distribution: defaultDist, counts: undefined }
   }, [entity.communityRating, matchingReviews])
   const curatedStats = useMemo(() => {
     const findVal = (pattern: RegExp) => allCurrentChips.find((c) => pattern.test(c.label))?.value
 
-    let box2Label = 'Genre'
-    let box2Value = findVal(/^genres?$/i)
-    let Box2Icon = Disc3
+    let box2Label: string
+    let box2Value: string | undefined
+    let Box2Icon: typeof Disc3
 
-    let box3Label = 'Details'
-    let box3Value: string | undefined = undefined
-    let box3Sub: string | undefined = undefined
-    let Box3Icon = Sparkles
+    let box3Label: string
+    let box3Value: string | undefined
+    let box3Sub: string | undefined
+    let Box3Icon: typeof Sparkles
 
     if (entity.type === 'artist') {
       box2Label = 'Genre'
-      box2Value = box2Value || primaryArtistGenre(entity) || 'Pop'
+      box2Value = primaryArtistGenre(entity) || '—'
       Box2Icon = Disc3
 
-      const listenerData = getArtistMonthlyListeners(
-        entity.name,
-        ratingAnalytics.count,
-        collectionItems.length,
-      )
-      box3Label = 'Monthly Listeners'
-      box3Value = listenerData.value
-      box3Sub = listenerData.sub
+      box3Label = 'Releases'
+      box3Value = collectionItems.length > 0 ? `${collectionItems.length} Releases` : '—'
+      box3Sub = collectionItems.length > 0 ? 'Cataloged releases' : undefined
       Box3Icon = Users
     } else if (entity.type === 'album') {
       box2Label = 'Genre'
-      box2Value = box2Value || primaryArtistGenre(entity) || 'Pop'
+      box2Value = primaryArtistGenre(entity) || '—'
       Box2Icon = Disc3
 
       box3Label = 'Tracks'
-      box3Value = findVal(/track.*count/i) || (liveTrackItems?.length ? `${liveTrackItems.length} Tracks` : 'Album')
-      box3Sub = findVal(/release.*year/i) ? `Released ${findVal(/release.*year/i)}` : 'Studio Album'
+      box3Value = findVal(/track.*count/i) || (liveTrackItems?.length ? `${liveTrackItems.length} Tracks` : '—')
+      box3Sub = findVal(/release.*year/i) ? `Released ${findVal(/release.*year/i)}` : undefined
       Box3Icon = Layers
     } else if (entity.type === 'song') {
       box2Label = 'Genre'
-      box2Value = box2Value || primaryArtistGenre(entity) || 'Pop'
+      box2Value = primaryArtistGenre(entity) || '—'
       Box2Icon = Music2
 
       box3Label = 'Duration'
@@ -2734,12 +2863,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       Box3Icon = Clock
     } else if (entity.type === 'game') {
       box2Label = 'Genre'
-      box2Value = box2Value || liveGameMetadata?.genres?.[0] || 'Game'
+      box2Value = liveGameMetadata?.genres?.[0] || '—'
       Box2Icon = Gamepad2
 
       box3Label = 'Developer'
-      box3Value = liveGameMetadata?.developers?.[0] || findVal(/developer/i) || 'Studio'
-      box3Sub = findVal(/release/i) ? `Released ${findVal(/release/i)}` : 'Video Game'
+      box3Value = liveGameMetadata?.developers?.[0] || findVal(/developer/i) || '—'
+      box3Sub = findVal(/release/i) ? `Released ${findVal(/release/i)}` : undefined
       Box3Icon = Gamepad2
     } else if (entity.type === 'game_studio') {
       box2Label = 'Industry'
@@ -2752,21 +2881,21 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       Box3Icon = Layers
     } else if (entity.type === 'movie' || entity.type === 'tv') {
       box2Label = 'Genre'
-      box2Value = box2Value || (entity.type === 'tv' ? 'TV Series' : 'Film')
+      box2Value = findVal(/genre/i) || '—'
       Box2Icon = entity.type === 'tv' ? Tv : Clapperboard
 
       box3Label = entity.type === 'tv' ? 'Seasons' : 'Director'
-      box3Value = findVal(/seasons?|episodes?/i) || findVal(/director/i) || findVal(/year|release/i) || (entity.type === 'tv' ? 'Series' : 'Cinema')
-      box3Sub = entity.type === 'tv' ? 'Television Show' : 'Feature Film'
+      box3Value = findVal(/seasons?|episodes?/i) || findVal(/director/i) || findVal(/year|release/i) || '—'
+      box3Sub = undefined
       Box3Icon = entity.type === 'tv' ? Tv : Clapperboard
     } else if (entity.type === 'book') {
       box2Label = 'Genre'
-      box2Value = box2Value || 'Literature'
+      box2Value = findVal(/genre/i) || '—'
       Box2Icon = BookOpen
 
       box3Label = 'Author / Release'
-      box3Value = findVal(/author/i) || findVal(/year|published/i) || 'Book'
-      box3Sub = 'Published Work'
+      box3Value = findVal(/author/i) || findVal(/year|published/i) || '—'
+      box3Sub = undefined
       Box3Icon = BookOpen
     } else if (entity.type === 'author') {
       box2Label = 'Profession'
@@ -2781,17 +2910,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     } else if (entity.type === 'actor' || entity.type === 'director' || entity.type === 'creator' || entity.type === 'human') {
       if (isMusicianHumanProfile) {
         box2Label = 'Genre'
-        box2Value = findVal(/^genres?$/i) || primaryArtistGenre(entity) || 'Pop'
+        box2Value = findVal(/^genres?$/i) || primaryArtistGenre(entity) || '—'
         Box2Icon = Disc3
 
-        const listenerData = getArtistMonthlyListeners(
-          entity.name,
-          ratingAnalytics.count,
-          collectionItems.length,
-        )
-        box3Label = 'Monthly Listeners'
-        box3Value = listenerData.value
-        box3Sub = listenerData.sub
+        box3Label = 'Releases'
+        box3Value = collectionItems.length > 0 ? `${collectionItems.length} Releases` : '—'
+        box3Sub = collectionItems.length > 0 ? 'Cataloged releases' : undefined
         Box3Icon = Users
       } else {
         box2Label = 'Profession'
@@ -2825,7 +2949,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       box2: { label: box2Label, value: box2Value || '—', Icon: Box2Icon },
       box3: { label: box3Label, value: box3Value || '—', sub: box3Sub, Icon: Box3Icon },
     }
-  }, [allCurrentChips, collectionItems, entity, isMusicianHumanProfile, liveGameMetadata, livePublishedWorks, liveScreenCredits, liveTrackItems, ratingAnalytics.count])
+  }, [allCurrentChips, collectionItems, entity, isMusicianHumanProfile, liveGameMetadata, livePublishedWorks, liveScreenCredits, liveTrackItems])
 
   const chipsToDisplay = useMemo(() => {
     const base = allCurrentChips.filter((chip) => {
@@ -2901,6 +3025,20 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       current.includes(index)
         ? current.filter((item) => item !== index)
         : [...current, index].sort((a, b) => a - b),
+    )
+  }
+
+  if (isLoadingApi) {
+    return (
+      <div
+        className="page-loading-skeleton is-entity"
+        role="status"
+        aria-live="polite"
+        aria-label={`Loading ${entity.name}`}
+        data-loading-variant="entity"
+      >
+        <EntityLoadingSkeleton showHeader={showLocalNavigation} />
+      </div>
     )
   }
 
@@ -3083,7 +3221,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                 <motion.span
                   className="media-tab-underline"
                   layoutId="media-tab-underline"
-                  transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                  transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
                 />
               )}
             </button>
@@ -3322,6 +3460,108 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
         </section>
       )}
 
+      {/* Seasons and on-demand episode details for TV series. */}
+      {entity.type === 'tv' && activeTab === 'collection' && (
+        <section className="media-section tv-seasons-section">
+          <div className="media-section-header">
+            <div className="media-section-title-group">
+              <Layers size={16} className="title-icon" />
+              <h2>Seasons</h2>
+            </div>
+          </div>
+
+          {isTvSeasonsLoading ? (
+            <div className="similar-artists-empty" role="status" aria-label="Loading seasons">
+              <Loader2 size={20} className="spin-icon" />
+              <span>Loading seasons…</span>
+            </div>
+          ) : tvSeasons.length > 0 ? (
+            <>
+              <div className="tv-season-grid" aria-label={`${entity.name} seasons`}>
+                {tvSeasons.map((season) => (
+                  <button
+                    key={season.id}
+                    type="button"
+                    className={`tv-season-card ${season.seasonNumber === selectedTvSeasonNumber ? 'is-active' : ''}`}
+                    aria-label={`Show ${season.name}, ${season.episodeCount} ${season.episodeCount === 1 ? 'episode' : 'episodes'}`}
+                    aria-pressed={season.seasonNumber === selectedTvSeasonNumber}
+                    onClick={() => setSelectedTvSeasonState({
+                      entityId: entity.id,
+                      seasonNumber: season.seasonNumber,
+                    })}
+                  >
+                    <span className="tv-season-poster">
+                      {season.posterUrl ? (
+                        <img src={season.posterUrl} alt="" loading="lazy" />
+                      ) : (
+                        <Tv size={30} aria-hidden="true" />
+                      )}
+                    </span>
+                    <span className="tv-season-copy">
+                      <strong>{season.name}</strong>
+                      <small>{season.episodeCount} {season.episodeCount === 1 ? 'episode' : 'episodes'}</small>
+                      {season.airDate && <time dateTime={season.airDate}>{formatTvAirDate(season.airDate)}</time>}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {selectedTvSeason && (
+                <div className="tv-selected-season">
+                  <div className="tv-selected-season-header">
+                    <div>
+                      <h3>{selectedTvSeason.name}</h3>
+                      {selectedTvSeason.overview && <p>{selectedTvSeason.overview}</p>}
+                    </div>
+                    <span>{selectedTvSeason.episodeCount} {selectedTvSeason.episodeCount === 1 ? 'episode' : 'episodes'}</span>
+                  </div>
+
+                  {areTvEpisodesLoading ? (
+                    <div className="similar-artists-empty" role="status" aria-label={`Loading ${selectedTvSeason.name} episodes`}>
+                      <Loader2 size={20} className="spin-icon" />
+                      <span>Loading episodes…</span>
+                    </div>
+                  ) : selectedTvEpisodes.length > 0 ? (
+                    <div className="tv-episode-grid">
+                      {selectedTvEpisodes.map((episode) => (
+                        <article key={episode.id} className="tv-episode-card">
+                          <div className="tv-episode-still">
+                            {episode.stillUrl ? (
+                              <img src={episode.stillUrl} alt="" loading="lazy" />
+                            ) : (
+                              <Tv size={28} aria-hidden="true" />
+                            )}
+                          </div>
+                          <div className="tv-episode-copy">
+                            <span className="tv-episode-number">Episode {episode.episodeNumber}</span>
+                            <h3>{episode.name}</h3>
+                            <div className="tv-episode-meta">
+                              {episode.airDate && <time dateTime={episode.airDate}>{formatTvAirDate(episode.airDate)}</time>}
+                              {episode.runtime && <span>{episode.runtime} min</span>}
+                            </div>
+                            {episode.overview && <p>{episode.overview}</p>}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="similar-artists-empty">
+                      <Tv size={18} />
+                      <span>No episode information is available for {selectedTvSeason.name} yet.</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="similar-artists-empty">
+              <Tv size={18} />
+              <span>No season information is available for {entity.name} yet.</span>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* 1. Primary Top Content Section (tracklists, books, and other catalog lists). */}
       {entity.type !== 'song' && entity.type !== 'game' && entity.type !== 'movie' && entity.type !== 'tv' &&
         (activeTab === 'overview' || activeTab === 'top_content') &&
@@ -3360,25 +3600,38 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             ) : null}
           </div>
 
-          <div className="top-content-list">
-            {visibleTopItems.map((item) => {
-              const effectiveArtistName =
-                entity.type === 'artist' || entity.type === 'human'
-                  ? entity.name
-                  : entity.metadataChips?.find((c) => /artist/i.test(c.label))?.value || ''
-              return (
-                <TrackRow
+          {entity.type === 'director' ? (
+            <div className="poster-tile-grid top-movie-poster-grid">
+              {visibleTopItems.map((item) => (
+                <TopMoviePosterTile
                   key={item.id}
                   item={item}
-                  artistName={effectiveArtistName}
-                  parentArtworkUrl={entity.type === 'album' ? displayArtwork : entity.artworkUrl}
-                  onNavigateToEntity={onNavigateToEntity}
-                  entityType={topContentEntityType}
-                  useParentArtwork={entity.type === 'album'}
+                  directorName={entity.name}
+                  onNavigate={onNavigateToEntity}
                 />
-              )
-            })}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="top-content-list">
+              {visibleTopItems.map((item) => {
+                const effectiveArtistName =
+                  entity.type === 'artist' || entity.type === 'human'
+                    ? entity.name
+                    : entity.metadataChips?.find((c) => /artist/i.test(c.label))?.value || ''
+                return (
+                  <TrackRow
+                    key={item.id}
+                    item={item}
+                    artistName={effectiveArtistName}
+                    parentArtworkUrl={entity.type === 'album' ? displayArtwork : entity.artworkUrl}
+                    onNavigateToEntity={onNavigateToEntity}
+                    entityType={topContentEntityType}
+                    useParentArtwork={entity.type === 'album'}
+                  />
+                )
+              })}
+            </div>
+          )}
         </section>
       )}
 
@@ -3590,7 +3843,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       )}
 
       {/* 3b. Generic Secondary Collection Section for non-artists */}
-      {(activeTab === 'collection' || activeTab === 'filmography' || activeTab === 'published_works') && entity.type !== 'artist' && entity.type !== 'human' && entity.type !== 'book' && entity.secondaryCollection && (
+      {(activeTab === 'collection' || activeTab === 'filmography' || activeTab === 'published_works') && entity.type !== 'artist' && entity.type !== 'human' && entity.type !== 'book' && entity.type !== 'tv' && entity.secondaryCollection && (
         <section className="media-section collection-section">
           <div className="media-section-header">
             <div className="media-section-title-group">
@@ -3878,7 +4131,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       {isRatingModalOpen && (
         <div className="modal-backdrop" onClick={() => setIsRatingModalOpen(false)}>
           <motion.div
+            ref={ratingDialogRef}
             className="rating-breakdown-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rating-breakdown-title"
+            tabIndex={-1}
             initial={{ opacity: 0, scale: 0.94, y: 15 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.94, y: 15 }}
@@ -3887,7 +4145,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
           >
             <div className="rating-breakdown-header">
               <div>
-                <h3 className="rating-breakdown-title">Rating Analytics</h3>
+                <h3 id="rating-breakdown-title" className="rating-breakdown-title">Rating Analytics</h3>
                 <span className="rating-breakdown-subtitle">{entity.name}</span>
               </div>
               <button
@@ -3930,9 +4188,10 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                     <div className="rating-bar-track">
                       <motion.div
                         className="rating-bar-fill"
-                        initial={{ width: 0 }}
-                        animate={{ width: `${pct}%` }}
-                        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                        style={{ width: `${pct}%`, transformOrigin: 'left center' }}
+                        initial={{ scaleX: 0 }}
+                        animate={{ scaleX: 1 }}
+                        transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
                       />
                     </div>
                     <span className="rating-bar-percent">

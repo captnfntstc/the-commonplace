@@ -361,7 +361,7 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
     case 'director':
       return [
         { id: 'overview', label: 'Overview' },
-        { id: 'top_content', label: 'Best Movies' },
+        { id: 'top_content', label: 'Top Movies' },
         { id: 'collection', label: 'Directed Works' },
         { id: 'reviews', label: 'Community Reviews' },
         { id: 'related', label: 'Similar' },

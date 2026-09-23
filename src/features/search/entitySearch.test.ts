@@ -92,6 +92,19 @@ describe('context-aware media search identity', () => {
     expect(dedupeSearchEntities([older, newer])).toHaveLength(2)
   })
 
+  it('uses the explicit album when Apple returns a collaboration credit as another entity', () => {
+    const clean = metadataResultToSearchEntity(metadataResult({
+      id: 'album-10', type: 'album', title: 'GUTS (Clean)', creator: 'Olivia Rodrigo', providerId: '10', explicit: false,
+    }), 0)
+    const explicit = metadataResultToSearchEntity(metadataResult({
+      id: 'album-11', type: 'album', title: 'GUTS (Explicit)', creator: 'Olivia Rodrigo & Robert Smith', providerId: '11', explicit: true,
+    }), 1)
+
+    expect(dedupeSearchEntities([clean, explicit])).toEqual([
+      expect.objectContaining({ id: 'album-11', explicit: true }),
+    ])
+  })
+
   it('maps creators to profession-specific person entities', () => {
     expect(creatorEntityForMetadataType('album').type).toBe('artist')
     expect(creatorEntityForMetadataType('song').type).toBe('artist')

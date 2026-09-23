@@ -29,6 +29,8 @@ import { Card } from '../components/CommonplaceCard/Card'
 import { entryTypes, type Entry as CardEntry, type EntryType } from '../features/entries/model'
 import { searchMetadata, type MetadataResult } from '../metadata'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
+import { handleTabListKeyDown } from '../utils/keyboard'
 import {
   CollectionMediaSkeleton,
   CollectionShelfSkeleton,
@@ -64,6 +66,7 @@ import {
   type PublicAccountIdentity,
   type PostEngagement,
 } from '../services/cloudData'
+import { hasDistinctProfileDisplayName } from '../features/profiles/accountProfile'
 
 // ─── Catalog mode ────────────────────────────────────────────────────────────
 type CatalogMode = 'reviewed' | 'shelf' | 'collections' | 'saved-collections'
@@ -95,6 +98,8 @@ interface UserProfilePageProps {
   disabledCommentEntryIds?: string[]
   onSelectEntry?: (entry: CardEntry) => void
   onOpenMediaProfile?: (entry: CardEntry) => void
+  onOpenEntryCreator?: (entry: CardEntry, creatorName: string) => void
+  onOpenEntryAlbum?: (entry: CardEntry) => void
   onToggleLike?: (id: string) => void
   onToggleSave?: (id: string) => void
   onToggleCommentsDisabled?: (id: string) => void
@@ -102,6 +107,8 @@ interface UserProfilePageProps {
   onUpdateProfile?: (updated: UserProfileState) => void | Promise<void>
   onDeleteEntry?: (id: string) => void
   onEditEntry?: (entry: CardEntry) => void
+  onAddEntry?: () => void
+  addEntryDisabled?: boolean
   categoryFilter: string
   onCategoryFilterChange: (id: string) => void
   isOwnProfile?: boolean
@@ -133,6 +140,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   disabledCommentEntryIds = [],
   onSelectEntry,
   onOpenMediaProfile,
+  onOpenEntryCreator,
+  onOpenEntryAlbum,
   onToggleLike,
   onToggleSave,
   onToggleCommentsDisabled,
@@ -140,6 +149,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onUpdateProfile,
   onDeleteEntry,
   onEditEntry,
+  onAddEntry,
+  addEntryDisabled = false,
   categoryFilter,
   onCategoryFilterChange,
   isOwnProfile = true,
@@ -266,6 +277,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [profileContentLoading, setProfileContentLoading] = useState(true)
   const profileLoadingTimerRef = useRef<number | null>(null)
   const pendingCatalogScrollTopRef = useRef<number | null>(null)
+  const [suppressCatalogMotion, setSuppressCatalogMotion] = useState(true)
 
   useLayoutEffect(() => {
     const scrollTop = pendingCatalogScrollTopRef.current
@@ -335,6 +347,40 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   // ── Follow modal ────────────────────────────────────────────────────────────
   const [activeFollowModal, setActiveFollowModal] = useState<'followers' | 'following' | null>(null)
+  const collectionEditDialogRef = useAccessibleDialog<HTMLElement>({
+    open: collectionComposerOpen && collectionComposerMode === 'edit',
+    onClose: () => setCollectionComposerOpen(false),
+    closeOnEscape: !collectionRemovalTarget,
+  })
+  const collectionAddDialogRef = useAccessibleDialog<HTMLElement>({
+    open: collectionComposerOpen && collectionComposerMode === 'add',
+    onClose: () => setCollectionComposerOpen(false),
+    closeOnEscape: !collectionDuplicateTarget,
+  })
+  const collectionCreateDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: collectionComposerOpen && collectionComposerMode === 'create',
+    onClose: () => setCollectionComposerOpen(false),
+  })
+  const collectionDeleteDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(collectionDeleteTarget),
+    onClose: () => setCollectionDeleteTarget(null),
+  })
+  const inlineRemovalDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(collectionInlineRemovalTarget),
+    onClose: () => setCollectionInlineRemovalTarget(null),
+  })
+  const collectionRemovalDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(collectionRemovalTarget),
+    onClose: () => setCollectionRemovalTarget(null),
+  })
+  const duplicateCollectionDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(collectionDuplicateTarget),
+    onClose: () => setCollectionDuplicateTarget(null),
+  })
+  const followDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(activeFollowModal),
+    onClose: () => setActiveFollowModal(null),
+  })
   const [followSearch, setFollowSearch] = useState('')
   const [profileFollowLists, setProfileFollowLists] = useState<{
     followers: PublicAccountIdentity[]
@@ -434,8 +480,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const songsCount = activeDataset.filter((e) => e.type === 'song').length
   const gamesCount = activeDataset.filter((e) => e.type === 'game').length
   const showsCount = activeDataset.filter((e) => e.type === 'tv').length
-  const savedCount = savedCatalogEntries.filter((e) => catalogSavedEntryIds.includes(e.id)).length
-
   useEffect(() => {
     profileLoadingTimerRef.current = window.setTimeout(() => setProfileContentLoading(false), 360)
     return () => {
@@ -445,6 +489,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   const startProfileContentLoading = (duration = 280) => {
     if (profileLoadingTimerRef.current !== null) window.clearTimeout(profileLoadingTimerRef.current)
+    setSuppressCatalogMotion(true)
     setProfileContentLoading(true)
     profileLoadingTimerRef.current = window.setTimeout(() => setProfileContentLoading(false), duration)
   }
@@ -637,27 +682,38 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     profileGridRef,
     activeEntries.length,
     activeExpandedCardId,
-    `${catalogMode}-${activeFilter}-${activeSearchQuery}-${profileContentLoading}-${activeEntries.map((entry) => entry.id).join('|')}`,
+    `${catalogMode}-${activeFilter}-${activeSearchQuery}-${activeEntries.map((entry) => entry.id).join('|')}`,
     1280,
   )
   const collectionMasonryLayout = useMasonryLayout(
     collectionGridRef,
     isCollectionDetail ? activeEntries.length : 0,
     '',
-    `${selectedCollectionId}-${collectionCategoryFilter}-${profileContentLoading}-${activeEntries.map((entry) => entry.id).join('|')}`,
+    `${selectedCollectionId}-${collectionCategoryFilter}-${activeEntries.map((entry) => entry.id).join('|')}`,
     1080,
   )
-  // ── Filter switching cooldown ───────────────────────────────────────────────
+  // Keep the measured grid hidden until its coordinates are committed. Motion
+  // is enabled two frames after reveal so cards never animate outward from 0,0.
   useEffect(() => {
-    if (activeMasonryLayout) {
-      const timer = setTimeout(() => {
-        setIsFilterSwitching(false)
-        setIsShelfSwitching(false)
-        setIsCollectionSwitching(false)
-      }, 140)
-      return () => clearTimeout(timer)
+    if (!activeMasonryLayout || profileContentLoading) return
+
+    let firstFrame = 0
+    let secondFrame = 0
+    const timer = window.setTimeout(() => {
+      setIsFilterSwitching(false)
+      setIsShelfSwitching(false)
+      setIsCollectionSwitching(false)
+      firstFrame = window.requestAnimationFrame(() => {
+        secondFrame = window.requestAnimationFrame(() => setSuppressCatalogMotion(false))
+      })
+    }, 140)
+
+    return () => {
+      window.clearTimeout(timer)
+      window.cancelAnimationFrame(firstFrame)
+      window.cancelAnimationFrame(secondFrame)
     }
-  }, [activeMasonryLayout, activeFilter, activeSearchQuery, catalogMode])
+  }, [activeMasonryLayout, activeFilter, activeSearchQuery, catalogMode, profileContentLoading])
 
   const showCatalogSkeleton = (catalogMode === 'reviewed' || catalogMode === 'shelf')
     && (profileContentLoading || (activeEntries.length > 0 && (activeIsFilterSwitching || !activeMasonryLayout)))
@@ -910,6 +966,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   const displayName = profileDisplayName
   const handleFormatted = `@${userProfile.handle.replace(/^@/, '')}`
+  const showDisplayName = hasDistinctProfileDisplayName(displayName, userProfile.handle)
 
   if (!isOwnProfile && userProfile.accountStatus === 'deactivated') {
     return (
@@ -1122,7 +1179,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         {/* Identity Details */}
         <div className="profile-page-header">
           <div className="profile-page-names">
-            <h1 className="profile-page-name">{displayName}</h1>
+            {showDisplayName && <h1 className="profile-page-name">{displayName}</h1>}
             <span className="profile-page-handle">{handleFormatted}</span>
           </div>
 
@@ -1208,11 +1265,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           <section className="profile-catalog-section">
             {!isCollectionDetail && (
               <div className="profile-catalog-tabs-wrapper">
-                <div className="profile-catalog-tabs" role="tablist" aria-label="Profile catalog view">
+                <div className="profile-catalog-tabs" role="tablist" aria-label="Profile catalog view" onKeyDown={handleTabListKeyDown}>
                   <button
                     type="button"
                     role="tab"
                     aria-selected={catalogMode === 'reviewed'}
+                    tabIndex={catalogMode === 'reviewed' ? 0 : -1}
                     className={`profile-catalog-tab ${catalogMode === 'reviewed' ? 'active' : ''}`}
                     onClick={() => handleCatalogModeChange('reviewed')}
                   >
@@ -1221,7 +1279,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       <motion.span
                         className="profile-catalog-tab-underline"
                         layoutId={`profile-catalog-tab-${userProfile.handle}`}
-                        transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
                       />
                     )}
                   </button>
@@ -1230,6 +1288,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     type="button"
                     role="tab"
                     aria-selected={catalogMode === 'collections'}
+                    tabIndex={catalogMode === 'collections' ? 0 : -1}
                     className={`profile-catalog-tab ${catalogMode === 'collections' ? 'active' : ''}`}
                     onClick={() => handleCatalogModeChange('collections')}
                   >
@@ -1238,7 +1297,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       <motion.span
                         className="profile-catalog-tab-underline"
                         layoutId={`profile-catalog-tab-${userProfile.handle}`}
-                        transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
                       />
                     )}
                   </button>
@@ -1248,6 +1307,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       type="button"
                       role="tab"
                       aria-selected={catalogMode === 'shelf'}
+                      tabIndex={catalogMode === 'shelf' ? 0 : -1}
                       className={`profile-catalog-tab ${catalogMode === 'shelf' ? 'active' : ''}`}
                       onClick={() => handleCatalogModeChange('shelf')}
                     >
@@ -1265,7 +1325,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         <motion.span
                           className="profile-catalog-tab-underline"
                           layoutId={`profile-catalog-tab-${userProfile.handle}`}
-                          transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                          transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
                         />
                       )}
                     </button>
@@ -1276,6 +1336,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       type="button"
                       role="tab"
                       aria-selected={catalogMode === 'saved-collections'}
+                      tabIndex={catalogMode === 'saved-collections' ? 0 : -1}
                       className={`profile-catalog-tab ${catalogMode === 'saved-collections' ? 'active' : ''}`}
                       onClick={() => handleCatalogModeChange('saved-collections')}
                     >
@@ -1293,7 +1354,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         <motion.span
                           className="profile-catalog-tab-underline"
                           layoutId={`profile-catalog-tab-${userProfile.handle}`}
-                          transition={{ type: 'spring', stiffness: 500, damping: 38 }}
+                          transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
                         />
                       )}
                     </button>
@@ -1304,45 +1365,32 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
             <div className={`profile-catalog-header ${isCollectionDetail ? 'has-collection-detail' : ''}`}>
 
-              {/* Title area — animated crossfade between modes */}
-              <AnimatePresence mode="wait" initial={false}>
+              {/* Render only the active title so outgoing and incoming catalog states never share the header. */}
                 {catalogMode === 'reviewed' ? (
-                  <motion.div
+                  <div
                     key="header-reviewed"
                     className="catalog-header-title-group"
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
                   >
                     <h2 className="profile-catalog-title">
-                      Created Catalog ({filteredProfileEntries.length})
+                      Created Catalog
                     </h2>
-                  </motion.div>
+                  </div>
                 ) : catalogMode === 'shelf' ? (
-                  <motion.div
+                  <div
                     key="header-shelf"
                     className="catalog-header-title-group"
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
                   >
                     <h2 className="profile-catalog-title">
-                      Saved Catalog ({savedCount > 0 ? filteredShelfEntries.length : 0})
+                      Saved Catalog
                     </h2>
                     <span className="catalog-privacy-note">
                       {isOwnProfile ? 'Saved entries are only visible to you unless you share them in Privacy settings' : `Saved activity shared by ${displayName}`}
                     </span>
-                  </motion.div>
+                  </div>
                 ) : (
-                  <motion.div
+                  <div
                     key={selectedCollection ? `header-${selectedCollection.id}` : 'header-collections'}
                     className="catalog-header-title-group"
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
                   >
                     {selectedCollection ? (
                       <div className="collection-detail-heading">
@@ -1478,7 +1526,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     ) : (
                       <>
                         <h2 className="profile-catalog-title">
-                          {isSavedCollectionsMode ? 'Saved Collections' : 'Created Collections'} ({visibleCollections.length})
+                          {isSavedCollectionsMode ? 'Saved Collections' : 'Created Collections'}
                         </h2>
                         <span className="catalog-privacy-note">
                           {isSavedCollectionsMode
@@ -1489,9 +1537,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         </span>
                       </>
                     )}
-                  </motion.div>
+                  </div>
                 )}
-              </AnimatePresence>
 
               <div className="profile-catalog-actions">
                 {isOwnProfile && catalogMode === 'collections' && !selectedCollection && (
@@ -1555,7 +1602,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         <motion.span
                           className="profile-filter-pill"
                           layoutId={`profile-media-filter-${userProfile.handle}-${catalogMode}`}
-                          transition={{ type: 'spring', stiffness: 380, damping: 36 }}
+                          transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
                           aria-hidden="true"
                         />
                       )}
@@ -1672,10 +1719,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               </section>
             )}
 
-            <div key={catalogMode} className="profile-catalog-content">
+            <div
+              key={catalogMode}
+              className="profile-catalog-content"
+              aria-busy={showCatalogSkeleton || showCollectionMediaSkeleton}
+            >
               {showCatalogSkeleton && (
                 <CardSkeletonGrid
-                  count={activeEntries.length > 0 ? Math.min(8, Math.max(4, activeEntries.length)) : 8}
+                  count={8}
                   label={`Loading ${catalogMode === 'shelf' ? 'saved' : 'created'} catalog entries`}
                 />
               )}
@@ -1844,7 +1895,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           left: 0,
                           width: pos.width,
                           transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
-                          transition: 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
+                          transition: (suppressCatalogMotion || activeIsFilterSwitching)
+                            ? 'none'
+                            : 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
                           willChange: 'transform',
                         } : { width: '100%', marginBottom: 14 }}
                       >
@@ -1862,6 +1915,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           }}
                           onExpandOverlay={() => onSelectEntry?.(entry)}
                           onOpenProfile={() => {}}
+                          onOpenMedia={() => onOpenMediaProfile?.(entry)}
+                          onOpenCreator={entry.type === 'game' ? undefined : (creatorName) => onOpenEntryCreator?.(entry, creatorName)}
+                          onOpenAlbum={entry.type === 'song' ? () => onOpenEntryAlbum?.(entry) : undefined}
                           typeIcon={Icon}
                           typeLabel={label}
                           isLiked={engagement?.isLiked ?? likedEntryIds.includes(entry.id)}
@@ -1871,7 +1927,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           onToggleLike={() => onToggleLike?.(entry.id)}
                           onToggleSave={() => onToggleSave?.(entry.id)}
                           commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
-                          onToggleCommentsDisabled={() => onToggleCommentsDisabled?.(entry.id)}
+                          onToggleCommentsDisabled={isOwnProfile && catalogMode === 'reviewed'
+                            ? () => onToggleCommentsDisabled?.(entry.id)
+                            : undefined}
                         />
                       </div>
                     )
@@ -1887,10 +1945,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         {collectionDeleteTarget && (
           <div className="collection-inline-remove-backdrop" onClick={() => setCollectionDeleteTarget(null)}>
             <motion.div
+              ref={collectionDeleteDialogRef}
               className="collection-remove-confirm collection-delete-confirm"
               role="alertdialog"
               aria-modal="true"
               aria-labelledby="collection-delete-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.94, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.94, y: 8 }}
@@ -1914,10 +1974,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         {collectionInlineRemovalTarget && selectedCollection && (
           <div className="collection-inline-remove-backdrop" onClick={() => setCollectionInlineRemovalTarget(null)}>
             <motion.div
+              ref={inlineRemovalDialogRef}
               className="collection-remove-confirm"
               role="alertdialog"
               aria-modal="true"
               aria-labelledby="collection-inline-remove-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.94, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.94, y: 8 }}
@@ -1939,10 +2001,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         {collectionComposerOpen && collectionComposerMode === 'edit' && selectedCollection && (
           <div className="collection-composer-backdrop" onClick={() => setCollectionComposerOpen(false)}>
             <motion.section
+              ref={collectionEditDialogRef}
               className="collection-quick-dialog collection-edit-dialog"
               role="dialog"
               aria-modal="true"
               aria-labelledby="collection-edit-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
@@ -2068,10 +2132,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 {collectionRemovalTarget && (
                   <div className="collection-remove-confirm-backdrop" onClick={() => setCollectionRemovalTarget(null)}>
                     <motion.div
+                      ref={collectionRemovalDialogRef}
                       className="collection-remove-confirm"
                       role="alertdialog"
                       aria-modal="true"
                       aria-labelledby="collection-remove-title"
+                      tabIndex={-1}
                       initial={{ opacity: 0, scale: 0.94 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.94 }}
@@ -2097,10 +2163,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         {collectionComposerOpen && collectionComposerMode === 'add' && selectedCollection && (
           <div className="collection-composer-backdrop" onClick={() => setCollectionComposerOpen(false)}>
             <motion.section
+              ref={collectionAddDialogRef}
               className="collection-quick-dialog collection-add-dialog"
               role="dialog"
               aria-modal="true"
               aria-labelledby="collection-add-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
@@ -2224,10 +2292,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 {collectionDuplicateTarget && (
                   <div className="collection-remove-confirm-backdrop" onClick={() => setCollectionDuplicateTarget(null)}>
                     <motion.div
+                      ref={duplicateCollectionDialogRef}
                       className="collection-remove-confirm collection-duplicate-confirm"
                       role="alertdialog"
                       aria-modal="true"
                       aria-labelledby="collection-add-duplicate-title"
+                      tabIndex={-1}
                       initial={{ opacity: 0, scale: 0.94, y: 8 }}
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.94, y: 8 }}
@@ -2256,10 +2326,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         {collectionComposerOpen && collectionComposerMode === 'create' && (
           <div className="collection-composer-backdrop" onClick={() => setCollectionComposerOpen(false)}>
             <motion.div
+              ref={collectionCreateDialogRef}
               className="collection-composer"
               role="dialog"
               aria-modal="true"
               aria-labelledby="collection-composer-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.96, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 12 }}
@@ -2567,7 +2639,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         {activeFollowModal && (
           <div className="modal-backdrop" onClick={() => setActiveFollowModal(null)}>
             <motion.div
+              ref={followDialogRef}
               className="follow-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="follow-modal-title"
+              tabIndex={-1}
               initial={{ opacity: 0, scale: 0.96, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, y: 10 }}
@@ -2576,9 +2653,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             >
               {/* Modal header with tab switcher */}
               <div className="follow-modal-header">
-                <div className="follow-modal-tabs">
+                <div id="follow-modal-title" className="follow-modal-tabs" role="tablist" aria-label="Profile connections" onKeyDown={handleTabListKeyDown}>
                   <button
                     type="button"
+                    role="tab"
+                    aria-selected={activeFollowModal === 'followers'}
+                    tabIndex={activeFollowModal === 'followers' ? 0 : -1}
                     className={`follow-modal-tab ${activeFollowModal === 'followers' ? 'active' : ''}`}
                     onClick={() => { setActiveFollowModal('followers'); setFollowSearch('') }}
                   >
@@ -2587,6 +2667,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                   </button>
                   <button
                     type="button"
+                    role="tab"
+                    aria-selected={activeFollowModal === 'following'}
+                    tabIndex={activeFollowModal === 'following' ? 0 : -1}
                     className={`follow-modal-tab ${activeFollowModal === 'following' ? 'active' : ''}`}
                     onClick={() => { setActiveFollowModal('following'); setFollowSearch('') }}
                   >
@@ -2769,6 +2852,28 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         }}
       />
       <AuthToast message={profileMediaToast} onClose={() => setProfileMediaToast(null)} />
+      <AnimatePresence>
+        {isOwnProfile && catalogMode === 'reviewed' && !isCollectionDetail && onAddEntry && (
+          <motion.div
+            className="fab-stack"
+            initial={{ opacity: 0, scale: 0.92 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.92 }}
+            transition={{ duration: 0.14, ease: 'easeOut' }}
+          >
+            <button
+              className="fab"
+              type="button"
+              aria-label="Add new entry"
+              title="Add new entry"
+              disabled={addEntryDisabled}
+              onClick={onAddEntry}
+            >
+              <Plus aria-hidden="true" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 }

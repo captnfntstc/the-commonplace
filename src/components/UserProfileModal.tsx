@@ -4,6 +4,7 @@ import { User, X, BookOpen, Calendar, Award } from 'lucide-react'
 import type { Entry as CardEntry } from '../features/entries/model'
 import { StarRating } from './CommonplaceCard/CardHeader'
 import { getEntryTypeIcon } from '../utils/mediaIcons'
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 
 interface UserProfileModalProps {
   isOpen: boolean
@@ -18,6 +19,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   entries,
   onSelectEntry,
 }) => {
+  const dialogRef = useAccessibleDialog<HTMLDivElement>({ open: isOpen, onClose })
+
   if (!isOpen) return null
 
   const booksCount = entries.filter((e) => e.type === 'book').length
@@ -35,7 +38,12 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <motion.div
+        ref={dialogRef}
         className="user-profile-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="user-profile-modal-title"
+        tabIndex={-1}
         initial={{ opacity: 0, scale: 0.94, y: 15 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.94, y: 15 }}
@@ -61,7 +69,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
           <div className="profile-main-info">
             <div className="profile-name-row">
-              <h2 className="profile-display-name">jimboii</h2>
+              <h2 id="user-profile-modal-title" className="profile-display-name">jimboii</h2>
               <span className="profile-badge">
                 <Award aria-hidden="true" />
                 Catalog Collector
@@ -125,7 +133,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 const Icon = getEntryTypeIcon(entry.type)
 
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={entry.id}
                     className="profile-review-card"
                     onClick={() => {
@@ -166,7 +175,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                         </p>
                       )}
                     </div>
-                  </div>
+                  </button>
                 )
               })}
             </div>

@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react'
 import { User, Upload, Check, Crop, ImageIcon, Move, X } from 'lucide-react'
+import { useAccessibleDialog } from '../../hooks/useAccessibleDialog'
 
 interface AvatarUploaderProps {
   avatarUrl: string
@@ -28,6 +29,7 @@ export const AvatarCropperDialog: React.FC<AvatarCropperDialogProps> = ({
   const [cropX, setCropX] = useState(0)
   const [cropY, setCropY] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+  const dialogRef = useAccessibleDialog<HTMLElement>({ open: true, onClose: onCancel })
   const dragStartRef = useRef<{
     pointerId: number
     clientX: number
@@ -106,10 +108,12 @@ export const AvatarCropperDialog: React.FC<AvatarCropperDialogProps> = ({
   return (
     <div className="avatar-cropper-backdrop" onClick={onCancel}>
       <section
+        ref={dialogRef}
         className="avatar-cropper-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="avatar-cropper-title"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <header className="avatar-cropper-header">
@@ -188,6 +192,7 @@ export const CoverCropperDialog: React.FC<CoverCropperDialogProps> = ({
   const [cropX, setCropX] = useState(0)
   const [cropY, setCropY] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+  const dialogRef = useAccessibleDialog<HTMLElement>({ open: true, onClose: onCancel })
   const dragStartRef = useRef<{
     pointerId: number
     clientX: number
@@ -287,10 +292,12 @@ export const CoverCropperDialog: React.FC<CoverCropperDialogProps> = ({
   return (
     <div className="avatar-cropper-backdrop" onClick={onCancel}>
       <section
+        ref={dialogRef}
         className="avatar-cropper-dialog cover-cropper-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="cover-cropper-title"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
         <header className="avatar-cropper-header">

@@ -13,12 +13,13 @@ import { AdaptiveGameArtwork } from '../GameArtwork/AdaptiveGameArtwork'
 import { getEntryTypeIcon } from '../../utils/mediaIcons'
 import { searchPublicUsers } from '../../services/cloudData'
 import { isLegacySeedHandle } from '../../utils/legacySeedCleanup'
+import { handleTabListKeyDown } from '../../utils/keyboard'
 
 type SearchMode = 'media' | 'users'
 
 const LEGACY_RECENT_SEARCHES_KEY = 'the_commonplace_recent_searches_v2'
 const RECENT_SEARCHES_KEYS: Record<SearchMode, string> = {
-  media: 'the_commonplace_recent_media_searches_v3',
+  media: 'the_commonplace_recent_media_searches_v4',
   users: 'the_commonplace_recent_user_searches_v3',
 }
 const MAX_RECENT_SEARCHES = 8
@@ -32,6 +33,7 @@ export type RecentSearchItem = {
   category?: SearchCategory
   type: SearchResultType | 'user' | 'query'
   handle?: string
+  explicit?: boolean
 }
 
 function belongsToSearchMode(item: RecentSearchItem, mode: SearchMode) {
@@ -370,6 +372,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
           image: item.image,
           category: item.category,
           type: item.type,
+          explicit: item.explicit,
         }
 
     const filtered = recentSearches.filter((r) => r.id !== newItem.id)
@@ -422,6 +425,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
         type: recent.type as SearchResultType,
         subtitle: recent.subtitle || '',
         badge: recent.badge,
+        explicit: recent.explicit,
       })
     }
   }
@@ -657,11 +661,12 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
 
       {open && (
         <div className="alt-search-dropdown">
-          <div className="alt-search-tabs" role="tablist" aria-label="Search mode">
+          <div className="alt-search-tabs" role="tablist" aria-label="Search mode" onKeyDown={handleTabListKeyDown}>
             <button
               type="button"
               role="tab"
               aria-selected={mode === 'media'}
+              tabIndex={mode === 'media' ? 0 : -1}
               className={`alt-search-tab ${mode === 'media' ? 'active' : ''}`}
               onClick={() => {
                 setActiveIndex(-1)
@@ -674,6 +679,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
               type="button"
               role="tab"
               aria-selected={mode === 'users'}
+              tabIndex={mode === 'users' ? 0 : -1}
               className={`alt-search-tab ${mode === 'users' ? 'active' : ''}`}
               onClick={() => {
                 setActiveIndex(-1)
@@ -757,7 +763,12 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
                             />
                           )}
                           <span className="alt-search-result-copy">
-                            <span className="alt-search-result-title">{item.name}</span>
+                            <span className="alt-search-result-title">
+                              <span>{item.name}</span>
+                              {item.explicit && (item.type === 'song' || item.type === 'album') && (
+                                <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>
+                              )}
+                            </span>
                             {item.subtitle && !PORTRAIT_TYPES.has(item.type as SearchResultType) && (
                               <span className="alt-search-result-sub">{item.subtitle}</span>
                             )}

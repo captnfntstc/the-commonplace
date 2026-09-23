@@ -25,7 +25,7 @@ export function isCostumeOnlyGameContent(title: string) {
   return costumeContentPattern.test(title)
 }
 
-const patchUpdatePattern = /\s*[:\-\–\—]?\s*\b(patch|update|hotfix|build|ver\.?|version)\s*#?\d+(\.\d+)*\b.*/i
+const patchUpdatePattern = /\s*[:–—-]?\s*\b(patch|update|hotfix|build|ver\.?|version)\s*#?\d+(\.\d+)*\b.*/i
 
 export function isPatchOrUpdateTitle(title: string): boolean {
   return patchUpdatePattern.test(title)
@@ -48,7 +48,7 @@ export function extractBaseGameTitle(title: string): string | undefined {
       return baseCandidate
     }
   }
-  const hyphenParts = clean.split(/\s+[\-\–\—]\s+/)
+  const hyphenParts = clean.split(/\s+[–—-]\s+/)
   if (hyphenParts.length > 1) {
     const baseCandidate = hyphenParts[0].trim()
     if (baseCandidate.length >= 3 && baseCandidate.toLowerCase() !== clean.toLowerCase()) {
@@ -118,7 +118,7 @@ export function enrichSeriesRelatedContent(
     if (seenNames.has(normTitle)) return
     seenNames.add(normTitle)
 
-    let kind: 'base_game' | 'expansion' | 'dlc' | 'sequel' = 'sequel'
+    let kind: 'base_game' | 'expansion' | 'dlc' | 'sequel'
     const isSameGen = isSameGenerationGame(result.title, targetBaseTitle)
 
     if (normTitle === normTargetBase) {
@@ -167,4 +167,3 @@ export function normalizeGameMetadata(entity: UniversalMediaEntity): GameMetadat
 export function primaryGameCreator(metadata: GameMetadata) {
   return metadata.developers?.[0] || metadata.publishers?.[0]
 }
-

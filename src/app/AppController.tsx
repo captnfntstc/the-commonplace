@@ -8,15 +8,18 @@ import {
   Plus,
   Settings,
   Activity,
+  CircleCheck,
   CircleHelp,
   LogOut,
   CircleUserRound,
   Home,
   MailCheck,
   Menu,
+  TriangleAlert,
+  WifiOff,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import '../App.css'
 import {
@@ -26,25 +29,19 @@ import {
   albumEntityMap,
   scoreGameTitleMatch,
 } from '../metadata'
-import { useCardExpansion } from '../context/ExpansionContext'
+import { useCardExpansion } from '../hooks/useCardExpansion'
 import { Card } from '../components/CommonplaceCard/Card'
-import { CardOverlayModal } from '../components/CommonplaceCard/CardOverlayModal'
+import { EntryReadingPage } from '../components/CommonplaceCard/CardOverlayModal'
 import { CardSkeletonGrid } from '../components/CommonplaceCard/CardSkeleton'
-import { UserProfilePage } from '../pages/UserProfilePage'
-import { SettingsPage } from '../pages/SettingsPage'
-import { ActivityPage } from '../pages/ActivityPage'
-import { HelpSupportPage } from '../pages/HelpSupportPage'
+import { PageLoadingSkeleton } from '../components/PageLoadingSkeleton'
+import { LogoutConfirmModal } from '../components/auth/LogoutConfirmModal'
 import { LoginPage } from '../pages/LoginPage'
 import { RegisterPage } from '../pages/RegisterPage'
-import { EmailVerificationPage } from '../pages/EmailVerificationPage'
-import { ResetPasswordPage } from '../pages/ResetPasswordPage'
-import { NotFoundPage } from '../pages/NotFoundPage'
-import { LogoutConfirmModal } from '../components/auth/LogoutConfirmModal'
 import { useAuth } from '../context/AuthContext'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 import { NotificationBell } from '../components/Notifications/NotificationPanel'
 import { MOCK_ENTITY_PROFILES } from '../data/entityProfiles'
-import { UniversalMediaProfilePage } from '../pages/UniversalMediaProfilePage'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../data/universalMediaEntities'
 import type { MediaEntityType, UniversalMediaEntity } from '../types/mediaEntity'
 import { resolveArtworkUrl } from '../utils/artwork'
@@ -62,6 +59,7 @@ import {
   pendingSignupProfileForUser,
   profileBelongsToAuthUser,
   profileFromAuthUser,
+  hasDistinctProfileDisplayName,
   shouldResetLegacyDemoProfile,
   type AuthProfileSource,
 } from '../features/profiles/accountProfile'
@@ -80,7 +78,11 @@ import {
   updatePendingSavedEntryChanges,
   type PendingSavedEntryChanges,
 } from '../features/saves/persistence'
-import { EntryComposer } from '../features/entries/composer/EntryComposer'
+import {
+  deleteEntryDraft,
+  loadEntryDrafts,
+  saveEntryDraft,
+} from '../features/entries/draftStorage'
 import {
   dedupeSearchEntities,
   getSearchEntityScore,
@@ -102,6 +104,10 @@ import {
   metadataResultToUniversalEntity,
   routeSegment,
 } from '../features/entities/routing'
+import {
+  createAlbumEntityFromSongEntry,
+  createCreatorEntityFromEntry,
+} from '../features/entities/entryProfiles'
 import {
   clearPendingEntrySync,
   emptyDraft,
@@ -128,20 +134,12 @@ import {
   loadPublicUserByHandle,
   loadOrMigrateUserCollections,
   loadOrMigrateUserData,
-  deleteCloudNotifications,
   saveUserCollections,
-  saveFollowRequest,
-  saveFollowRelationship,
-  savePostCommenting,
-  setCloudSavedEntry,
-  setCloudNotificationsRead,
   saveUserCloudState,
   saveUserEntries,
   saveUserProfile,
   subscribePostEngagements,
   subscribeUserNotifications,
-  togglePostLike,
-  uploadUserImage,
   type PostEngagement,
   type PublicUserData,
   type UserCloudSnapshot,
@@ -162,6 +160,35 @@ import {
   removeLegacySeedEntryIds,
   removeLegacySeedHandles,
 } from '../utils/legacySeedCleanup'
+import {
+  flushOfflineActions,
+  getPendingOfflineActionCount,
+  OFFLINE_QUEUE_EVENT,
+  submitOfflineAction,
+} from '../services/offlineSync'
+
+const UserProfilePage = lazy(() => import('../pages/UserProfilePage').then((module) => ({ default: module.UserProfilePage })))
+const SettingsPage = lazy(() => import('../pages/SettingsPage').then((module) => ({ default: module.SettingsPage })))
+const ActivityPage = lazy(() => import('../pages/ActivityPage').then((module) => ({ default: module.ActivityPage })))
+const HelpSupportPage = lazy(() => import('../pages/HelpSupportPage').then((module) => ({ default: module.HelpSupportPage })))
+const EmailVerificationPage = lazy(() => import('../pages/EmailVerificationPage').then((module) => ({ default: module.EmailVerificationPage })))
+const ResetPasswordPage = lazy(() => import('../pages/ResetPasswordPage').then((module) => ({ default: module.ResetPasswordPage })))
+const NotFoundPage = lazy(() => import('../pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })))
+const UniversalMediaProfilePage = lazy(() => import('../pages/UniversalMediaProfilePage').then((module) => ({ default: module.UniversalMediaProfilePage })))
+const loadEntryComposerModule = () => import('../features/entries/composer/EntryComposer')
+const EntryComposer = lazy(() => loadEntryComposerModule().then((module) => ({ default: module.EntryComposer })))
+
+function ComposerLoadingFallback() {
+  return (
+    <div className="modal-backdrop composer-loading-backdrop" role="status" aria-label="Loading entry composer">
+      <div className="composer-loading-card" aria-hidden="true">
+        <span className="skeleton-box is-title" />
+        <span className="skeleton-box is-line" />
+        <span className="skeleton-box is-line is-short" />
+      </div>
+    </div>
+  )
+}
 
 const SEARCH_INITIAL_RESULT_LIMIT = 6
 const SEARCH_RESULTS_PER_PAGE = 6
@@ -182,6 +209,31 @@ const FEED_ENTRY_TYPE_BY_ENTITY: Partial<Record<MediaEntityType, EntryType>> = {
   song: 'song',
   tv: 'tv',
 }
+
+type ActiveView = 'feed' | 'profile' | 'activity' | 'settings' | 'help' | 'entity' | 'reading' | 'login' | 'register' | 'not-found'
+
+function initialViewFromPath(pathname: string): ActiveView {
+  const section = pathname.split('/').filter(Boolean)[0]?.toLowerCase() || ''
+  if (!section) return 'feed'
+  if (section === 'entries') return 'reading'
+  if (section === 'users' || section === 'profile') return 'profile'
+  if (section === 'activity' || section === 'settings' || section === 'help' || section === 'login' || section === 'register') {
+    return section
+  }
+  if (entityTypeByRouteSegment[section]) return 'entity'
+  return 'not-found'
+}
+
+function entrySyncErrorMessage(error: unknown) {
+  const message = (error as Error)?.message?.replace(/^Firebase:\s*/i, '').trim()
+  return `Something went wrong. Error: ${message || 'Unable to publish the post.'}`
+}
+
+function isConnectionError(error: unknown) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return true
+  return /network|offline|failed to fetch|unavailable/i.test((error as Error)?.message || '')
+}
+
 const PROFILE_STORAGE_KEY = 'the-commonplace.user-profile.v1'
 const pendingSavedEntryWrites = new Map<string, Promise<void>>()
 
@@ -230,8 +282,16 @@ function queueCloudSavedEntryChange(userId: string, entryId: string, saved: bool
   const previous = pendingSavedEntryWrites.get(queueKey) || Promise.resolve()
   const current = previous
     .catch(() => undefined)
-    .then(() => setCloudSavedEntry(userId, entryId, saved))
-    .then(() => clearPendingSavedEntryChange(userId, entryId, saved))
+    .then(() => submitOfflineAction({
+      type: 'saved-entry',
+      userId,
+      entryId,
+      saved,
+      dedupeKey: `saved-entry:${entryId}`,
+    }))
+    .then((result) => {
+      if (!result.queued) clearPendingSavedEntryChange(userId, entryId, saved)
+    })
     .catch((error) => {
       console.error('Unable to sync saved entry to Firebase; it will retry next time.', error)
     })
@@ -364,6 +424,13 @@ function collectionItemFromEntity(
 export default function AppController() {
   const location = useLocation()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadEntryComposerModule()
+    }, 2500)
+    return () => window.clearTimeout(timer)
+  }, [])
   const [entries, setEntries] = useState<Entry[]>(loadEntries)
   const entriesRef = useRef(entries)
   const entriesRevisionRef = useRef(0)
@@ -408,7 +475,7 @@ export default function AppController() {
     typeFilter,
     homeDataStatus === 'ready',
   )
-  const [activeView, setActiveView] = useState<'feed' | 'profile' | 'activity' | 'settings' | 'help' | 'entity' | 'login' | 'register' | 'not-found'>('feed')
+  const [activeView, setActiveView] = useState<ActiveView>(() => initialViewFromPath(location.pathname))
   const [selectedProfileHandle, setSelectedProfileHandle] = useState<string | null>(null)
   const [selectedProfileCollectionId, setSelectedProfileCollectionId] = useState<string | null>(null)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
@@ -509,6 +576,13 @@ export default function AppController() {
     setPersistedEntityCache((current) => ({ ...current, [entityId]: entity }))
     void cacheProfileEntity(entity)
     handleOpenEntity(entityId, entityType)
+  }
+
+  const openCachedEntity = (entity: UniversalMediaEntity) => {
+    searchEntityCacheRef.current.set(entity.id, entity)
+    setPersistedEntityCache((current) => ({ ...current, [entity.id]: entity }))
+    void cacheProfileEntity(entity)
+    handleOpenEntity(entity.id, entity.type)
   }
 
   const handleOpenSearchEntity = (entity: HeaderSearchEntity) => {
@@ -689,21 +763,21 @@ export default function AppController() {
   }, [cloudUserId, selectedProfileHandle, userProfile.handle])
 
   const persistUserProfile = async (updated: UserProfileState) => {
-    let nextProfile = updated
-    if (cloudUserId && canUseCloudData(cloudUserId)) {
-      const [avatarUrl, coverUrl] = await Promise.all([
-        uploadUserImage(cloudUserId, 'avatar', updated.avatarUrl),
-        uploadUserImage(cloudUserId, 'cover', updated.coverUrl),
-      ])
-      nextProfile = await saveUserProfile(cloudUserId, { ...updated, avatarUrl, coverUrl })
-    }
-    setUserProfile(nextProfile)
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(nextProfile))
+    setUserProfile(updated)
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(updated))
+    if (!cloudUserId || !canUseCloudData(cloudUserId)) return
+    await submitOfflineAction({
+      type: 'profile',
+      userId: cloudUserId,
+      profile: updated,
+      dedupeKey: 'profile',
+    })
   }
 
   const userProfileName = userProfile.showFullName
     ? `${userProfile.firstName} ${userProfile.lastName}`.trim()
     : userProfile.firstName
+  const showUserProfileName = hasDistinctProfileDisplayName(userProfileName, userProfile.handle)
 
   const handleOpenUserProfile = (handle?: string) => {
     const cleanHandle = (handle || userProfile.handle).replace(/^@/, '')
@@ -748,10 +822,15 @@ export default function AppController() {
     if (target) sendFeedSignal('like', target, nextLiked)
 
     if (cloudUserId) {
-      void togglePostLike(id, cloudUserId, nextLiked, {
-        name: userProfileName,
-        handle: userProfile.handle,
-      }, target?.title || 'Untitled entry').catch((error) => {
+      void submitOfflineAction({
+        type: 'post-like',
+        userId: cloudUserId,
+        postId: id,
+        liked: nextLiked,
+        actor: { name: userProfileName, handle: userProfile.handle },
+        entryTitle: target?.title || 'Untitled entry',
+        dedupeKey: `post-like:${id}`,
+      }).catch((error) => {
         console.error('Unable to sync post like to Firebase.', error)
         setPostEngagements((previous) => ({
           ...previous,
@@ -785,7 +864,13 @@ export default function AppController() {
       localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(next))
       persistCloudState({ disabledCommentEntryIds: next })
       if (cloudUserId) {
-        void savePostCommenting(cloudUserId, id, next.includes(id)).catch((error) => {
+          void submitOfflineAction({
+            type: 'post-commenting',
+            userId: cloudUserId,
+            postId: id,
+            commentsDisabled: next.includes(id),
+            dedupeKey: `post-commenting:${id}`,
+          }).catch((error) => {
           console.error('Unable to sync comment settings to Firebase.', error)
         })
       }
@@ -797,11 +882,19 @@ export default function AppController() {
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null)
   const [composerInitialDraft, setComposerInitialDraft] = useState<EntryDraft | null>(null)
   const [composerInitialLyrics, setComposerInitialLyrics] = useState<string>('')
+  const draftStorageOwnerId = cloudUserId || 'local'
+  const [savedEntryDrafts, setSavedEntryDrafts] = useState(() => loadEntryDrafts(draftStorageOwnerId))
+  const [activeComposerDraftId, setActiveComposerDraftId] = useState<string | null>(null)
   const [verificationPromptOpen, setVerificationPromptOpen] = useState(false)
   const [verificationBannerDismissed, setVerificationBannerDismissed] = useState(false)
   const [bannerSendingEmail, setBannerSendingEmail] = useState(false)
   const [bannerEmailNotice, setBannerEmailNotice] = useState('')
   const verificationCooldownLabel = `${Math.floor(verificationEmailCooldownSeconds / 60)}:${String(verificationEmailCooldownSeconds % 60).padStart(2, '0')}`
+
+  useEffect(() => {
+    setSavedEntryDrafts(loadEntryDrafts(draftStorageOwnerId))
+    setActiveComposerDraftId(null)
+  }, [draftStorageOwnerId])
 
   const handleBannerVerifyNow = async () => {
     if (verificationEmailCooldownSeconds > 0 || bannerSendingEmail) return
@@ -819,6 +912,13 @@ export default function AppController() {
     }
   }
   const [overlayEntry, setOverlayEntry] = useState<Entry | null>(null)
+  const [selectedReadingEntryId, setSelectedReadingEntryId] = useState<string | null>(() => {
+    const [section, rawId] = location.pathname.split('/').filter(Boolean).map(decodeRouteSegment)
+    return section === 'entries' && rawId ? rawId : null
+  })
+  const [readingEntryStatus, setReadingEntryStatus] = useState<'idle' | 'loading' | 'ready' | 'not-found'>(() =>
+    location.pathname.split('/').filter(Boolean)[0]?.toLowerCase() === 'entries' ? 'loading' : 'idle',
+  )
   const [overlayNotificationFocus, setOverlayNotificationFocus] = useState<{
     postId: string
     commentId?: string
@@ -830,7 +930,12 @@ export default function AppController() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [appFeedback, setAppFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
+  const mobileMenuDialogRef = useAccessibleDialog<HTMLElement>({
+    open: mobileMenuOpen,
+    onClose: () => setMobileMenuOpen(false),
+  })
+  const [appFeedback, setAppFeedback] = useState<{ kind: 'success' | 'error' | 'offline'; message: string } | null>(null)
+  const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
   const [showScrollToTop, setShowScrollToTop] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [logoutLoading, setLogoutLoading] = useState(false)
@@ -856,6 +961,10 @@ export default function AppController() {
     notificationOpenRequestRef.current = ''
     setOverlayNotificationFocus(null)
     setOverlayEntry(entry)
+    setSelectedReadingEntryId(entry.id)
+    setReadingEntryStatus('ready')
+    setActiveView('reading')
+    navigate(`/entries/${routeSegment(entry.id)}`)
     if (currentUser?.uid && shouldRecordEntryOpen(currentUser.uid, entry.id)) {
       sendFeedSignal('open', entry)
     }
@@ -863,8 +972,8 @@ export default function AppController() {
 
   const closeEntryOverlay = () => {
     notificationOpenRequestRef.current = ''
-    setOverlayEntry(null)
     setOverlayNotificationFocus(null)
+    handlePageBack()
   }
 
   useEffect(() => {
@@ -898,19 +1007,63 @@ export default function AppController() {
   }, [location.pathname])
 
   useEffect(() => {
-    if (!mobileMenuOpen) return
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = previousOverflow
-    }
-  }, [mobileMenuOpen])
-
-  useEffect(() => {
     if (!appFeedback) return
     const timeout = window.setTimeout(() => setAppFeedback(null), 3500)
     return () => window.clearTimeout(timeout)
   }, [appFeedback])
+
+  useEffect(() => {
+    const showOfflineNotice = () => {
+      setIsOnline(false)
+      setAppFeedback({
+        kind: 'offline',
+        message: 'No internet connection. Changes will be saved once the internet returns.',
+      })
+    }
+    const syncAfterReconnect = async (announce: boolean) => {
+      setIsOnline(true)
+      if (!cloudUserId) {
+        if (announce) setAppFeedback({ kind: 'success', message: 'Internet connection restored.' })
+        return
+      }
+      const pendingCount = getPendingOfflineActionCount(cloudUserId)
+      const pendingSaves = loadPendingSavedEntryChanges(cloudUserId)
+      const totalPending = pendingCount + Object.keys(pendingSaves).length
+      if (announce) {
+        setAppFeedback({
+          kind: 'success',
+          message: totalPending > 0 ? 'Back online. Saving your changes…' : 'Internet connection restored.',
+        })
+      }
+      Object.entries(pendingSaves).forEach(([entryId, saved]) => {
+        void queueCloudSavedEntryChange(cloudUserId, entryId, saved)
+      })
+      const result = await flushOfflineActions(cloudUserId)
+      if (result.completed > 0 && result.remaining === 0) {
+        setAppFeedback({ kind: 'success', message: 'You’re back online. All queued changes were saved.' })
+      } else if (result.remaining > 0 && announce) {
+        setAppFeedback({
+          kind: 'offline',
+          message: 'Connection is unstable. Your changes are still saved and will retry automatically.',
+        })
+      }
+    }
+
+    const handleOnline = () => { void syncAfterReconnect(true) }
+    const handleQueuedChange = () => {
+      if (!navigator.onLine) showOfflineNotice()
+    }
+    window.addEventListener('offline', showOfflineNotice)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener(OFFLINE_QUEUE_EVENT, handleQueuedChange)
+    if (!navigator.onLine) showOfflineNotice()
+    else if (cloudUserId && getPendingOfflineActionCount(cloudUserId) > 0) void syncAfterReconnect(false)
+    return () => {
+      window.removeEventListener('offline', showOfflineNotice)
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener(OFFLINE_QUEUE_EVENT, handleQueuedChange)
+    }
+  }, [cloudUserId])
 
   useEffect(() => {
     if (!selectedEntityId || UNIVERSAL_MEDIA_ENTITIES[selectedEntityId] || searchEntityCacheRef.current.has(selectedEntityId)) {
@@ -960,6 +1113,7 @@ export default function AppController() {
         || section === 'settings'
         || section === 'activity'
         || section === 'help'
+        || section === 'entries'
         || section === 'users'
         || Boolean(entityTypeByRouteSegment[section])
       ) {
@@ -976,6 +1130,12 @@ export default function AppController() {
     if (isAuthRoute) {
       navigate('/', { replace: true })
       return
+    }
+
+    if (section !== 'entries') {
+      setSelectedReadingEntryId(null)
+      setReadingEntryStatus('idle')
+      setOverlayEntry(null)
     }
 
     if (!section) {
@@ -1015,6 +1175,19 @@ export default function AppController() {
       return
     }
 
+    if (section === 'entries' && rawId) {
+      setActiveView('reading')
+      setSelectedReadingEntryId(rawId)
+      if (overlayEntry?.id !== rawId) {
+        setOverlayEntry(null)
+        setReadingEntryStatus('loading')
+      }
+      setSelectedProfileHandle(null)
+      setSelectedEntityId(null)
+      setSelectedEntityType(null)
+      return
+    }
+
     if (section === 'activity' || section === 'help') {
       setActiveView(section)
       setSelectedProfileHandle(null)
@@ -1046,6 +1219,10 @@ export default function AppController() {
     setSelectedProfileHandle(null)
     setSelectedEntityId(null)
     setSelectedEntityType(null)
+  // Entry data changes must not replay routing for the previous URL. The URL is
+  // the navigation source of truth; including overlayEntry here caused a brief
+  // return to Home before React Router committed the new reading-page path.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, currentUser, location.pathname, navigate, userProfile.handle])
 
   useEffect(() => {
@@ -1161,7 +1338,7 @@ export default function AppController() {
       }
 
       typesToSearch.forEach((type) => {
-        searchMetadata(type, normalizedQuery, abortController.signal)
+        searchMetadata(type, normalizedQuery, abortController.signal, { priority: 'high' })
           .then((results) => {
             if (!abortController.signal.aborted) {
               setHeaderMediaResults((current) => [...current, ...results])
@@ -1273,11 +1450,15 @@ export default function AppController() {
       localStorage.setItem('the-commonplace.following-users', JSON.stringify(next))
       persistCloudState({ followedUserHandles: next })
       if (cloudUserId) {
-        void saveFollowRelationship(cloudUserId, clean, next.includes(clean), {
-          name: userProfileName,
-          handle: userProfile.handle,
+        void submitOfflineAction({
+          type: 'follow',
+          userId: cloudUserId,
+          targetHandle: clean,
+          following: next.includes(clean),
+          actor: { name: userProfileName, handle: userProfile.handle },
+          dedupeKey: `follow:${clean}`,
         })
-          .then(() => personalizedFeed.refresh())
+          .then(() => undefined)
           .catch((error) => {
             console.error('Unable to sync follow relationship to Firebase.', error)
             setAppFeedback({ kind: 'error', message: 'The follow change could not be saved. Please try again.' })
@@ -1298,7 +1479,13 @@ export default function AppController() {
       localStorage.setItem('the-commonplace.follow-requests', JSON.stringify(next))
       persistCloudState({ followRequestedHandles: next })
       if (cloudUserId) {
-        void saveFollowRequest(cloudUserId, clean, next.includes(clean)).catch((error) => {
+        void submitOfflineAction({
+          type: 'follow-request',
+          userId: cloudUserId,
+          targetHandle: clean,
+          requested: next.includes(clean),
+          dedupeKey: `follow-request:${clean}`,
+        }).catch((error) => {
           console.error('Unable to sync follow request to Firebase.', error)
         })
       }
@@ -1529,7 +1716,12 @@ export default function AppController() {
         if (entriesNeedSync) {
           const pending = pendingEntrySync || markEntriesPendingSync(cloudUserId, cleanState.disabledCommentEntryIds)
           void saveUserEntries(cloudUserId, cleanEntries, cleanState.disabledCommentEntryIds)
-            .then(() => clearPendingEntrySync(cloudUserId, pending.token))
+            .then(() => {
+              const completedLatestSync = clearPendingEntrySync(cloudUserId, pending.token)
+              if (completedLatestSync && pending.pendingPostIds.length > 0) {
+                setAppFeedback({ kind: 'success', message: 'Posted successfully.' })
+              }
+            })
             .catch((error) => console.error('Unable to recover local posts in Firebase; they will retry next time.', error))
         }
 
@@ -1567,7 +1759,12 @@ export default function AppController() {
 
   const persistCloudState = (patch: Parameters<typeof saveUserCloudState>[1]) => {
     if (!cloudUserId) return
-    void saveUserCloudState(cloudUserId, patch).catch((error) => {
+    void submitOfflineAction({
+      type: 'cloud-state',
+      userId: cloudUserId,
+      patch,
+      dedupeKey: `cloud-state:${Object.keys(patch).sort().join(',')}`,
+    }).catch((error) => {
       console.error('Unable to sync account state to Firebase.', error)
     })
   }
@@ -1579,7 +1776,12 @@ export default function AppController() {
       persistCloudState({ notifications: next })
       if (cloudUserId) {
         const cloudIds = prev.filter((notification) => notification.type !== 'birthday').map(({ id }) => id)
-        void setCloudNotificationsRead(cloudUserId, cloudIds)
+        void submitOfflineAction({
+          type: 'notifications-read',
+          userId: cloudUserId,
+          notificationIds: cloudIds,
+          dedupeKey: `notifications-read:${cloudIds.sort().join(',')}`,
+        })
           .catch((error) => console.error('Unable to mark cloud notifications as read.', error))
       }
       return next
@@ -1597,7 +1799,12 @@ export default function AppController() {
         .filter((notification) => idSet.has(notification.id) && notification.type !== 'birthday')
         .map(({ id }) => id)
       if (cloudUserId && cloudIds.length > 0) {
-        void deleteCloudNotifications(cloudUserId, cloudIds)
+        void submitOfflineAction({
+          type: 'notifications-delete',
+          userId: cloudUserId,
+          notificationIds: cloudIds,
+          dedupeKey: `notifications-delete:${cloudIds.sort().join(',')}`,
+        })
           .catch((error) => console.error('Unable to dismiss cloud notification.', error))
       }
       return next
@@ -1612,7 +1819,12 @@ export default function AppController() {
     localStorage.removeItem('the-commonplace.notifications')
     persistCloudState({ notifications: [] })
     if (cloudUserId) {
-      void deleteCloudNotifications(cloudUserId, cloudIds)
+      void submitOfflineAction({
+        type: 'notifications-delete',
+        userId: cloudUserId,
+        notificationIds: cloudIds,
+        dedupeKey: `notifications-delete:${cloudIds.sort().join(',')}`,
+      })
         .catch((error) => console.error('Unable to clear cloud notifications.', error))
     }
   }
@@ -1646,6 +1858,50 @@ export default function AppController() {
     return [...currentRemoteEntries, ...missingOwnEntries]
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
   }, [cloudUserId, ownProfileEntries, personalizedFeed.enabled, personalizedFeed.items, publicFeedEntries, typeFilter])
+
+  useEffect(() => {
+    if (activeView !== 'reading' || !selectedReadingEntryId) return
+    if (overlayEntry?.id === selectedReadingEntryId) {
+      setReadingEntryStatus('ready')
+      return
+    }
+
+    const availableEntry = allHomepageEntries.find(({ id }) => id === selectedReadingEntryId)
+      || cloudExternalProfile?.data.entries.find(({ id }) => id === selectedReadingEntryId)
+    if (availableEntry) {
+      setOverlayEntry(availableEntry)
+      setReadingEntryStatus('ready')
+      return
+    }
+
+    let cancelled = false
+    setReadingEntryStatus('loading')
+    void loadPostEntry(selectedReadingEntryId)
+      .then((entry) => {
+        if (cancelled) return
+        setOverlayEntry(entry)
+        setReadingEntryStatus(entry ? 'ready' : 'not-found')
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error('Unable to load this reading page.', error)
+        setReadingEntryStatus('not-found')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeView, allHomepageEntries, cloudExternalProfile, overlayEntry?.id, selectedReadingEntryId])
+
+  const handleOpenEntryCreator = (entry: Entry, creatorName: string) => {
+    const creatorEntity = createCreatorEntityFromEntry(entry, creatorName, allHomepageEntries)
+    if (creatorEntity) openCachedEntity(creatorEntity)
+  }
+
+  const handleOpenEntryAlbum = (entry: Entry) => {
+    const albumEntity = createAlbumEntityFromSongEntry(entry)
+    if (albumEntity) openCachedEntity(albumEntity)
+  }
 
   const homepagePostIds = useMemo(
     () => allHomepageEntries.map((entry) => entry.id).sort().join('|'),
@@ -1686,22 +1942,20 @@ export default function AppController() {
     setSelectedEntityId(null)
     setSelectedEntityType(null)
     setSelectedProfileHandle(null)
-    setActiveView('feed')
-    navigate('/')
+    setSelectedReadingEntryId(postId)
+    setActiveView('reading')
+    navigate(`/entries/${routeSegment(postId)}`)
 
     const availableEntry = allHomepageEntries.find(({ id }) => id === postId)
       || cloudExternalProfile?.data.entries.find(({ id }) => id === postId)
     if (availableEntry) {
       setOverlayEntry(availableEntry)
+      setReadingEntryStatus('ready')
       return
     }
 
     setOverlayEntry(null)
-    void loadPostEntry(postId)
-      .then((entry) => {
-        if (entry && notificationOpenRequestRef.current === notification.id) setOverlayEntry(entry)
-      })
-      .catch((error) => console.error('Unable to open the post from this notification.', error))
+    setReadingEntryStatus('loading')
   }
 
   useEffect(() => {
@@ -1722,6 +1976,15 @@ export default function AppController() {
     }
     return allHomepageEntries
   }, [allHomepageEntries, typeFilter])
+  const ownedEntryIds = useMemo(() => new Set(entries.map((entry) => entry.id)), [entries])
+  const disabledCommentEntryIdSet = useMemo(
+    () => new Set(disabledCommentEntryIds),
+    [disabledCommentEntryIds],
+  )
+  const mutualFollowIdSet = useMemo(
+    () => new Set(personalizedFeed.mutualFollowIds),
+    [personalizedFeed.mutualFollowIds],
+  )
 
   const masonryLayout = useMasonryLayout(
     gridRef,
@@ -1780,23 +2043,80 @@ export default function AppController() {
     }
   }, [filteredEntries.length, masonryLayout, typeFilter])
 
-  const saveEntries = (nextEntries: Entry[], nextDisabledCommentEntryIds = disabledCommentEntryIds) => {
+  const saveEntries = (
+    nextEntries: Entry[],
+    nextDisabledCommentEntryIds = disabledCommentEntryIds,
+    publishedEntryId?: string,
+  ) => {
     entriesRef.current = nextEntries
     entriesRevisionRef.current += 1
     setEntries(nextEntries)
     saveEntriesToStorage(nextEntries, cloudUserId)
     if (cloudUserId) {
-      const pending = markEntriesPendingSync(cloudUserId, nextDisabledCommentEntryIds)
+      const nextEntryIds = new Set(nextEntries.map(({ id }) => id))
+      const previousPendingPostIds = (loadPendingEntrySync(cloudUserId)?.pendingPostIds || [])
+        .filter((id) => nextEntryIds.has(id))
+      const pendingPostIds = publishedEntryId
+        ? [...previousPendingPostIds, publishedEntryId]
+        : previousPendingPostIds
+      const pending = markEntriesPendingSync(cloudUserId, nextDisabledCommentEntryIds, pendingPostIds)
+      if (!navigator.onLine) {
+        if (publishedEntryId) {
+          setAppFeedback({
+            kind: 'offline',
+            message: 'No internet connection. Your post will be published when the connection is restored.',
+          })
+        }
+        return
+      }
+      if (publishedEntryId) {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        setAppFeedback({ kind: 'success', message: 'Posted successfully.' })
+      }
       void saveUserEntries(cloudUserId, nextEntries, nextDisabledCommentEntryIds)
         .then(() => {
           clearPendingEntrySync(cloudUserId, pending.token)
-          personalizedFeed.refresh()
         })
         .catch((error) => {
           console.error('Unable to sync posts to Firebase; they will retry next time.', error)
+          if (publishedEntryId) {
+            setAppFeedback(isConnectionError(error)
+              ? {
+                  kind: 'offline',
+                  message: 'No internet connection. Your post will be published when the connection is restored.',
+                }
+              : { kind: 'error', message: entrySyncErrorMessage(error) })
+          }
         })
+    } else if (publishedEntryId) {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+      setAppFeedback({ kind: 'success', message: 'Posted successfully.' })
     }
   }
+
+  useEffect(() => {
+    if (!cloudUserId) return
+    const publishHeldPosts = () => {
+      const pending = loadPendingEntrySync(cloudUserId)
+      if (!pending) return
+      void saveUserEntries(cloudUserId, entriesRef.current, pending.disabledCommentEntryIds)
+        .then(() => {
+          const completedLatestSync = clearPendingEntrySync(cloudUserId, pending.token)
+          if (completedLatestSync && pending.pendingPostIds.length > 0) {
+            window.scrollTo({ top: 0, behavior: 'smooth' })
+            setAppFeedback({ kind: 'success', message: 'Posted successfully.' })
+          }
+        })
+        .catch((error) => {
+          console.error('Unable to publish held posts after reconnecting.', error)
+          if (pending.pendingPostIds.length > 0 && !isConnectionError(error)) {
+            setAppFeedback({ kind: 'error', message: entrySyncErrorMessage(error) })
+          }
+        })
+    }
+    window.addEventListener('online', publishHeldPosts)
+    return () => window.removeEventListener('online', publishHeldPosts)
+  }, [cloudUserId])
 
   const handleLogout = async () => {
     setLogoutError('')
@@ -1906,6 +2226,7 @@ export default function AppController() {
           <span className="global-brand-ornament is-left" aria-hidden="true"><i /><b>✦</b></span>
           <span className="global-header-brand-copy">
             <span className="global-header-wordmark">The Commonplace.</span>
+            <span className="global-header-beta-badge">Beta</span>
           </span>
           <span className="global-brand-ornament is-right" aria-hidden="true"><b>✦</b><i /></span>
         </button>
@@ -1957,9 +2278,7 @@ export default function AppController() {
                 )}
               </span>
               <span className="menu-identity-info">
-                <span className="menu-user-name">
-                  {userProfile.showFullName ? `${userProfile.firstName} ${userProfile.lastName}` : userProfile.firstName}
-                </span>
+                {showUserProfileName && <span className="menu-user-name">{userProfileName}</span>}
                 <span className="menu-user-handle">
                   @{userProfile.handle.replace(/^@/, '')}
                 </span>
@@ -2008,6 +2327,38 @@ export default function AppController() {
           </button>
         </div>
       </div>
+      <div className="app-feedback-region" aria-live="polite">
+        <AnimatePresence>
+          {appFeedback && (
+            <motion.div
+              className={`app-feedback-toast ${appFeedback.kind}`}
+              role={appFeedback.kind === 'error' ? 'alert' : 'status'}
+              initial={{ opacity: 0, y: -12, scale: 0.96 }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                scale: 1,
+                transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] },
+              }}
+              exit={{
+                opacity: 0,
+                y: -12,
+                scale: 0.96,
+                transition: { duration: 0.22, ease: [0.32, 0, 0.67, 0] },
+              }}
+            >
+              {appFeedback.kind === 'success' ? (
+                <CircleCheck aria-hidden="true" />
+              ) : appFeedback.kind === 'offline' ? (
+                <WifiOff aria-hidden="true" />
+              ) : (
+                <TriangleAlert aria-hidden="true" />
+              )}
+              <span>{appFeedback.message}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </header>
     <AnimatePresence>
       {mobileMenuOpen && (
@@ -2022,16 +2373,25 @@ export default function AppController() {
             exit={{ opacity: 0 }}
           />
           <motion.nav
+            ref={mobileMenuDialogRef}
             id="mobile-navigation"
             className="mobile-menu-drawer"
+            role="navigation"
             aria-label="Mobile navigation"
+            tabIndex={-1}
             initial={{ opacity: 0, x: 28 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 28 }}
           >
             <div className="mobile-menu-identity">
-              <strong>{userProfileName || `@${userProfile.handle}`}</strong>
-              <span>@{userProfile.handle.replace(/^@/, '')}</span>
+              {showUserProfileName ? (
+                <>
+                  <strong>{userProfileName}</strong>
+                  <span>@{userProfile.handle.replace(/^@/, '')}</span>
+                </>
+              ) : (
+                <strong>@{userProfile.handle.replace(/^@/, '')}</strong>
+              )}
             </div>
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleHome() }}><Home aria-hidden="true" /> Home</button>
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenUserProfile(userProfile.handle) }}><CircleUserRound aria-hidden="true" /> Profile</button>
@@ -2088,19 +2448,6 @@ export default function AppController() {
       }}
       onConfirm={confirmLogout}
     />
-    <AnimatePresence>
-      {appFeedback && (
-        <motion.div
-          className={`app-feedback-toast ${appFeedback.kind}`}
-          role={appFeedback.kind === 'error' ? 'alert' : 'status'}
-          initial={{ opacity: 0, y: -12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-        >
-          {appFeedback.message}
-        </motion.div>
-      )}
-    </AnimatePresence>
     </>
     )
   }
@@ -2113,7 +2460,9 @@ export default function AppController() {
     entry: Entry | null = null,
     initialDraft: EntryDraft | null = null,
     initialLyrics = '',
+    draftId: string | null = null,
   ) => {
+    void loadEntryComposerModule()
     if (cloudUserId && homeDataStatus !== 'ready') return
     if (!currentUser?.emailVerified) {
       setVerificationPromptOpen(true)
@@ -2125,6 +2474,7 @@ export default function AppController() {
     setSearchOpen(false)
     setComposerInitialDraft(entry ? null : initialDraft)
     setComposerInitialLyrics(entry ? '' : initialLyrics)
+    setActiveComposerDraftId(entry ? null : draftId)
     setComposerOpen(true)
   }
 
@@ -2133,6 +2483,19 @@ export default function AppController() {
     setEditingEntry(null)
     setComposerInitialDraft(null)
     setComposerInitialLyrics('')
+    setActiveComposerDraftId(null)
+  }
+
+  const handleSaveEntryDraft = (draft: EntryDraft, lyrics: string, metadataQuery: string, draftId: string | null) => {
+    const next = saveEntryDraft(draftStorageOwnerId, draft, lyrics, metadataQuery, draftId)
+    setSavedEntryDrafts(next)
+    setAppFeedback({ kind: 'success', message: draftId ? 'Draft updated.' : 'Saved to drafts.' })
+    closeComposer()
+  }
+
+  const handleDeleteEntryDraft = (draftId: string) => {
+    setSavedEntryDrafts(deleteEntryDraft(draftStorageOwnerId, draftId))
+    setAppFeedback({ kind: 'success', message: 'Draft deleted.' })
   }
 
   const handleQuickAddEntityEntry = ({
@@ -2179,7 +2542,7 @@ export default function AppController() {
     )
   }
 
-  const handleSave = (draft: EntryDraft, disableComments?: boolean) => {
+  const handleSave = (draft: EntryDraft) => {
     if (cloudUserId && homeDataStatus !== 'ready') return
     if (!currentUser?.emailVerified) {
       closeComposer()
@@ -2189,22 +2552,14 @@ export default function AppController() {
     const timestamp = new Date().toISOString()
 
     if (editingEntry) {
-      const nextDisabledCommentEntryIds = disableComments === undefined
-        ? disabledCommentEntryIds
-        : disableComments
-          ? Array.from(new Set([...disabledCommentEntryIds, editingEntry.id]))
-          : disabledCommentEntryIds.filter((id) => id !== editingEntry.id)
+      const updatedEntry: Entry = { ...editingEntry, ...draft, updatedAt: timestamp }
       const nextEntries = entries.map((entry) =>
         entry.id === editingEntry.id
-          ? { ...entry, ...draft, updatedAt: timestamp }
+          ? updatedEntry
           : entry,
       )
-      saveEntries(nextEntries, nextDisabledCommentEntryIds)
-      if (disableComments !== undefined) {
-        setDisabledCommentEntryIds(nextDisabledCommentEntryIds)
-        localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(nextDisabledCommentEntryIds))
-        persistCloudState({ disabledCommentEntryIds: nextDisabledCommentEntryIds })
-      }
+      saveEntries(nextEntries)
+      setOverlayEntry((current) => current?.id === updatedEntry.id ? { ...current, ...updatedEntry } : current)
       setExpandedCardId(editingEntry.id)
       setAppFeedback({ kind: 'success', message: 'Entry changes saved.' })
     } else {
@@ -2215,24 +2570,26 @@ export default function AppController() {
         createdAt: timestamp,
         updatedAt: timestamp,
       }
-      const nextDisabledCommentEntryIds = disableComments
-        ? [...disabledCommentEntryIds, newId]
-        : disabledCommentEntryIds
-      saveEntries([newEntry, ...entries], nextDisabledCommentEntryIds)
+      saveEntries([newEntry, ...entries], disabledCommentEntryIds, newEntry.id)
       sendFeedSignal('catalog', newEntry, true)
-      if (disableComments) {
-        setDisabledCommentEntryIds(nextDisabledCommentEntryIds)
-        localStorage.setItem('the-commonplace.disabled-comments', JSON.stringify(nextDisabledCommentEntryIds))
-        persistCloudState({ disabledCommentEntryIds: nextDisabledCommentEntryIds })
-      }
       setExpandedCardId('')
-      setAppFeedback({ kind: 'success', message: 'New entry published.' })
+      if (activeComposerDraftId) {
+        setSavedEntryDrafts(deleteEntryDraft(draftStorageOwnerId, activeComposerDraftId))
+      }
     }
 
     closeComposer()
   }
 
   const [deletingEntry, setDeletingEntry] = useState<Entry | null>(null)
+  const deleteDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(deletingEntry),
+    onClose: () => setDeletingEntry(null),
+  })
+  const verificationDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: verificationPromptOpen,
+    onClose: () => setVerificationPromptOpen(false),
+  })
 
   const promptDeleteEntry = (entryId: string) => {
     const target = entries.find((e) => e.id === entryId)
@@ -2258,6 +2615,7 @@ export default function AppController() {
           onClick={() => setVerificationPromptOpen(false)}
         >
           <motion.div
+            ref={verificationDialogRef}
             className="settings-modal"
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -2266,6 +2624,7 @@ export default function AppController() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="email-verification-title"
+            tabIndex={-1}
           >
             <div className="settings-header">
               <div className="settings-header-title">
@@ -2302,7 +2661,7 @@ export default function AppController() {
   }
 
   if (authLoading || (currentUser && (location.pathname === '/login' || location.pathname === '/register'))) {
-    return <div className="auth-loading-blank" />
+    return <PageLoadingSkeleton />
   }
 
   if (!currentUser) {
@@ -2319,6 +2678,84 @@ export default function AppController() {
       <>
         {renderGlobalHeader()}
         <NotFoundPage onHome={handleHome} onBack={handlePageBack} />
+      </>
+    )
+  }
+
+  if (activeView === 'reading') {
+    if (readingEntryStatus === 'not-found') {
+      return (
+        <>
+          {renderGlobalHeader()}
+          <NotFoundPage onHome={handleHome} onBack={handlePageBack} />
+        </>
+      )
+    }
+
+    return (
+      <>
+        {renderGlobalHeader()}
+        {overlayEntry ? (
+          <EntryReadingPage
+            entry={overlayEntry}
+            onClose={closeEntryOverlay}
+            focusCommentId={overlayNotificationFocus?.postId === overlayEntry.id ? overlayNotificationFocus?.commentId : undefined}
+            focusReplyId={overlayNotificationFocus?.postId === overlayEntry.id ? overlayNotificationFocus?.replyId : undefined}
+            focusRequestId={overlayNotificationFocus?.postId === overlayEntry.id ? overlayNotificationFocus?.requestId : undefined}
+            isLiked={postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)}
+            isSaved={savedEntryIds.includes(overlayEntry.id)}
+            likeCount={postEngagements[overlayEntry.id]?.likeCount || 0}
+            onToggleLike={() => toggleLikeEntry(overlayEntry.id)}
+            onToggleSave={() => toggleSaveEntry(overlayEntry.id)}
+            onEdit={(
+              (cloudUserId && overlayEntry.ownerId === cloudUserId)
+              || entries.some((entry) => entry.id === overlayEntry.id)
+            ) ? () => openComposer(overlayEntry) : undefined}
+            onOpenProfile={(handle) => {
+              setOverlayEntry(null)
+              handleOpenUserProfile(handle)
+            }}
+            currentUserHandle={userProfile.handle}
+          />
+        ) : (
+          <main className="reading-page-root reading-page-loading" aria-label="Loading reading page">
+            <div className="reading-page-shell" aria-hidden="true">
+              <span className="skeleton-box reading-page-back-skeleton" />
+              <div className="reading-page-card-skeleton">
+                <span className="skeleton-box reading-page-cover-skeleton" />
+                <div className="reading-page-copy-skeleton">
+                  <span className="skeleton-box is-title" />
+                  <span className="skeleton-box is-meta" />
+                  <span className="skeleton-box is-line" />
+                  <span className="skeleton-box is-line" />
+                  <span className="skeleton-box is-line is-short" />
+                </div>
+              </div>
+            </div>
+          </main>
+        )}
+        <Suspense fallback={<ComposerLoadingFallback />}>
+          <AnimatePresence>
+            {composerOpen ? (
+              <EntryComposer
+              key={editingEntry?.id || activeComposerDraftId || 'new-entry'}
+              entry={editingEntry}
+              initialDraft={composerInitialDraft}
+              initialLyrics={composerInitialLyrics}
+              onClose={closeComposer}
+              onSave={handleSave}
+              communityEntries={allHomepageEntries}
+              savedDrafts={savedEntryDrafts}
+              activeDraftId={activeComposerDraftId}
+              onSaveDraft={handleSaveEntryDraft}
+              onSelectDraft={setActiveComposerDraftId}
+              onDeleteDraft={handleDeleteEntryDraft}
+              isOnline={isOnline}
+              />
+            ) : null}
+          </AnimatePresence>
+        </Suspense>
+        {renderEmailVerificationPrompt()}
       </>
     )
   }
@@ -2358,6 +2795,8 @@ export default function AppController() {
           disabledCommentEntryIds={disabledCommentEntryIds}
           onSelectEntry={openEntryOverlay}
           onOpenMediaProfile={handleOpenCollectionMedia}
+          onOpenEntryCreator={handleOpenEntryCreator}
+          onOpenEntryAlbum={handleOpenEntryAlbum}
           onToggleLike={toggleLikeEntry}
           onToggleSave={toggleSaveEntry}
           onToggleCommentsDisabled={toggleCommentsDisabled}
@@ -2365,6 +2804,8 @@ export default function AppController() {
           onUpdateProfile={isViewingOwn ? persistUserProfile : undefined}
           onDeleteEntry={(id) => promptDeleteEntry(id)}
           onEditEntry={(entry) => openComposer(entry)}
+          onAddEntry={() => openComposer()}
+          addEntryDisabled={Boolean(cloudUserId && homeDataStatus !== 'ready')}
           categoryFilter={profileCategoryFilter}
           onCategoryFilterChange={setProfileCategoryFilter}
           isOwnProfile={isViewingOwn}
@@ -2386,42 +2827,16 @@ export default function AppController() {
           }}
           privateContentLocked={!isViewingOwn && externalProfileData?.isContentLocked === true}
         />
-        {isViewingOwn && (
-          <div className="fab-stack">
-            <button
-              className="fab"
-              type="button"
-              aria-label="Add new entry"
-              title="Add new entry"
-              disabled={Boolean(cloudUserId && homeDataStatus !== 'ready')}
-              onClick={() => openComposer()}
-            >
-              <Plus aria-hidden="true" />
-            </button>
-          </div>
-        )}
-        <CardOverlayModal
-          entry={overlayEntry}
-          onClose={closeEntryOverlay}
-          focusCommentId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.commentId : undefined}
-          focusReplyId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.replyId : undefined}
-          focusRequestId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.requestId : undefined}
-          isLiked={overlayEntry ? (postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)) : false}
-          isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
-          likeCount={overlayEntry ? postEngagements[overlayEntry.id]?.likeCount || 0 : 0}
-          onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
-          onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
-          onOpenProfile={(handle) => {
-            setOverlayEntry(null)
-            handleOpenUserProfile(handle)
-          }}
-          currentUserHandle={userProfile.handle}
-        />
         <AnimatePresence>
           {deletingEntry && (
             <div className="modal-backdrop" onClick={() => setDeletingEntry(null)}>
               <motion.div
+                ref={deleteDialogRef}
                 className="settings-modal"
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="delete-entry-title"
+                tabIndex={-1}
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
@@ -2430,7 +2845,7 @@ export default function AppController() {
                 <div className="settings-header">
                   <div className="settings-header-title">
                     <Trash2 style={{ color: '#e57373' }} aria-hidden="true" />
-                    <h2>Delete Entry?</h2>
+                    <h2 id="delete-entry-title">Delete Entry?</h2>
                   </div>
                 </div>
                 <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 20 }}>
@@ -2450,19 +2865,27 @@ export default function AppController() {
             </div>
           )}
         </AnimatePresence>
-        <AnimatePresence>
-          {composerOpen ? (
-            <EntryComposer
+        <Suspense fallback={<ComposerLoadingFallback />}>
+          <AnimatePresence>
+            {composerOpen ? (
+              <EntryComposer
+              key={editingEntry?.id || activeComposerDraftId || 'new-entry'}
               entry={editingEntry}
               initialDraft={composerInitialDraft}
               initialLyrics={composerInitialLyrics}
               onClose={closeComposer}
               onSave={handleSave}
-              commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
               communityEntries={allHomepageEntries}
-            />
-          ) : null}
-        </AnimatePresence>
+              savedDrafts={savedEntryDrafts}
+              activeDraftId={activeComposerDraftId}
+              onSaveDraft={handleSaveEntryDraft}
+              onSelectDraft={setActiveComposerDraftId}
+              onDeleteDraft={handleDeleteEntryDraft}
+              isOnline={isOnline}
+              />
+            ) : null}
+          </AnimatePresence>
+        </Suspense>
         {renderEmailVerificationPrompt()}
       </>
     )
@@ -2488,9 +2911,9 @@ export default function AppController() {
               },
             ],
             communityRating: {
-              average: 4.8,
-              count: 2413,
-              distribution: { 5: 85, 4: 11, 3: 3, 2: 1, 1: 0 },
+              average: 0,
+              count: 0,
+              distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
             },
           }
         : null)
@@ -2577,9 +3000,9 @@ export default function AppController() {
               ...(mapItem?.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
             ],
         communityRating: {
-          average: 4.9,
-          count: 1250,
-          distribution: { 5: 88, 4: 10, 3: 2, 2: 0, 1: 0 },
+          average: 0,
+          count: 0,
+          distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
         },
       }
     }
@@ -2589,6 +3012,7 @@ export default function AppController() {
         <>
           {renderGlobalHeader()}
           <UniversalMediaProfilePage
+            key={universalEntity.id}
             entity={universalEntity}
             onBack={handlePageBack}
             onHome={handleHome}
@@ -2610,36 +3034,27 @@ export default function AppController() {
             onToggleLike={toggleLikeEntry}
             onToggleSave={toggleSaveEntry}
           />
-          <CardOverlayModal
-            entry={overlayEntry}
-            onClose={closeEntryOverlay}
-            focusCommentId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.commentId : undefined}
-            focusReplyId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.replyId : undefined}
-            focusRequestId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.requestId : undefined}
-            isLiked={overlayEntry ? (postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)) : false}
-            isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
-            likeCount={overlayEntry ? postEngagements[overlayEntry.id]?.likeCount || 0 : 0}
-            onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
-            onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
-            onOpenProfile={(handle) => {
-              setOverlayEntry(null)
-              handleOpenUserProfile(handle)
-            }}
-            currentUserHandle={userProfile.handle}
-          />
-          <AnimatePresence>
-            {composerOpen ? (
-              <EntryComposer
+          <Suspense fallback={<ComposerLoadingFallback />}>
+            <AnimatePresence>
+              {composerOpen ? (
+                <EntryComposer
+                key={editingEntry?.id || activeComposerDraftId || 'new-entry'}
                 entry={editingEntry}
                 initialDraft={composerInitialDraft}
                 initialLyrics={composerInitialLyrics}
                 onClose={closeComposer}
                 onSave={handleSave}
-                commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
                 communityEntries={allHomepageEntries}
-              />
-            ) : null}
-          </AnimatePresence>
+                savedDrafts={savedEntryDrafts}
+                activeDraftId={activeComposerDraftId}
+                onSaveDraft={handleSaveEntryDraft}
+                onSelectDraft={setActiveComposerDraftId}
+                onDeleteDraft={handleDeleteEntryDraft}
+                isOnline={isOnline}
+                />
+              ) : null}
+            </AnimatePresence>
+          </Suspense>
           <AnimatePresence>
             {collectionTarget && (
               <CollectionPickerModal
@@ -2681,23 +3096,6 @@ export default function AppController() {
               })
             }
           }}
-        />
-        <CardOverlayModal
-          entry={overlayEntry}
-          onClose={closeEntryOverlay}
-          focusCommentId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.commentId : undefined}
-          focusReplyId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.replyId : undefined}
-          focusRequestId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.requestId : undefined}
-          isLiked={overlayEntry ? (postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)) : false}
-          isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
-          likeCount={overlayEntry ? postEngagements[overlayEntry.id]?.likeCount || 0 : 0}
-          onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
-          onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
-          onOpenProfile={(handle) => {
-            setOverlayEntry(null)
-            handleOpenUserProfile(handle)
-          }}
-          currentUserHandle={userProfile.handle}
         />
         {renderEmailVerificationPrompt()}
       </>
@@ -2755,7 +3153,7 @@ export default function AppController() {
                   <motion.div
                     layoutId="activeFilterPill"
                     className="active-tab-pill"
-                    transition={{ type: 'spring', stiffness: 380, damping: 36 }}
+                    transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
                   />
                 )}
                 <span>All</span>
@@ -2773,7 +3171,7 @@ export default function AppController() {
                       <motion.div
                         layoutId="activeFilterPill"
                         className="active-tab-pill"
-                        transition={{ type: 'spring', stiffness: 380, damping: 36 }}
+                        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
                       />
                     )}
                     <Icon aria-hidden="true" />
@@ -2813,7 +3211,7 @@ export default function AppController() {
             const hadMeasuredPosition = positionedCardIdsRef.current.has(entry.id)
             const typeMeta = getTypeMeta(entry.type)
             const isOwnEntry = Boolean(cloudUserId && entry.ownerId === cloudUserId)
-              || entries.some((ownedEntry) => ownedEntry.id === entry.id)
+              || ownedEntryIds.has(entry.id)
             const engagement = postEngagements[entry.id]
             return (
               <div
@@ -2828,8 +3226,7 @@ export default function AppController() {
                   transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
                   transition: (isInitialRender || isFilterSwitching || !hadMeasuredPosition)
                     ? 'none'
-                    : 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
-                  willChange: 'transform',
+                    : 'transform 180ms cubic-bezier(0.2, 0, 0, 1)',
                 } : { width: '100%', marginBottom: 14 }}
               >
                 <Card
@@ -2840,6 +3237,9 @@ export default function AppController() {
                   onToggle={() => toggleCardExpanded(entry.id)}
                   onExpandOverlay={() => openEntryOverlay(entry)}
                   onOpenProfile={() => handleOpenUserProfile(entry.authorHandle)}
+                  onOpenMedia={() => handleOpenCollectionMedia(entry)}
+                  onOpenCreator={entry.type === 'game' ? undefined : (creatorName) => handleOpenEntryCreator(entry, creatorName)}
+                  onOpenAlbum={entry.type === 'song' ? () => handleOpenEntryAlbum(entry) : undefined}
                   typeIcon={typeMeta.Icon}
                   typeLabel={typeMeta.label}
                   isLiked={engagement?.isLiked ?? likedEntryIds.includes(entry.id)}
@@ -2848,8 +3248,9 @@ export default function AppController() {
                   commentCount={engagement?.commentCount || 0}
                   onToggleLike={() => toggleLikeEntry(entry.id)}
                   onToggleSave={() => toggleSaveEntry(entry.id)}
-                  commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
-                  onToggleCommentsDisabled={() => toggleCommentsDisabled(entry.id)}
+                  commentsDisabled={disabledCommentEntryIdSet.has(entry.id)}
+                  onToggleCommentsDisabled={isOwnEntry ? () => toggleCommentsDisabled(entry.id) : undefined}
+                  isFriend={Boolean(entry.ownerId && mutualFollowIdSet.has(entry.ownerId))}
                 />
               </div>
             )
@@ -2909,31 +3310,17 @@ export default function AppController() {
           </div>
         )}
 
-        {/* Reading Overlay Modal */}
-        <CardOverlayModal
-          entry={overlayEntry}
-          onClose={closeEntryOverlay}
-          focusCommentId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.commentId : undefined}
-          focusReplyId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.replyId : undefined}
-          focusRequestId={overlayNotificationFocus?.postId === overlayEntry?.id ? overlayNotificationFocus?.requestId : undefined}
-          isLiked={overlayEntry ? (postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)) : false}
-          isSaved={overlayEntry ? savedEntryIds.includes(overlayEntry.id) : false}
-          likeCount={overlayEntry ? postEngagements[overlayEntry.id]?.likeCount || 0 : 0}
-          onToggleLike={() => overlayEntry && toggleLikeEntry(overlayEntry.id)}
-          onToggleSave={() => overlayEntry && toggleSaveEntry(overlayEntry.id)}
-          onOpenProfile={(handle) => {
-            setOverlayEntry(null)
-            handleOpenUserProfile(handle)
-          }}
-          currentUserHandle={userProfile.handle}
-        />
-
         {/* Confirm Delete Card Modal */}
         <AnimatePresence>
           {deletingEntry && (
             <div className="modal-backdrop" onClick={() => setDeletingEntry(null)}>
               <motion.div
+                ref={deleteDialogRef}
                 className="settings-modal"
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="delete-entry-title"
+                tabIndex={-1}
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
@@ -2942,7 +3329,7 @@ export default function AppController() {
                 <div className="settings-header">
                   <div className="settings-header-title">
                     <Trash2 style={{ color: '#e57373' }} aria-hidden="true" />
-                    <h2>Delete Entry?</h2>
+                    <h2 id="delete-entry-title">Delete Entry?</h2>
                   </div>
                 </div>
                 <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 20 }}>
@@ -3003,19 +3390,27 @@ export default function AppController() {
       </div>
 
       {/* Entry composer modal */}
-      <AnimatePresence>
-        {composerOpen ? (
-          <EntryComposer
+      <Suspense fallback={<ComposerLoadingFallback />}>
+        <AnimatePresence>
+          {composerOpen ? (
+            <EntryComposer
+            key={editingEntry?.id || activeComposerDraftId || 'new-entry'}
             entry={editingEntry}
             initialDraft={composerInitialDraft}
             initialLyrics={composerInitialLyrics}
             onClose={closeComposer}
             onSave={handleSave}
-            commentsDisabled={editingEntry ? disabledCommentEntryIds.includes(editingEntry.id) : false}
             communityEntries={allHomepageEntries}
-          />
-        ) : null}
-      </AnimatePresence>
+            savedDrafts={savedEntryDrafts}
+            activeDraftId={activeComposerDraftId}
+            onSaveDraft={handleSaveEntryDraft}
+            onSelectDraft={setActiveComposerDraftId}
+            onDeleteDraft={handleDeleteEntryDraft}
+            isOnline={isOnline}
+            />
+          ) : null}
+        </AnimatePresence>
+      </Suspense>
       {renderEmailVerificationPrompt()}
     </div>
   )

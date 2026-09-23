@@ -13,7 +13,7 @@ interface LoginFormProps {
 
 export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   const navigate = useNavigate()
-  const { login, loginWithGoogle } = useAuth()
+  const { login, loginWithApple, loginWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [keepSignedIn, setKeepSignedIn] = useState(true)
@@ -93,16 +93,17 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   }
 
   const handleSelectProvider = async (provider: string) => {
-    if (provider !== 'Google') return
+    if (provider !== 'Google' && provider !== 'Apple') return
     try {
       setLoading(true)
-      await loginWithGoogle(keepSignedIn)
-      setToastMessage('✦ Logged in with Google successfully!')
+      if (provider === 'Apple') await loginWithApple(keepSignedIn)
+      else await loginWithGoogle(keepSignedIn)
+      setToastMessage(`✦ Logged in with ${provider} successfully!`)
       setTimeout(() => {
         navigate('/')
       }, 600)
     } catch (err: unknown) {
-      setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Google login failed.')
+      setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || `${provider} login failed.`)
     } finally {
       setLoading(false)
     }

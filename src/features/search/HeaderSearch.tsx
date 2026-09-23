@@ -59,6 +59,7 @@ export function HeaderSearch({
           bio: '',
           source: 'metadata',
           rank: 0,
+          explicit: result.explicit,
         }
         onOpenEntity(entity)
       }}

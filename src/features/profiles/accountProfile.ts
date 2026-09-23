@@ -60,6 +60,12 @@ export function profileBelongsToAuthUser(profile: UserProfileState, user: AuthPr
   return Boolean(profileEmail && accountEmail && profileEmail === accountEmail)
 }
 
+export function hasDistinctProfileDisplayName(displayName: string, handle: string) {
+  const normalizedName = displayName.trim().replace(/^@/, '').toLowerCase()
+  const normalizedHandle = handle.trim().replace(/^@/, '').toLowerCase()
+  return Boolean(normalizedName && normalizedName !== normalizedHandle)
+}
+
 export function shouldResetLegacyDemoProfile(
   profile: UserProfileState,
   user: AuthProfileSource,

@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { LogOut } from 'lucide-react'
+import { useAccessibleDialog } from '../../hooks/useAccessibleDialog'
 
 interface LogoutConfirmModalProps {
   open: boolean
@@ -17,14 +17,11 @@ export function LogoutConfirmModal({
   onCancel,
   onConfirm,
 }: LogoutConfirmModalProps) {
-  useEffect(() => {
-    if (!open) return
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !loading) onCancel()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [loading, onCancel, open])
+  const dialogRef = useAccessibleDialog<HTMLElement>({
+    open,
+    onClose: onCancel,
+    closeOnEscape: !loading,
+  })
 
   return (
     <AnimatePresence>
@@ -39,6 +36,7 @@ export function LogoutConfirmModal({
           }}
         >
           <motion.section
+            ref={dialogRef}
             className="logout-confirm-modal"
             initial={{ opacity: 0, y: 10, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -47,6 +45,7 @@ export function LogoutConfirmModal({
             role="dialog"
             aria-modal="true"
             aria-labelledby="logout-confirm-title"
+            tabIndex={-1}
           >
             <span className="logout-confirm-icon" aria-hidden="true">
               <LogOut />

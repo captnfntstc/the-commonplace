@@ -71,15 +71,25 @@ export function useMasonryLayout(
         const heights = Array<number>(numCols).fill(M_PAD_TOP)
         const positions = new Map<string, MasonryPos>()
 
+        // Apply every width before reading any height. Interleaving a width write
+        // with offsetHeight reads forces the browser to recalculate layout once
+        // per card and is noticeably sticky on larger feeds.
+        items.forEach((item) => {
+          item.style.width = `${colWidth}px`
+        })
+
+        const itemHeights = items.map((item) => {
+          const id = item.dataset.id
+          return getItemTargetHeight(item, id === expandedId)
+        })
+
         items.forEach((item, index) => {
           const id = item.dataset.id
           if (!id) return
 
           // Fixed column assignment: card remains in its column when cards above expand/collapse
           const col = index % numCols
-          const isExpanded = id === expandedId
-          item.style.width = `${colWidth}px`
-          const itemHeight = getItemTargetHeight(item, isExpanded)
+          const itemHeight = itemHeights[index]
 
           positions.set(id, {
             left: M_PAD_X + col * (colWidth + M_GAP),
@@ -105,19 +115,13 @@ export function useMasonryLayout(
     container.addEventListener('load', recalculate, true)
 
     recalculate()
-    const t1 = setTimeout(recalculate, 30)
-    const t2 = setTimeout(recalculate, 100)
-    const t3 = setTimeout(recalculate, 220)
-    const t4 = setTimeout(recalculate, 360)
+    const settleFrame = setTimeout(recalculate, 120)
 
     return () => {
       ro.disconnect()
       container.removeEventListener('load', recalculate, true)
       cancelAnimationFrame(frameId)
-      clearTimeout(t1)
-      clearTimeout(t2)
-      clearTimeout(t3)
-      clearTimeout(t4)
+      clearTimeout(settleFrame)
     }
   }, [containerRef, itemCount, expandedId, activeSignal, fourColumnBreakpoint])
 

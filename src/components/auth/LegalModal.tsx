@@ -2,6 +2,7 @@ import React from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, ShieldCheck, Scroll } from 'lucide-react'
+import { useAccessibleDialog } from '../../hooks/useAccessibleDialog'
 
 export type LegalModalType = 'terms' | 'privacy' | 'age' | null
 
@@ -11,6 +12,7 @@ interface LegalModalProps {
 }
 
 export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
+  const dialogRef = useAccessibleDialog<HTMLDivElement>({ open: Boolean(type), onClose })
   const isTerms = type === 'terms'
   const isAgeGuide = type === 'age'
   const title = isTerms ? 'Terms of Service' : isAgeGuide ? 'Age & Content Guide' : 'Privacy Policy'
@@ -23,6 +25,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
       {type && (
         <div className="auth-legal-backdrop" onClick={onClose}>
           <motion.div
+            ref={dialogRef}
             className="auth-legal-modal"
             initial={{ opacity: 0, scale: 0.94, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -32,6 +35,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
             role="dialog"
             aria-modal="true"
             aria-labelledby="legal-modal-title"
+            tabIndex={-1}
           >
             {/* Modal Header */}
             <div className="auth-legal-header">

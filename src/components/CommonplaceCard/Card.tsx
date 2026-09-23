@@ -1,5 +1,15 @@
-import React from 'react'
-import { ChevronDown, ChevronUp, Heart, MessageSquare, Bookmark } from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import {
+  Bookmark,
+  Edit3,
+  Heart,
+  Maximize2,
+  MessageSquare,
+  MessageSquareOff,
+  MoreHorizontal,
+  Trash2,
+} from 'lucide-react'
+import { AnimatePresence, motion } from 'framer-motion'
 import type { LucideIcon } from 'lucide-react'
 import type { Entry } from '../../features/entries/model'
 import { CardHeader } from './CardHeader'
@@ -17,6 +27,9 @@ interface CardProps {
   onToggle: () => void
   onExpandOverlay?: () => void
   onOpenProfile?: () => void
+  onOpenMedia?: () => void
+  onOpenCreator?: (creatorName: string) => void
+  onOpenAlbum?: () => void
   typeIcon: LucideIcon
   typeLabel: string
   isLiked?: boolean
@@ -28,6 +41,14 @@ interface CardProps {
   onToggleSave?: () => void
   commentsDisabled?: boolean
   onToggleCommentsDisabled?: () => void
+  isFriend?: boolean
+}
+
+function hasVisibleReflection(reflection: string) {
+  return reflection
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;|&#160;|&#xA0;/gi, ' ')
+    .trim().length > 0
 }
 
 export const Card: React.FC<CardProps> = ({
@@ -38,6 +59,9 @@ export const Card: React.FC<CardProps> = ({
   onToggle,
   onExpandOverlay,
   onOpenProfile,
+  onOpenMedia,
+  onOpenCreator,
+  onOpenAlbum,
   typeIcon,
   typeLabel,
   isLiked = false,
@@ -47,9 +71,55 @@ export const Card: React.FC<CardProps> = ({
   onToggleLike,
   onToggleSave,
   commentsDisabled = false,
+  onToggleCommentsDisabled,
+  isFriend = false,
 }) => {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const hasMenuActions = Boolean(onExpandOverlay || onEdit || onDelete || onToggleCommentsDisabled)
+  const isExpandable = hasVisibleReflection(entry.reflection)
+
+  useEffect(() => {
+    if (!menuOpen) return
+
+    const closeMenu = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+
+    document.addEventListener('mousedown', closeMenu)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeMenu)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [menuOpen])
+
+  const handleCardClick = (event: React.MouseEvent<HTMLElement>) => {
+    if (!isExpandable) return
+    const target = event.target
+    if (!(target instanceof Element)) return
+
+    // The author row and nested controls keep their own behavior. Everything
+    // else in the card's content area expands or collapses the entry.
+    if (target.closest(
+      '.card-toprow, button, a, input, select, textarea, [role="button"], [role="link"], [role="menu"], [contenteditable="true"]',
+    )) return
+
+    onToggle()
+  }
+
+  const handleToggle = () => {
+    if (isExpandable) onToggle()
+  }
+
   return (
-    <article className={`entry-card tone-${entry.coverTone}`}>
+    <article
+      className={`entry-card ${isExpandable ? 'is-expandable' : ''} tone-${entry.coverTone}`}
+      onClick={handleCardClick}
+    >
       {/* Top Header Row */}
       <CardHeader
         typeIcon={typeIcon}
@@ -59,6 +129,7 @@ export const Card: React.FC<CardProps> = ({
         createdAt={entry.createdAt}
         onOpenProfile={onOpenProfile}
         visibility={entry.visibility}
+        isFriend={isFriend}
       />
 
       {/* Body: Artwork & Metadata */}
@@ -73,15 +144,18 @@ export const Card: React.FC<CardProps> = ({
         rating={entry.rating}
         explicit={entry.explicit}
         typeIcon={typeIcon}
-        onToggle={onToggle}
+        onToggle={isExpandable ? handleToggle : undefined}
+        onOpenMedia={onOpenMedia}
+        onOpenCreator={onOpenCreator}
+        onOpenAlbum={onOpenAlbum}
       />
 
       {/* Favorite passage */}
-      {entry.favoritePassage && (
+      {entry.favoritePassage && (isExpandable ? (
         <button
           className="card-passage"
           type="button"
-          onClick={onToggle}
+          onClick={handleToggle}
           aria-expanded={expanded}
         >
           <span className="card-passage-quote-mark" aria-hidden="true">&#x201C;</span>
@@ -89,17 +163,21 @@ export const Card: React.FC<CardProps> = ({
             <FormattedText text={entry.favoritePassage} align={entry.passageAlign} />
           </div>
         </button>
-      )}
+      ) : (
+        <div className="card-passage">
+          <span className="card-passage-quote-mark" aria-hidden="true">&#x201C;</span>
+          <div className="card-passage-text">
+            <FormattedText text={entry.favoritePassage} align={entry.passageAlign} />
+          </div>
+        </div>
+      ))}
 
       {/* Reflection expansion component */}
       <CardReflection
         reflection={entry.reflection}
         reflectionAlign={entry.reflectionAlign}
         enableDropCap={entry.enableDropCap}
-        expanded={expanded}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        onExpandOverlay={onExpandOverlay}
+        expanded={expanded && isExpandable}
       />
 
       {/* At-A-Glance Stat Bar & Actions */}
@@ -153,20 +231,66 @@ export const Card: React.FC<CardProps> = ({
           </button>
         </div>
 
-        {/* Right: expand/collapse toggle */}
+        {/* Right: entry actions */}
         <div className="card-glance-right">
-          <button
-            className="card-toggle"
-            type="button"
-            onClick={onToggle}
-            aria-label={expanded ? 'Collapse card' : 'Expand card'}
-          >
-            {expanded ? (
-              <ChevronUp aria-hidden="true" />
-            ) : (
-              <ChevronDown aria-hidden="true" />
-            )}
-          </button>
+          {hasMenuActions && (
+            <div className="card-actions card-glance-actions" ref={menuRef}>
+              <button
+                className="card-more-btn"
+                type="button"
+                onClick={() => setMenuOpen((open) => !open)}
+                title="More actions"
+                aria-label="More entry actions"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+              >
+                <MoreHorizontal aria-hidden="true" />
+              </button>
+              <AnimatePresence>
+                {menuOpen && (
+                  <motion.div
+                    className="card-actions-menu"
+                    role="menu"
+                    initial={{ opacity: 0, scale: 0.96, y: 4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.96, y: 4 }}
+                    transition={{ duration: 0.12 }}
+                  >
+                    {onExpandOverlay && (
+                      <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onExpandOverlay() }}>
+                        <Maximize2 aria-hidden="true" />
+                        <span>Open reading view</span>
+                      </button>
+                    )}
+                    {onEdit && (
+                      <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onEdit() }}>
+                        <Edit3 aria-hidden="true" />
+                        <span>Edit entry</span>
+                      </button>
+                    )}
+                    {onToggleCommentsDisabled && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => { setMenuOpen(false); onToggleCommentsDisabled() }}
+                      >
+                        {commentsDisabled
+                          ? <MessageSquare aria-hidden="true" />
+                          : <MessageSquareOff aria-hidden="true" />}
+                        <span>{commentsDisabled ? 'Enable comments' : 'Disable comments'}</span>
+                      </button>
+                    )}
+                    {onDelete && (
+                      <button className="danger" type="button" role="menuitem" onClick={() => { setMenuOpen(false); onDelete() }}>
+                        <Trash2 aria-hidden="true" />
+                        <span>Delete entry</span>
+                      </button>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
         </div>
       </div>
     </article>

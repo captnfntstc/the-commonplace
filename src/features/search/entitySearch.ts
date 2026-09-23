@@ -552,7 +552,11 @@ export function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
   const groups = new Map<string, HeaderSearchEntity[]>()
 
   for (const entity of entities) {
-    const creatorKey = normalizeSearchText(entity.creatorValue.replace(/^[^:]+:\s*/, ''))
+    const creatorValue = entity.creatorValue.replace(/^[^:]+:\s*/, '')
+    const creatorKey = normalizeSearchText(creatorValue)
+    const albumCreatorKey = entity.type === 'album'
+      ? normalizeSearchText(creatorValue.split(/\s*(?:&|,|\/|\bfeat(?:uring)?\.?\b|\bwith\b|\bx\b)\s*/i)[0] || creatorValue)
+      : creatorKey
     const releaseYear = searchResultYear(entity)
     const usesReleaseIdentity = ['movie', 'film', 'tv', 'show', 'series', 'game'].includes(entity.type)
 
@@ -561,7 +565,10 @@ export function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
       rawTitle = extractCanonicalGameTitle(rawTitle)
     }
 
-    const cleanTitle = normalizeSearchText(rawTitle).replace(/\b(clean|clean version|edited)\b/g, '').trim()
+    const cleanTitle = normalizeSearchText(rawTitle)
+      .replace(/\b(?:clean version|clean edition|explicit version|explicit edition|clean|explicit|edited)\b/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
     const stableIdentityId = ['human', 'music_group'].includes(entity.type) && entity.universalEntity?.identity
       ? entity.universalEntity.identity.canonicalId
       : ''
@@ -569,7 +576,7 @@ export function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
       ? `${entity.type}:${stableIdentityId}`
       : usesReleaseIdentity
       ? `${entity.type}:${cleanTitle}:${releaseYear || creatorKey}`
-      : `${entity.type}:${cleanTitle}:${creatorKey}`
+      : `${entity.type}:${cleanTitle}:${albumCreatorKey}`
 
     const group = groups.get(key) || []
     const normalizedEntity = (entity.type === 'game' && isPatchOrUpdateTitle(entity.title))

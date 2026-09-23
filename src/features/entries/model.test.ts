@@ -50,13 +50,14 @@ describe('entry persistence recovery', () => {
   })
 
   it('only clears the pending marker for the completed revision', () => {
-    const first = markEntriesPendingSync('user-1', ['entry-1'])
+    const first = markEntriesPendingSync('user-1', ['entry-1'], ['post-1'])
     const latest = markEntriesPendingSync('user-1', ['entry-2'])
 
-    clearPendingEntrySync('user-1', first.token)
+    expect(clearPendingEntrySync('user-1', first.token)).toBe(false)
     expect(loadPendingEntrySync('user-1')).toEqual(latest)
+    expect(latest.pendingPostIds).toEqual(['post-1'])
 
-    clearPendingEntrySync('user-1', latest.token)
+    expect(clearPendingEntrySync('user-1', latest.token)).toBe(true)
     expect(loadPendingEntrySync('user-1')).toBeNull()
   })
 

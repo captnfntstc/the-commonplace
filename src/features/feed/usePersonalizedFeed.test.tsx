@@ -94,4 +94,13 @@ describe('usePersonalizedFeed', () => {
     act(() => mutualListener([]))
     expect(result.current.items.map((entry) => entry.id)).toEqual(['all-2'])
   })
+
+  it('exposes mutual follow IDs for friend labels', async () => {
+    mocks.loadFeedPage.mockResolvedValue({ items: [], nextCursor: null, hasMore: false })
+    const { result } = renderHook(() => usePersonalizedFeed(user, 'all', true))
+
+    act(() => mutualListener(['friend-one']))
+
+    expect(result.current.mutualFollowIds).toEqual(['friend-one'])
+  })
 })

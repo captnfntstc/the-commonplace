@@ -23,4 +23,8 @@ describe('related-profile tab labels', () => {
       'related',
     ])
   })
+
+  it('labels a director\'s highlighted films as Top Movies', () => {
+    expect(getEntityTabs('director').find((tab) => tab.id === 'top_content')?.label).toBe('Top Movies')
+  })
 })

@@ -3,6 +3,8 @@ import {
   albumVersionBaseTitle,
   fetchItunesAlbumVersionFamily,
   preferAlbumSearchEditions,
+  searchMetadata,
+  supplementCleanAlbumsWithExplicitCollections,
   type MetadataResult,
 } from './metadata'
 
@@ -208,6 +210,61 @@ describe('album version families', () => {
     expect(extended?.editions).toHaveLength(1)
     expect(extended?.editions[0]?.title).toBe('The Great Divide')
   })
+
+  it('makes the explicit collaboration-credit release canonical over its clean copy', async () => {
+    const coreTracks = Array.from({ length: 11 }, (_, index) => `Shared Track ${index + 1}`)
+    const cleanAlbum = collection(940001, 'Shared Record (Clean)', false, 11, '2025')
+    const explicitAlbum = {
+      ...collection(940002, 'Shared Record (Explicit)', true, 11, '2025'),
+      artistId: ARTIST_ID + 1,
+      artistName: `${ARTIST} & Guest Artist`,
+    }
+    const albums = [cleanAlbum, explicitAlbum]
+    const lookups = new Map<number, object[]>([
+      [940001, lookup(cleanAlbum, coreTracks)],
+      [940002, lookup(explicitAlbum, coreTracks).map((item) => ({
+        ...item,
+        artistId: ARTIST_ID + 1,
+        artistName: `${ARTIST} & Guest Artist`,
+      }))],
+    ])
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const lookupId = Number(url.match(/[?&]id=(\d+)/)?.[1] || 0)
+      if (url.includes('entity=musicArtist')) {
+        return { ok: true, json: async () => ({ results: [{ wrapperType: 'artist', artistId: ARTIST_ID, artistName: ARTIST }] }) } as Response
+      }
+      if (url.includes('/search?') && url.includes('entity=album')) {
+        return { ok: true, json: async () => ({ results: albums }) } as Response
+      }
+      if (url.includes('/lookup?') && url.includes('entity=album')) {
+        return { ok: true, json: async () => ({ results: albums }) } as Response
+      }
+      if (lookupId && lookups.has(lookupId)) {
+        return { ok: true, json: async () => ({ results: lookups.get(lookupId) }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+
+    const family = await fetchItunesAlbumVersionFamily({
+      albumName: cleanAlbum.collectionName,
+      artistName: ARTIST,
+      year: '2025',
+      collectionId: String(cleanAlbum.collectionId),
+      trackCount: 11,
+    })
+
+    expect(family).toMatchObject({
+      canonicalCollectionId: '940002',
+      currentCollectionId: '940001',
+      currentExplicit: false,
+      canonical: { explicit: true, artist: `${ARTIST} & Guest Artist` },
+    })
+    expect(family?.editions).toEqual([
+      expect.objectContaining({ collectionId: '940002', explicit: true }),
+    ])
+  })
 })
 
 describe('explicit-first album search selection', () => {
@@ -242,5 +299,65 @@ describe('explicit-first album search selection', () => {
     expect(preferAlbumSearchEditions([
       result('6', 'Midnights (Clean Edition)', false),
     ], 'Midnights')).toEqual([])
+  })
+
+  it('omits a provider-labelled clean edition even when its title has no clean suffix', () => {
+    const clean = result('6b', 'Midnights', false)
+    clean.clean = true
+    expect(preferAlbumSearchEditions([clean], 'Midnights')).toEqual([])
+  })
+
+  it('discovers the original explicit collection when Apple returns only the clean album record', async () => {
+    const cleanAlbum = {
+      wrapperType: 'collection',
+      collectionId: 6779097512,
+      collectionName: 'you seem pretty sad for a girl so in love',
+      artistName: 'Olivia Rodrigo',
+      collectionExplicitness: 'cleaned',
+      contentAdvisoryRating: 'Clean',
+      trackCount: 13,
+      releaseDate: '2026-06-12T07:00:00Z',
+    }
+    const explicitTrack = {
+      wrapperType: 'track',
+      trackId: 1889992113,
+      collectionId: 1889992111,
+      trackName: 'drop dead',
+      collectionName: 'you seem pretty sad for a girl so in love',
+      artistName: 'Olivia Rodrigo',
+      collectionExplicitness: 'explicit',
+      contentAdvisoryRating: 'Explicit',
+      trackCount: 14,
+      releaseDate: '2026-06-12T07:00:00Z',
+    }
+
+    expect(supplementCleanAlbumsWithExplicitCollections([cleanAlbum], [explicitTrack]))
+      .toEqual([cleanAlbum, expect.objectContaining({ collectionId: 1889992111 })])
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('entity=album')) {
+        return { ok: true, status: 200, json: async () => ({ results: [cleanAlbum] }) } as Response
+      }
+      if (url.includes('entity=song')) {
+        return { ok: true, status: 200, json: async () => ({ results: [explicitTrack] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+
+    await expect(searchMetadata('album', 'provider clean discovery fixture')).resolves.toEqual([
+      expect.objectContaining({ providerId: '1889992111', explicit: true, clean: false }),
+    ])
+  })
+
+  it('collapses collaboration artist credits into the lead artist album entity', () => {
+    const solo = result('7', 'GUTS', false)
+    solo.creator = 'Olivia Rodrigo'
+    const collaboration = result('8', 'GUTS (Explicit)', true)
+    collaboration.creator = 'Olivia Rodrigo & Robert Smith'
+
+    expect(preferAlbumSearchEditions([solo, collaboration], 'GUTS')).toEqual([
+      expect.objectContaining({ providerId: '8', explicit: true }),
+    ])
   })
 })

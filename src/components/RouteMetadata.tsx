@@ -23,6 +23,7 @@ export function metadataForPath(pathname: string) {
   if (section === 'help') return { title: 'Help & Support | The Commonplace', description: 'Find help for catalogs, collections, privacy, and account features.' }
   if (section === 'verify-email' || section === 'v') return { title: 'Verify Email | The Commonplace', description: 'Verify the email address connected to your Commonplace account.' }
   if (section === 'reset-password') return { title: 'Reset Password | The Commonplace', description: 'Choose a new password for your Commonplace account.' }
+  if (section === 'entries' && id) return { title: 'Reading | The Commonplace', description: 'Read a catalog entry and join its discussion on The Commonplace.' }
   if (section === 'users' && id) {
     const handle = readableSegment(id)
     return { title: `@${handle} | The Commonplace`, description: `View @${handle}'s public catalog and collections on The Commonplace.` }

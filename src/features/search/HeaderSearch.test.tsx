@@ -186,10 +186,10 @@ describe('recent search functionality', () => {
   })
 
   it('keeps recent searches isolated to the signed-in account', () => {
-    localStorage.setItem('the_commonplace_recent_media_searches_v3', JSON.stringify([
+    localStorage.setItem('the_commonplace_recent_media_searches_v4', JSON.stringify([
       { id: 'book-old', name: 'Jimmy recent', type: 'book' },
     ]))
-    localStorage.setItem('the_commonplace_recent_media_searches_v3:new-user-uid', JSON.stringify([
+    localStorage.setItem('the_commonplace_recent_media_searches_v4:new-user-uid', JSON.stringify([
       { id: 'book-new', name: 'New account recent', type: 'book' },
     ]))
 
@@ -213,6 +213,30 @@ describe('recent search functionality', () => {
 
     expect(screen.getByText('New account recent')).toBeInTheDocument()
     expect(screen.queryByText('Jimmy recent')).not.toBeInTheDocument()
+  })
+
+  it('keeps the explicit marker visible on recent songs and restores it when reopened', () => {
+    const onOpenEntity = vi.fn()
+    localStorage.setItem('the_commonplace_recent_media_searches_v4', JSON.stringify([{
+      id: 'song-101',
+      name: 'you seem pretty sad for a girl so in love',
+      subtitle: 'Olivia Rodrigo',
+      category: 'songs',
+      type: 'song',
+      explicit: true,
+    }]))
+
+    render(
+      <HeaderSearch
+        open query="" mode="media" mediaResults={[]} mediaLoading={false} resultLimit={6}
+        onOpenChange={vi.fn()} onQueryChange={vi.fn()} onModeChange={vi.fn()} onLoadMore={vi.fn()}
+        onOpenEntity={onOpenEntity} onOpenUser={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByLabelText('Explicit')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('you seem pretty sad for a girl so in love'))
+    expect(onOpenEntity).toHaveBeenCalledWith(expect.objectContaining({ id: 'song-101', explicit: true }))
   })
 
   it('renders only user recent searches in the Users tab', () => {

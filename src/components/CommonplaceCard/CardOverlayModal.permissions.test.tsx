@@ -69,6 +69,49 @@ describe('CardOverlayModal comment permissions', () => {
     ])
   })
 
+  it('shows the report action for another user\'s reading view', () => {
+    render(
+      <CardOverlayModal
+        entry={{ ...ENTRY, authorHandle: 'reader' }}
+        currentUserHandle="reader"
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'Report entry' })).toBeInTheDocument()
+  })
+
+  it('shows the reading-view edit action only when an owner handler is provided', () => {
+    const onEdit = vi.fn()
+    const { rerender } = render(
+      <CardOverlayModal
+        entry={{ ...ENTRY, ownerId: 'current-user', authorHandle: 'reader' }}
+        currentUserHandle="reader"
+        onClose={vi.fn()}
+        onEdit={onEdit}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit entry' }))
+    expect(onEdit).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('button', { name: 'Report entry' })).not.toBeInTheDocument()
+    const ownerActions = screen.getByLabelText('Entry actions')
+    expect(ownerActions).toHaveClass('entry-reading-actions')
+    expect(ownerActions.closest('.entry-reading-meta-row')).not.toBeNull()
+    expect(ownerActions.closest('.entry-reading-art-column')).toBeNull()
+    expect(ownerActions.querySelectorAll(':scope > button')).toHaveLength(3)
+
+    rerender(
+      <CardOverlayModal
+        entry={ENTRY}
+        currentUserHandle="reader"
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'Edit entry' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Report entry' })).toBeInTheDocument()
+  })
+
   it('shows delete only for the current user and hides another comment after reporting it', async () => {
     render(
       <CardOverlayModal
@@ -87,7 +130,7 @@ describe('CardOverlayModal comment permissions', () => {
     expect(within(otherComment as HTMLElement).queryByRole('button', { name: 'Delete comment' })).not.toBeInTheDocument()
 
     fireEvent.click(within(otherComment as HTMLElement).getByRole('button', { name: 'Report comment' }))
-    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'harassment_or_bullying' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'Harassment or bullying' }))
     fireEvent.click(screen.getByRole('button', { name: 'Submit report' }))
 
     await waitFor(() => expect(submitContentReport).toHaveBeenCalledWith(

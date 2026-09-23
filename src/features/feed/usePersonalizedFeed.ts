@@ -10,6 +10,7 @@ import {
 } from '../../services/feed'
 
 const REVEAL_SIZE = 20
+const MUTUAL_ID_KEY_PREFIX = 'mutual-follow:'
 
 type FeedBucket = {
   items: FeedItem[]
@@ -94,8 +95,12 @@ export function usePersonalizedFeed(user: User | null, category: FeedCategory, r
   }, [category, fetchBucket, ready, user])
 
   useEffect(() => {
-    if (!user?.uid || !personalizedHomeFeedEnabled) return
+    if (!user?.uid) return
     return subscribeMutualFollowIds(user.uid, (mutualIds) => {
+      Array.from(requestKeys.current).forEach((key) => {
+        if (key.startsWith(MUTUAL_ID_KEY_PREFIX)) requestKeys.current.delete(key)
+      })
+      mutualIds.forEach((id) => requestKeys.current.add(`${MUTUAL_ID_KEY_PREFIX}${user.uid}:${id}`))
       const allowed = new Set(mutualIds)
       setBuckets((current) => Object.fromEntries(Object.entries(current).map(([key, bucket]) => [
         key,
@@ -105,6 +110,12 @@ export function usePersonalizedFeed(user: User | null, category: FeedCategory, r
   }, [user?.uid])
 
   const bucket = buckets[category] || emptyBucket()
+  const activeMutualIdPrefix = user?.uid ? `${MUTUAL_ID_KEY_PREFIX}${user.uid}:` : ''
+  const mutualFollowIds = activeMutualIdPrefix
+    ? Array.from(requestKeys.current)
+      .filter((key) => key.startsWith(activeMutualIdPrefix))
+      .map((key) => key.slice(activeMutualIdPrefix.length))
+    : []
   const visibleItems = useMemo(
     () => bucket.items.slice(0, bucket.visibleCount),
     [bucket.items, bucket.visibleCount],
@@ -122,6 +133,11 @@ export function usePersonalizedFeed(user: User | null, category: FeedCategory, r
     if (current.hasMore && !current.loading) void fetchBucket(category, false, true)
   }, [category, fetchBucket, updateBucket])
 
+  const refresh = useCallback(
+    () => fetchBucket(category, true),
+    [category, fetchBucket],
+  )
+
   useEffect(() => {
     if (!ready || bucket.loading || !bucket.initialized || !bucket.hasMore) return
     if (bucket.items.length - bucket.visibleCount < REVEAL_SIZE) void fetchBucket(category)
@@ -136,6 +152,7 @@ export function usePersonalizedFeed(user: User | null, category: FeedCategory, r
     hasMore: bucket.visibleCount < bucket.items.length || bucket.hasMore,
     loadMore,
     retry: () => void fetchBucket(category, bucket.items.length === 0),
-    refresh: () => void fetchBucket(category, true),
+    refresh,
+    mutualFollowIds,
   }
 }

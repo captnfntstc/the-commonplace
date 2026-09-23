@@ -1,18 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  X,
   User,
   Calendar,
   BookOpen,
   Heart,
-  MessageSquare,
   Bookmark,
   Send,
   CornerUpLeft,
   Trash2,
   Flag,
-  AlertCircle,
+  Pencil,
 } from 'lucide-react'
 import { FormattedText } from './FormattedText'
 import { StarRating } from './CardHeader'
@@ -43,6 +41,7 @@ import {
 
 export interface OverlayEntry {
   id: string
+  ownerId?: string
   type: 'book' | 'album' | 'song' | 'film' | 'tv' | 'game'
   title: string
   creator: string
@@ -112,7 +111,7 @@ type InteractionReportTarget = {
 
 const EMPTY_COMMENTS: CommentItem[] = []
 
-interface CardOverlayModalProps {
+interface EntryReadingPageProps {
   entry: OverlayEntry | null
   onClose: () => void
   focusCommentId?: string
@@ -123,6 +122,7 @@ interface CardOverlayModalProps {
   likeCount?: number
   onToggleLike?: () => void
   onToggleSave?: () => void
+  onEdit?: () => void
   onOpenProfile?: (handle: string) => void
   currentUserHandle?: string
 }
@@ -144,9 +144,8 @@ function formatCommentTimestamp(value: string) {
   return Number.isNaN(timestamp.getTime()) ? value : timestamp.toLocaleString()
 }
 
-export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
+export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   entry,
-  onClose,
   focusCommentId,
   focusReplyId,
   focusRequestId,
@@ -155,6 +154,7 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   likeCount = 0,
   onToggleLike,
   onToggleSave,
+  onEdit,
   onOpenProfile,
   currentUserHandle,
 }) => {
@@ -183,6 +183,10 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     })
   }
 
+  useEffect(() => {
+    if (activeEntryId) window.scrollTo({ top: 0, behavior: 'auto' })
+  }, [activeEntryId])
+
   const [newCommentText, setNewCommentText] = useState('')
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest')
   const [replyingToId, setReplyingToId] = useState<string | null>(null)
@@ -196,7 +200,6 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   const [visibleCommentsCount, setVisibleCommentsCount] = useState(5)
   const [visibleRepliesCount, setVisibleRepliesCount] = useState<Record<string, number>>({})
   const [focusedInteractionId, setFocusedInteractionId] = useState<string | null>(null)
-  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false)
   const [reportToast, setReportToast] = useState<string | null>(null)
   const [postReportOpen, setPostReportOpen] = useState(false)
   const [interactionReportTarget, setInteractionReportTarget] = useState<InteractionReportTarget | null>(null)
@@ -283,42 +286,9 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
     })
   }
 
-  const hasUnsavedChanges = (): boolean => {
-    if (newCommentText.trim().length > 0) return true
-    return Object.values(replyTexts).some((t) => t && t.trim().length > 0)
-  }
-
-  const handleCloseAttempt = () => {
-    if (hasUnsavedChanges()) {
-      setShowUnsavedConfirm(true)
-    } else {
-      onClose()
-    }
-  }
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      const hasDraft = newCommentText.trim().length > 0
-        || Object.values(replyTexts).some((text) => text && text.trim().length > 0)
-      if (hasDraft) setShowUnsavedConfirm(true)
-      else onClose()
-    }
-    if (entry) {
-      document.body.style.overflow = 'hidden'
-      window.addEventListener('keydown', handleKeyDown)
-    }
-    return () => {
-      document.body.style.overflow = ''
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [entry, newCommentText, onClose, replyTexts])
-
   if (!entry) return null
 
   const currentAuthorHandle = currentAuthor.replace(/^@/, '')
-  const isPostOwner = !entry.authorHandle
-    || entry.authorHandle.replace(/^@/, '') === (currentUserHandle || currentAuthorHandle).replace(/^@/, '')
   const displayAuthorHandle = (entry.authorHandle || currentAuthorHandle).replace(/^@/, '')
 
   const IconComponent = typeIconMap[entry.type] || BookOpen
@@ -326,6 +296,19 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   const showDropCap = Boolean(entry.enableDropCap)
   const { firstChar, restText, isEmoji, isLowercase } = getDropCapParts(entry.reflection)
   const isSquare = entry.type === 'album' || entry.type === 'song'
+  const entryTypeLabel = {
+    book: 'Book',
+    album: 'Album',
+    song: 'Song',
+    film: 'Film',
+    tv: 'Show',
+    game: 'Game',
+  }[entry.type]
+  const passageLabel = entry.type === 'song' || entry.type === 'album'
+    ? 'Notable lyrics'
+    : entry.type === 'book'
+      ? 'Notable passage'
+      : 'Notable line'
 
   const handlePostComment = (e: React.FormEvent) => {
     e.preventDefault()
@@ -476,31 +459,21 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
   const visibleComments = sortedComments.slice(0, effectiveVisibleCommentsCount)
 
   return (
-    <AnimatePresence>
-      <div className="overlay-modal-root">
-        <motion.div
-          className="overlay-backdrop"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          onClick={handleCloseAttempt}
-        />
-
-        <motion.div
-          className={`overlay-modal tone-${entry.coverTone}`}
-          initial={{ opacity: 0, scale: 0.94, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.94, y: 20 }}
-          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-          role="dialog"
-          aria-modal="true"
-          aria-label={entry.title}
+    <main className={`entry-reading-page tone-${entry.coverTone}`}>
+      <div className="entry-reading-frame">
+        <motion.article
+          className="entry-reading-article"
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 16 }}
+          transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+          aria-labelledby="entry-reading-title"
         >
           {/* Toast Notification */}
           <AnimatePresence>
             {reportToast && (
               <motion.div
-                className="report-toast"
+                className="report-toast entry-reading-toast"
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
@@ -512,146 +485,119 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
           </AnimatePresence>
 
           {/* ── Top bar: icon | read-time | (spacer) | stars | close ── */}
-          <div className="overlay-topbar">
-            <div className="overlay-topbar-left">
-              <span className="overlay-type-icon" aria-label={entry.type}>
-                <IconComponent aria-hidden="true" />
-              </span>
-              <span className="overlay-topbar-divider" aria-hidden="true" />
-              <button
-                type="button"
-                className="overlay-author-pill"
-                onClick={() => onOpenProfile?.(displayAuthorHandle)}
-                title={`View @${displayAuthorHandle}'s profile`}
-              >
-                <User aria-hidden="true" />
-                <span>@{displayAuthorHandle}</span>
-              </button>
-              {entry.createdAt && (
-                <>
-                  <span className="overlay-topbar-divider" aria-hidden="true" />
-                  <span className="overlay-datetime-pill">
-                    <Calendar aria-hidden="true" />
-                    <span>{formatFullDateTime(entry.createdAt)}</span>
-                  </span>
-                </>
-              )}
+          <header className="entry-reading-hero">
+            <div className="entry-reading-primary">
+              <div className="entry-reading-art-column">
+              <div className={`entry-reading-cover ${isSquare ? 'is-square' : ''}`}>
+                {entry.coverUrl ? (
+                  <img src={entry.coverUrl} alt="" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="entry-reading-cover-fallback" aria-label={`No cover available for ${entry.title}`}>
+                    <IconComponent aria-hidden="true" />
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="overlay-topbar-right">
-              <StarRating rating={entry.rating} />
-              <button
-                className="overlay-close-btn"
-                type="button"
-                onClick={handleCloseAttempt}
-                aria-label="Close reading view"
-              >
-                <X aria-hidden="true" />
-              </button>
-            </div>
-          </div>
-
-          {/* ── Cover + Metadata ── */}
-          <div className="overlay-card-media">
-            <div className={`overlay-cover-wrapper ${isSquare ? 'is-square' : ''}`}>
-              {entry.coverUrl ? (
-                <img src={entry.coverUrl} alt={entry.title} className="overlay-cover-img" referrerPolicy="no-referrer" />
-              ) : (
-                <div className="overlay-cover-fallback">
-                  <IconComponent />
+              <div className="entry-reading-intro">
+              <div className="entry-reading-meta-row">
+                <div className="entry-reading-kicker">
+                  <span>{entryTypeLabel}</span>
+                  {entry.genre && <><i aria-hidden="true" /><span>{entry.genre}</span></>}
+                  {entry.year && <><i aria-hidden="true" /><span>{entry.year}</span></>}
                 </div>
-              )}
-            </div>
-
-            <div className="overlay-card-details">
-              <h2 className="overlay-title">
-                <span>{entry.title}</span>
+                <div className="entry-reading-actions" aria-label="Entry actions">
+                  <button
+                    type="button"
+                    className={isLiked ? 'is-liked has-count' : 'has-count'}
+                    onClick={onToggleLike}
+                    aria-label={isLiked ? `Unlike, ${likeCount} likes` : `Like, ${likeCount} likes`}
+                    title={isLiked ? 'Unlike' : 'Like'}
+                    aria-pressed={isLiked}
+                  >
+                    <Heart aria-hidden="true" fill={isLiked ? 'currentColor' : 'none'} />
+                    <span>{likeCount}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={isSaved ? 'is-saved' : ''}
+                    onClick={onToggleSave}
+                    aria-label={isSaved ? 'Unsave entry' : 'Save entry'}
+                    title={isSaved ? 'Unsave entry' : 'Save entry'}
+                    aria-pressed={isSaved}
+                  >
+                    <Bookmark aria-hidden="true" fill={isSaved ? 'currentColor' : 'none'} />
+                  </button>
+                  {onEdit ? (
+                    <button type="button" onClick={onEdit} aria-label="Edit entry" title="Edit entry">
+                      <Pencil aria-hidden="true" />
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => setPostReportOpen(true)} aria-label="Report entry" title="Report entry">
+                      <Flag aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <h1 id="entry-reading-title">
+                {entry.title}
                 {(entry.type === 'song' || entry.type === 'album') && entry.explicit && (
                   <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>
                 )}
-              </h2>
-              {entry.creator && <p className="overlay-creator">{entry.creator}</p>}
-              {entry.genre && <span className="overlay-genre-pill">{entry.genre}</span>}
-              {entry.provider && entry.provider !== 'Manual' && (
-                <p className="overlay-provider">
-                  {entry.provider}{entry.year ? ` (${entry.year})` : ''}
-                </p>
-              )}
-
-              {entry.favoritePassage && (
-                <div className="overlay-favorite-passage">
-                  <span className="overlay-passage-quote" aria-hidden="true">&#x201C;</span>
-                  <div className="overlay-passage-text">
-                    <FormattedText text={entry.favoritePassage} align={entry.passageAlign} />
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ── Reflection body ── */}
-          {entry.reflection && (
-            <div className="overlay-reflection-body">
-              {showDropCap ? (
-                <div className="dropcap-container">
-                  <span className={`dropcap-letter ${isEmoji ? 'is-emoji' : ''} ${isLowercase ? 'is-lowercase' : ''}`}>
-                    {firstChar}
-                  </span>
-                  <span className="dropcap-body">
-                    <FormattedText text={restText} align={entry.reflectionAlign} />
-                  </span>
-                </div>
-              ) : (
-                <FormattedText text={entry.reflection} align={entry.reflectionAlign} />
-              )}
-            </div>
-          )}
-
-          {/* ── Social bar ── */}
-          <div className="overlay-social-bar">
-            <div className="overlay-social-left">
-              <button
-                type="button"
-                className={`overlay-icon-action ${isLiked ? 'is-liked' : ''}`}
-                onClick={onToggleLike}
-                title={isLiked ? 'Unlike' : 'Like'}
-              >
-                <Heart size={16} fill={isLiked ? 'currentColor' : 'none'} />
-                <span>{likeCount}</span>
-              </button>
-
-              <button
-                type="button"
-                className={`overlay-icon-action ${isSaved ? 'is-saved' : ''}`}
-                onClick={onToggleSave}
-                title={isSaved ? 'Unsave' : 'Save entry'}
-              >
-                <Bookmark size={16} fill={isSaved ? 'currentColor' : 'none'} />
-              </button>
-
-              {!isPostOwner && (
-                <button
-                  type="button"
-                  className="overlay-icon-action"
-                  onClick={() => setPostReportOpen(true)}
-                  title="Report post"
-                  aria-label="Report post"
-                >
-                  <Flag size={15} />
+              </h1>
+              {entry.creator && <p className="entry-reading-creator">{entry.creator}</p>}
+              <div className="entry-reading-rating" aria-label={`Rated ${entry.rating} out of 5`}>
+                <StarRating rating={entry.rating} />
+                <span>{entry.rating > 0 ? `${entry.rating}/5` : 'Not rated'}</span>
+              </div>
+              <div className="entry-reading-byline">
+                <button type="button" onClick={() => onOpenProfile?.(displayAuthorHandle)} title={`View @${displayAuthorHandle}'s profile`}>
+                  <span className="entry-reading-avatar" aria-hidden="true"><User /></span>
+                  <strong>@{displayAuthorHandle}</strong>
                 </button>
-              )}
+                {entry.createdAt && (
+                  <span className="entry-reading-date"><Calendar aria-hidden="true" /><span>{formatFullDateTime(entry.createdAt)}</span></span>
+                )}
+              </div>
+            </div>
             </div>
 
-            <span className="overlay-comment-count">
-              <MessageSquare size={15} />
-              <span>({comments.length})</span>
-            </span>
+            {entry.favoritePassage && (
+              <blockquote className="entry-reading-quote">
+                <span className="entry-reading-quote-mark" aria-hidden="true">&#x201C;</span>
+                <div><span>{passageLabel}</span><FormattedText text={entry.favoritePassage} align={entry.passageAlign} /></div>
+              </blockquote>
+            )}
+          </header>
+
+          <div className="entry-reading-body-grid">
+            <section className="entry-reading-reflection" aria-labelledby="entry-reflection-heading">
+              <div className="entry-reading-section-heading"><span>Personal notes</span><h2 id="entry-reflection-heading">Reflection</h2></div>
+              {entry.reflection ? (
+                <div className="entry-reading-prose">
+                  {showDropCap ? (
+                    <div className="dropcap-container">
+                      <span className={`dropcap-letter ${isEmoji ? 'is-emoji' : ''} ${isLowercase ? 'is-lowercase' : ''}`}>{firstChar}</span>
+                      <span className="dropcap-body"><FormattedText text={restText} align={entry.reflectionAlign} reflowPlainText /></span>
+                    </div>
+                  ) : <FormattedText text={entry.reflection} align={entry.reflectionAlign} reflowPlainText />}
+                </div>
+              ) : <p className="entry-reading-empty-reflection">No written reflection was added to this entry.</p>}
+            </section>
           </div>
 
+          {/* ── Cover + Metadata ── */}
+          {/* ── Reflection body ── */}
+          {/* ── Social bar ── */}
           {/* ── Comments & Discussion ── */}
-          <div className="overlay-comments-section">
-            <div className="overlay-comments-header">
-              <h3>Comments &amp; Discussion ({comments.length})</h3>
+          <section className="entry-reading-discussion" aria-labelledby="entry-discussion-heading">
+            <div className="entry-reading-discussion-intro">
+              <span>Community</span>
+              <h2 id="entry-discussion-heading">Join the discussion</h2>
+              <p>{comments.length === 0 ? 'Be the first to leave a thoughtful response.' : `${comments.length} ${comments.length === 1 ? 'response' : 'responses'} so far.`}</p>
+            </div>
+            <div className="overlay-comments-header entry-reading-sort-row">
+              <span className="entry-reading-response-count">Responses ({comments.length})</span>
               <button
                 type="button"
                 className="overlay-sort-btn"
@@ -989,54 +935,10 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
                 <span>Post</span>
               </button>
             </form>
-          </div>
-        </motion.div>
+          </section>
+        </motion.article>
+      </div>
 
-        {/* Unsaved Changes Confirmation Modal */}
-        <AnimatePresence>
-          {showUnsavedConfirm && (
-            <div className="modal-backdrop" style={{ zIndex: 1100 }} onClick={() => setShowUnsavedConfirm(false)}>
-              <motion.div
-                className="settings-modal"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                onClick={(e) => e.stopPropagation()}
-                style={{ maxWidth: 380, padding: 24 }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, color: 'var(--accent)' }}>
-                  <AlertCircle size={20} />
-                  <h3 style={{ margin: 0, fontSize: 16, fontFamily: "'Playfair Display', serif" }}>Unsaved Comment</h3>
-                </div>
-                <p style={{ fontSize: 13, color: 'var(--secondary)', lineHeight: 1.5, margin: '0 0 20px 0' }}>
-                  You have an unfinished comment or reply. Are you sure you want to discard it?
-                </p>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={() => setShowUnsavedConfirm(false)}
-                  >
-                    Keep Editing
-                  </button>
-                  <button
-                    type="button"
-                    className="primary-btn"
-                    style={{ background: '#e57373', borderColor: '#e57373', color: '#fff' }}
-                    onClick={() => {
-                      setShowUnsavedConfirm(false)
-                      setNewCommentText('')
-                      setReplyTexts({})
-                      onClose()
-                    }}
-                  >
-                    Discard &amp; Close
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
         <ReportDialog
           open={postReportOpen}
           targetType="post"
@@ -1090,7 +992,10 @@ export const CardOverlayModal: React.FC<CardOverlayModalProps> = ({
             window.setTimeout(() => setReportToast(null), 3500)
           }}
         />
-      </div>
-    </AnimatePresence>
+      </main>
   )
 }
+
+// Backward-compatible export for permission-focused component tests and any
+// integrations that have not migrated to the dedicated page name yet.
+export const CardOverlayModal = EntryReadingPage

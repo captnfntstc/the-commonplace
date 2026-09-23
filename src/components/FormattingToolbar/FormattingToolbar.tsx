@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import {
   Bold,
   Italic,
@@ -13,6 +13,7 @@ import {
   Unlink,
   Type,
 } from 'lucide-react'
+import { type Alignment } from '../CommonplaceCard/FormattedText'
 
 interface FormattingToolbarProps {
   editorRef: React.RefObject<HTMLDivElement | null>
@@ -20,6 +21,8 @@ interface FormattingToolbarProps {
   onChange: (value: string) => void
   enableDropCap?: boolean
   onToggleDropCap?: () => void
+  alignment?: Alignment
+  onAlignmentChange?: (alignment: Alignment) => void
 }
 
 export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
@@ -27,6 +30,8 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
   onChange,
   enableDropCap,
   onToggleDropCap,
+  alignment = 'left',
+  onAlignmentChange,
 }) => {
   const [activeState, setActiveState] = useState({
     bold: false,
@@ -38,7 +43,7 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
     align: 'left' as 'left' | 'center' | 'right' | 'justify',
   })
 
-  const isInsideNode = (nodeNames: string[]): boolean => {
+  const isInsideNode = useCallback((nodeNames: string[]): boolean => {
     const selection = window.getSelection()
     if (!selection || selection.rangeCount === 0) return false
     let node: Node | null = selection.getRangeAt(0).commonAncestorContainer
@@ -52,9 +57,9 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
       node = node.parentNode
     }
     return false
-  }
+  }, [editorRef])
 
-  const isFormatted = (command: string, tagNames: string[]): boolean => {
+  const isFormatted = useCallback((command: string, tagNames: string[]): boolean => {
     try {
       if (document.queryCommandState(command)) return true
     } catch {
@@ -98,9 +103,9 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
     }
 
     return false
-  }
+  }, [editorRef])
 
-  const updateActiveStates = () => {
+  const updateActiveStates = useCallback(() => {
     if (!editorRef.current) return
     try {
       const isBold = isFormatted('bold', ['b', 'strong'])
@@ -110,7 +115,7 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
       const isQuote = isInsideNode(['blockquote'])
       const isLink = isInsideNode(['a'])
 
-      let align: 'left' | 'center' | 'right' | 'justify' = 'left'
+      let align: Alignment = alignment
       if (document.queryCommandState('justifyCenter')) align = 'center'
       else if (document.queryCommandState('justifyRight')) align = 'right'
       else if (document.queryCommandState('justifyFull')) align = 'justify'
@@ -127,7 +132,7 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
     } catch {
       // Ignore if disconnected
     }
-  }
+  }, [alignment, editorRef, isFormatted, isInsideNode])
 
   useEffect(() => {
     const handleEvents = () => {
@@ -143,11 +148,11 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
       editor.addEventListener('input', handleEvents)
     }
 
-    // Trigger initial check
-    updateActiveStates()
+    const initialFrame = window.requestAnimationFrame(updateActiveStates)
 
     return () => {
       document.removeEventListener('selectionchange', handleEvents)
+      window.cancelAnimationFrame(initialFrame)
       if (editor) {
         editor.removeEventListener('keyup', handleEvents)
         editor.removeEventListener('mouseup', handleEvents)
@@ -155,7 +160,7 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
         editor.removeEventListener('input', handleEvents)
       }
     }
-  }, [editorRef.current])
+  }, [editorRef, updateActiveStates])
 
   const execCmd = (command: string, valueArg: string | undefined = undefined) => {
     const editor = editorRef.current
@@ -171,6 +176,12 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
       }
     }, 0)
     setTimeout(() => updateActiveStates(), 50)
+  }
+
+  const applyAlignment = (command: string, nextAlignment: Alignment) => {
+    onAlignmentChange?.(nextAlignment)
+    setActiveState((current) => ({ ...current, align: nextAlignment }))
+    execCmd(command)
   }
 
   const toggleLink = () => {
@@ -306,7 +317,7 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
           className={`toolbar-btn ${activeState.align === 'left' ? 'active' : ''}`}
           title="Align Left"
           onMouseDown={handleMouseDown}
-          onClick={() => execCmd('justifyLeft')}
+          onClick={() => applyAlignment('justifyLeft', 'left')}
         >
           <AlignLeft aria-hidden="true" />
         </button>
@@ -315,7 +326,7 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
           className={`toolbar-btn ${activeState.align === 'center' ? 'active' : ''}`}
           title="Align Center"
           onMouseDown={handleMouseDown}
-          onClick={() => execCmd('justifyCenter')}
+          onClick={() => applyAlignment('justifyCenter', 'center')}
         >
           <AlignCenter aria-hidden="true" />
         </button>
@@ -324,7 +335,7 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
           className={`toolbar-btn ${activeState.align === 'right' ? 'active' : ''}`}
           title="Align Right"
           onMouseDown={handleMouseDown}
-          onClick={() => execCmd('justifyRight')}
+          onClick={() => applyAlignment('justifyRight', 'right')}
         >
           <AlignRight aria-hidden="true" />
         </button>
@@ -333,7 +344,7 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
           className={`toolbar-btn ${activeState.align === 'justify' ? 'active' : ''}`}
           title="Justify"
           onMouseDown={handleMouseDown}
-          onClick={() => execCmd('justifyFull')}
+          onClick={() => applyAlignment('justifyFull', 'justify')}
         >
           <AlignJustify aria-hidden="true" />
         </button>
@@ -346,7 +357,7 @@ export const FormattingToolbar: React.FC<FormattingToolbarProps> = ({
           <div className="toolbar-group">
             <button
               type="button"
-              className={`toolbar-btn ${Boolean(enableDropCap) ? 'active' : ''}`}
+              className={`toolbar-btn ${enableDropCap ? 'active' : ''}`}
               title="Toggle Drop Cap (Per Entry)"
               onMouseDown={handleMouseDown}
               onClick={onToggleDropCap}

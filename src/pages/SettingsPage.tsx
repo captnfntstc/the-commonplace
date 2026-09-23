@@ -18,6 +18,7 @@ import {
   type SettingsNavTab,
 } from '../components/Settings/SettingsSidebar'
 import { SettingsSection } from '../components/Settings/SettingsSection'
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 import { SettingsField } from '../components/Settings/SettingsField'
 import { SettingsToggle } from '../components/Settings/SettingsToggle'
 import type { UserProfileState } from '../types/userProfile'
@@ -119,6 +120,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     currentUser,
     changeEmail,
     changePassword,
+    setAppleAccountLinked,
     setGoogleAccountLinked,
     deactivateAccount,
     deleteAccount,
@@ -148,6 +150,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [recommendationResetting, setRecommendationResetting] = useState(false)
   const [recommendationNotice, setRecommendationNotice] = useState('')
   const deactivationSectionRef = useRef<HTMLDivElement>(null)
+  const deactivationDialogRef = useAccessibleDialog<HTMLFormElement>({
+    open: deactivationDialogOpen,
+    onClose: () => setDeactivationDialogOpen(false),
+    closeOnEscape: !deactivationLoading,
+  })
+  const deleteDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: deleteDialogOpen,
+    onClose: () => setDeleteDialogOpen(false),
+    closeOnEscape: !deleteLoading,
+  })
   const verificationCooldownLabel = `${Math.floor(verificationEmailCooldownSeconds / 60)}:${String(verificationEmailCooldownSeconds % 60).padStart(2, '0')}`
   const currentEmail = currentUser?.email || userProfile.email
 
@@ -280,6 +292,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   const [accountStatuses, setAccountStatuses] = useState<Record<string, ConnectionStatus>>({
     google: (currentUser?.providerData || []).some(({ providerId }) => providerId === 'google.com') ? 'connected' : 'disconnected',
+    apple: (currentUser?.providerData || []).some(({ providerId }) => providerId === 'apple.com') ? 'connected' : 'disconnected',
   })
   const [linkedAccountNotice, setLinkedAccountNotice] = useState('')
   const [linkedAccountError, setLinkedAccountError] = useState('')
@@ -292,9 +305,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setAccountStatuses((prev) => ({ ...prev, [id]: 'connecting' }))
     try {
       const shouldConnect = current !== 'connected'
-      await setGoogleAccountLinked(shouldConnect)
+      const provider = PROVIDERS.find((item) => item.id === id)
+      if (id === 'apple') await setAppleAccountLinked(shouldConnect)
+      else if (id === 'google') await setGoogleAccountLinked(shouldConnect)
+      else return
       setAccountStatuses((prev) => ({ ...prev, [id]: shouldConnect ? 'connected' : 'disconnected' }))
-      setLinkedAccountNotice(`Google ${shouldConnect ? 'connected' : 'disconnected'} successfully.`)
+      setLinkedAccountNotice(`${provider?.name || 'Account'} ${shouldConnect ? 'connected' : 'disconnected'} successfully.`)
     } catch (error) {
       setAccountStatuses((prev) => ({ ...prev, [id]: current }))
       setLinkedAccountError((error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to update this linked account.')
@@ -900,7 +916,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
               <SettingsSection title="Linked Accounts">
                 <div className="linked-accounts-editorial-list">
-                  {PROVIDERS.filter(({ id }) => id === 'google').map((provider) => {
+                  {PROVIDERS.filter(({ id }) => id === 'google' || id === 'apple').map((provider) => {
                     const status = accountStatuses[provider.id] || 'disconnected'
                     return (
                       <LinkedAccountCard
@@ -964,10 +980,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       {deactivationDialogOpen && (
         <div className="modal-backdrop" onClick={() => !deactivationLoading && setDeactivationDialogOpen(false)}>
           <form
+            ref={deactivationDialogRef}
             className="settings-modal settings-deactivation-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="deactivation-title"
+            tabIndex={-1}
             onSubmit={handleDeactivateAccount}
             onClick={(event) => event.stopPropagation()}
           >
@@ -1063,10 +1081,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       {deleteDialogOpen && (
         <div className="modal-backdrop" onClick={() => !deleteLoading && setDeleteDialogOpen(false)}>
           <div
+            ref={deleteDialogRef}
             className="settings-modal settings-delete-account-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="delete-account-title"
+            tabIndex={-1}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="settings-delete-account-icon"><Trash2 aria-hidden="true" /></div>

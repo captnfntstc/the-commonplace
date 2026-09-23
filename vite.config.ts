@@ -8,6 +8,41 @@ export default defineConfig(({ mode }) => {
 
   return {
   plugins: [react(), createIgdbDevPlugin(serverEnv)],
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'firebase-auth',
+              test: /node_modules[\\/]@firebase[\\/]auth/,
+              priority: 30,
+            },
+            {
+              name: 'firebase-firestore',
+              test: /node_modules[\\/]@firebase[\\/]firestore/,
+              priority: 30,
+            },
+            {
+              name: 'firebase-core',
+              test: /node_modules[\\/](?:firebase|@firebase)[\\/]/,
+              priority: 20,
+            },
+            {
+              name: 'motion',
+              test: /node_modules[\\/](?:framer-motion|motion-dom|motion-utils)[\\/]/,
+              priority: 20,
+            },
+            {
+              name: 'react-core',
+              test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/,
+              priority: 20,
+            },
+          ],
+        },
+      },
+    },
+  },
   server: {
     host: true,
     port: 5173,

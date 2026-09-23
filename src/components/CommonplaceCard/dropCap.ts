@@ -1,4 +1,4 @@
-import { stripHtmlAlignment } from './FormattedText'
+import { stripHtmlAlignment } from './formattedTextUtils'
 
 interface GraphemeSegment {
   segment: string

@@ -21,7 +21,7 @@ import {
   linkWithPopup,
   unlink,
 } from 'firebase/auth'
-import { auth, googleProvider, isFirebaseConfigured } from '../services/firebase'
+import { appleProvider, auth, googleProvider, isFirebaseConfigured } from '../services/firebase'
 import { loadUserProfile, reactivateUserAccount, saveUserProfile } from '../services/cloudData'
 import { PENDING_SIGNUP_PROFILE_KEY, profileFromAuthUser } from '../features/profiles/accountProfile'
 
@@ -31,12 +31,14 @@ interface AuthContextType {
   login: (identifier: string, pass: string, keepSignedIn?: boolean) => Promise<void>
   signup: (email: string, pass: string, displayName?: string, handle?: string, birthday?: string) => Promise<void>
   loginWithGoogle: (keepSignedIn?: boolean, birthday?: string) => Promise<void>
+  loginWithApple: (keepSignedIn?: boolean, birthday?: string) => Promise<void>
   logout: () => Promise<void>
   deactivateAccount: (answers: AccountDeactivationAnswers) => Promise<void>
   deleteAccount: () => Promise<void>
   changeEmail: (newEmail: string) => Promise<void>
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   setGoogleAccountLinked: (linked: boolean) => Promise<void>
+  setAppleAccountLinked: (linked: boolean) => Promise<void>
   resendVerificationEmail: () => Promise<void>
   refreshEmailVerification: () => Promise<boolean>
   verificationEmailCooldownSeconds: number
@@ -214,14 +216,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     }
   }
 
-  const loginWithGoogle = async (keepSignedIn = true, birthday?: string) => {
-    requireFirebase()
-    await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
-    const credential = await signInWithPopup(auth, googleProvider)
+  const finishSocialLogin = async (
+    credential: UserCredential,
+    providerName: 'Google' | 'Apple',
+    birthday?: string,
+  ) => {
     const isNewAccount = getAdditionalUserInfo(credential)?.isNewUser === true
     if (isNewAccount && !birthday) {
       await deleteUser(credential.user).catch(() => undefined)
-      throw new Error('New Google accounts must be created from the registration page with a valid date of birth.')
+      throw new Error(`New ${providerName} accounts must be created from the registration page with a valid date of birth.`)
     }
     if (birthday) {
       const existingProfile = isNewAccount ? null : await loadUserProfile(credential.user.uid).catch(() => null)
@@ -233,6 +236,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
       )
     }
     await reactivateUserAccount(credential.user.uid)
+  }
+
+  const loginWithGoogle = async (keepSignedIn = true, birthday?: string) => {
+    requireFirebase()
+    await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
+    const credential = await signInWithPopup(auth, googleProvider)
+    await finishSocialLogin(credential, 'Google', birthday)
+  }
+
+  const loginWithApple = async (keepSignedIn = true, birthday?: string) => {
+    requireFirebase()
+    await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
+    const credential = await signInWithPopup(auth, appleProvider)
+    await finishSocialLogin(credential, 'Apple', birthday)
   }
 
   const logout = async () => {
@@ -332,6 +349,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     setAuthRefreshVersion((version) => version + 1)
   }
 
+  const setAppleAccountLinked = async (linked: boolean) => {
+    requireFirebase()
+    if (!currentUser) throw new Error('You need to log in before changing linked accounts.')
+    const providers = currentUser.providerData || []
+    const hasApple = providers.some(({ providerId }) => providerId === 'apple.com')
+    if (linked && !hasApple) {
+      await linkWithPopup(currentUser, appleProvider)
+    } else if (!linked && hasApple) {
+      if (providers.length <= 1) throw new Error('Add another sign-in method before disconnecting Apple.')
+      await unlink(currentUser, 'apple.com')
+    }
+    setAuthRefreshVersion((version) => version + 1)
+  }
+
   const resendVerificationEmail = async () => {
     requireFirebase()
     if (!currentUser) throw new Error('You need to log in before verifying your email.')
@@ -369,12 +400,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     login,
     signup,
     loginWithGoogle,
+    loginWithApple,
     logout,
     deactivateAccount,
     deleteAccount,
     changeEmail,
     changePassword,
     setGoogleAccountLinked,
+    setAppleAccountLinked,
     resendVerificationEmail,
     refreshEmailVerification,
     verificationEmailCooldownSeconds: Math.max(0, Math.ceil((verificationCooldownUntil - verificationClock) / 1000)),

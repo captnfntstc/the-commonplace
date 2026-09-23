@@ -7,9 +7,6 @@ interface CardReflectionProps {
   reflectionAlign?: Alignment
   enableDropCap?: boolean
   expanded: boolean
-  onEdit?: () => void
-  onDelete?: () => void
-  onExpandOverlay?: () => void
 }
 
 export const CardReflection: React.FC<CardReflectionProps> = ({
@@ -17,9 +14,6 @@ export const CardReflection: React.FC<CardReflectionProps> = ({
   reflectionAlign,
   enableDropCap,
   expanded,
-  onEdit,
-  onDelete,
-  onExpandOverlay,
 }) => {
   return (
     <HybridScrollVariant
@@ -27,9 +21,6 @@ export const CardReflection: React.FC<CardReflectionProps> = ({
       reflectionAlign={reflectionAlign}
       enableDropCap={enableDropCap}
       expanded={expanded}
-      onEdit={onEdit}
-      onDelete={onDelete}
-      onExpandOverlay={onExpandOverlay}
     />
   )
 }

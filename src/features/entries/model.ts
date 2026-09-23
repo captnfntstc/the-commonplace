@@ -1,10 +1,10 @@
 import { BookOpen } from 'lucide-react'
-import type { Alignment } from '../../components/CommonplaceCard/FormattedText'
-import { stripHtmlAlignment } from '../../components/CommonplaceCard/FormattedText'
+import { stripHtmlAlignment, type Alignment } from '../../components/CommonplaceCard/formattedTextUtils'
 import type { MetadataResult, MetadataType } from '../../metadata'
 import { resolveArtworkUrl } from '../../utils/artwork'
 import { getEntryTypeIcon } from '../../utils/mediaIcons'
 import { isLegacySeedEntry } from '../../utils/legacySeedCleanup'
+import { cleanDisplayText } from '../../utils/text'
 
 export type EntryType = MetadataType
 export type CoverTone = 'gold' | 'rose' | 'sage' | 'blue' | 'violet' | 'ember'
@@ -19,6 +19,7 @@ export type Entry = {
   providerId: string
   genre?: string
   rating: number
+  lyrics?: string
   favoritePassage: string
   reflection: string
   reflectionAlign?: Alignment
@@ -46,6 +47,7 @@ const PENDING_ENTRY_SYNC_STORAGE_PREFIX = 'the-commonplace.pending-entry-sync.'
 export type PendingEntrySync = {
   token: string
   disabledCommentEntryIds: string[]
+  pendingPostIds: string[]
 }
 
 export const entryTypes: Array<{
@@ -113,6 +115,11 @@ export function loadEntries(userId?: string | null): Entry[] {
         const { cleanText: cleanPas, align: pasAlign } = stripHtmlAlignment(entry.favoritePassage || '')
         return {
           ...entry,
+          title: cleanDisplayText(entry.title),
+          creator: cleanDisplayText(entry.creator),
+          provider: cleanDisplayText(entry.provider),
+          genre: cleanDisplayText(entry.genre),
+          summary: cleanDisplayText(entry.summary),
           reflection: cleanRef,
           favoritePassage: cleanPas,
           reflectionAlign: entry.reflectionAlign || refAlign || 'left',
@@ -132,10 +139,15 @@ function pendingEntrySyncStorageKey(userId: string) {
   return `${PENDING_ENTRY_SYNC_STORAGE_PREFIX}${userId}`
 }
 
-export function markEntriesPendingSync(userId: string, disabledCommentEntryIds: string[]) {
+export function markEntriesPendingSync(
+  userId: string,
+  disabledCommentEntryIds: string[],
+  pendingPostIds: string[] = loadPendingEntrySync(userId)?.pendingPostIds || [],
+) {
   const pending: PendingEntrySync = {
     token: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     disabledCommentEntryIds,
+    pendingPostIds: Array.from(new Set(pendingPostIds)),
   }
   localStorage.setItem(pendingEntrySyncStorageKey(userId), JSON.stringify(pending))
   return pending
@@ -150,6 +162,9 @@ export function loadPendingEntrySync(userId: string): PendingEntrySync | null {
       disabledCommentEntryIds: Array.isArray(parsed.disabledCommentEntryIds)
         ? parsed.disabledCommentEntryIds.filter((value: unknown): value is string => typeof value === 'string')
         : [],
+      pendingPostIds: Array.isArray(parsed.pendingPostIds)
+        ? parsed.pendingPostIds.filter((value: unknown): value is string => typeof value === 'string')
+        : [],
     }
   } catch {
     return null
@@ -157,8 +172,9 @@ export function loadPendingEntrySync(userId: string): PendingEntrySync | null {
 }
 
 export function clearPendingEntrySync(userId: string, token: string) {
-  if (loadPendingEntrySync(userId)?.token !== token) return
+  if (loadPendingEntrySync(userId)?.token !== token) return false
   localStorage.removeItem(pendingEntrySyncStorageKey(userId))
+  return true
 }
 
 export function reconcileEntrySnapshots(cloudEntries: Entry[], localEntries: Entry[]) {

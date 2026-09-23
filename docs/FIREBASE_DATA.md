@@ -18,6 +18,20 @@ The app uses Firebase Authentication for identity and Cloud Firestore for accoun
 
 The configured Firebase project is selected locally by the Firebase CLI; do not commit service-account credentials or a populated `.env.local`.
 
+## Sign in with Apple
+
+Apple authentication is implemented through Firebase Authentication. Complete these provider-side steps before the Apple button can work in production:
+
+1. Use an active Apple Developer Program account. In Certificates, Identifiers & Profiles, enable **Sign in with Apple** on the primary App ID.
+2. Create a **Services ID** for the website, associate it with the primary App ID, and register every production domain.
+3. Add Firebase's callback as the return URL: `https://YOUR_FIREBASE_PROJECT_ID.firebaseapp.com/__/auth/handler`.
+4. Create a Sign in with Apple private key and note its Key ID and the Apple Team ID.
+5. In Firebase Console → Authentication → Sign-in method, enable Apple and enter the Services ID, Team ID, Key ID, and private key.
+6. Add local and production hosts to Firebase Authentication's **Authorized domains**. Apple requires a valid HTTPS production domain; use the Firebase emulator or an HTTPS tunnel for end-to-end local testing.
+7. If users may choose Hide My Email, register Firebase's email-sending domain with Apple's private email relay so verification and account emails reach relay addresses.
+
+The Apple private key is configured only in Apple/Firebase consoles. Never put it in `.env.local`, `VITE_*` variables, or browser code. Apple only returns a person's name on the first authorization, so the app must preserve the initial Firebase profile data.
+
 ## Stored data
 
 ```text

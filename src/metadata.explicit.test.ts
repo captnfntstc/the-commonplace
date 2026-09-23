@@ -3,6 +3,7 @@ import {
   clearMetadataCache,
   fetchItunesAlbumDetails,
   isExplicitItunesTrack,
+  preferExplicitSongSearchItems,
 } from './metadata'
 
 describe('track-level explicit metadata', () => {
@@ -15,6 +16,17 @@ describe('track-level explicit metadata', () => {
       contentAdvisoryRating: 'Clean',
     })).toBe(false)
     expect(isExplicitItunesTrack({ trackExplicitness: 'explicit' })).toBe(true)
+  })
+
+  it('makes the explicit recording canonical and removes standalone clean edits from search', () => {
+    const items = preferExplicitSongSearchItems([
+      { trackId: 1, trackName: 'Long Song Title', artistName: 'Test Artist', trackExplicitness: 'cleaned' },
+      { trackId: 2, trackName: 'Long Song Title', artistName: 'Test Artist & Guest', trackExplicitness: 'explicit' },
+      { trackId: 3, trackName: 'Naturally Radio Safe', artistName: 'Test Artist', trackExplicitness: 'notExplicit' },
+      { trackId: 4, trackName: 'Missing Original (Clean)', artistName: 'Test Artist', trackExplicitness: 'cleaned' },
+    ])
+
+    expect(items.map((item) => item.trackId)).toEqual([2, 3])
   })
 
   it('keeps the album explicit while marking only individually explicit tracks', async () => {
