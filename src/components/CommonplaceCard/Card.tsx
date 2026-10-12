@@ -173,12 +173,14 @@ export const Card: React.FC<CardProps> = ({
       ))}
 
       {/* Reflection expansion component */}
-      <CardReflection
-        reflection={entry.reflection}
-        reflectionAlign={entry.reflectionAlign}
-        enableDropCap={entry.enableDropCap}
-        expanded={expanded && isExpandable}
-      />
+      {isExpandable && (
+        <CardReflection
+          reflection={entry.reflection}
+          reflectionAlign={entry.reflectionAlign}
+          enableDropCap={entry.enableDropCap}
+          expanded={expanded}
+        />
+      )}
 
       {/* At-A-Glance Stat Bar & Actions */}
       <div className="card-glance-bar">

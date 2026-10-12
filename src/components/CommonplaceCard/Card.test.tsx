@@ -90,6 +90,16 @@ describe('card expansion click area', () => {
     expect(onToggle).toHaveBeenCalledOnce()
   })
 
+  it('keeps collapsed reflection content mounted for immediate expansion', () => {
+    const { container } = renderCard()
+    const reflection = container.querySelector('.card-reflection')
+
+    expect(reflection).toBeInTheDocument()
+    expect(reflection).not.toHaveClass('expanded')
+    expect(reflection).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByText('A thoughtful reflection.')).toBeInTheDocument()
+  })
+
   it('is not expandable when the entry has no visible reflection', () => {
     const { container, onToggle } = renderCard({
       entry: { ...ENTRY, reflection: '<p><br></p>' },

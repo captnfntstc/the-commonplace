@@ -19,6 +19,7 @@ import { getDropCapParts } from './dropCap'
 import { insertMention, mentionAtCursor, type MentionMatch } from './mentions'
 import { getEntryTypeIcon } from '../../utils/mediaIcons'
 import { useAuth } from '../../context/AuthContext'
+import { useAccessibleDialog } from '../../hooks/useAccessibleDialog'
 import { ReportDialog } from '../Reports/ReportDialog'
 import {
   hideReportedInteraction,
@@ -203,6 +204,19 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   const [reportToast, setReportToast] = useState<string | null>(null)
   const [postReportOpen, setPostReportOpen] = useState(false)
   const [interactionReportTarget, setInteractionReportTarget] = useState<InteractionReportTarget | null>(null)
+  const [commentDeleteTarget, setCommentDeleteTarget] = useState<CommentItem | null>(null)
+  const [commentDeletePending, setCommentDeletePending] = useState(false)
+  const [commentDeleteError, setCommentDeleteError] = useState<string | null>(null)
+  const closeCommentDeleteDialog = () => {
+    if (commentDeletePending) return
+    setCommentDeleteTarget(null)
+    setCommentDeleteError(null)
+  }
+  const commentDeleteDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(commentDeleteTarget),
+    onClose: closeCommentDeleteDialog,
+    closeOnEscape: !commentDeletePending,
+  })
   useEffect(() => {
     if (!activeEntryId || !cloudUserId || !canUseCloudData(cloudUserId)) return
     let cancelled = false
@@ -421,14 +435,32 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   const handleDeleteComment = (commentId: string) => {
     const comment = comments.find((item) => item.id === commentId)
     if (!comment || !isInteractionOwner(comment, cloudUserId, currentUserHandle)) return
-    if (!window.confirm('Delete this comment?')) return
-    if (!cloudUserId) {
-      setComments((prev) => prev.filter((item) => item.id !== commentId))
+    setCommentDeleteError(null)
+    setCommentDeleteTarget(comment)
+  }
+
+  const confirmDeleteComment = async () => {
+    if (!commentDeleteTarget || commentDeletePending) return
+    const comment = comments.find((item) => item.id === commentDeleteTarget.id)
+    if (!comment || !isInteractionOwner(comment, cloudUserId, currentUserHandle)) {
+      setCommentDeleteTarget(null)
       return
     }
-    void deletePostComment(entry.id, commentId, cloudUserId)
-      .then(() => setComments((prev) => prev.filter((item) => item.id !== commentId)))
-      .catch((error) => console.error('Unable to delete comment from Firebase.', error))
+
+    setCommentDeletePending(true)
+    setCommentDeleteError(null)
+    try {
+      if (cloudUserId) {
+        await deletePostComment(entry.id, comment.id, cloudUserId)
+      }
+      setComments((previous) => previous.filter((item) => item.id !== comment.id))
+      setCommentDeleteTarget(null)
+    } catch (error) {
+      console.error('Unable to delete comment from Firebase.', error)
+      setCommentDeleteError('We couldn\'t delete your comment. Please try again.')
+    } finally {
+      setCommentDeletePending(false)
+    }
   }
 
   const handleDeleteReply = (commentId: string, replyId: string) => {
@@ -938,6 +970,51 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
           </section>
         </motion.article>
       </div>
+
+        <AnimatePresence>
+          {commentDeleteTarget && (
+            <div
+              className="comment-delete-backdrop"
+              onClick={closeCommentDeleteDialog}
+            >
+              <motion.div
+                ref={commentDeleteDialogRef}
+                className="comment-delete-confirm"
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="comment-delete-title"
+                aria-describedby="comment-delete-description"
+                tabIndex={-1}
+                initial={{ opacity: 0, scale: 0.94, y: 8 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.94, y: 8 }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <span className="comment-delete-icon" aria-hidden="true">
+                  <Trash2 />
+                </span>
+                <h2 id="comment-delete-title">Delete this comment?</h2>
+                <p id="comment-delete-description">
+                  This comment will be permanently removed from the discussion. This action cannot be undone.
+                </p>
+                {commentDeleteError && <p className="comment-delete-error" role="alert">{commentDeleteError}</p>}
+                <div className="comment-delete-actions">
+                  <button type="button" onClick={closeCommentDeleteDialog} disabled={commentDeletePending}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => void confirmDeleteComment()}
+                    disabled={commentDeletePending}
+                  >
+                    {commentDeletePending ? 'Deleting…' : 'Delete comment'}
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         <ReportDialog
           open={postReportOpen}

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { submitContentReport } from '../../services/cloudData'
+import { deletePostComment, submitContentReport } from '../../services/cloudData'
 import { CardOverlayModal, type OverlayEntry } from './CardOverlayModal'
 
 vi.mock('../../context/AuthContext', () => ({
@@ -44,6 +44,7 @@ const ENTRY: OverlayEntry = {
 
 describe('CardOverlayModal comment permissions', () => {
   beforeEach(async () => {
+    vi.clearAllMocks()
     const { loadPostComments } = await import('../../services/cloudData')
     vi.mocked(loadPostComments).mockResolvedValue([
       {
@@ -143,5 +144,34 @@ describe('CardOverlayModal comment permissions', () => {
     ))
     await waitFor(() => expect(screen.queryByText('Another user comment')).not.toBeInTheDocument())
     expect(screen.getByText('My own comment')).toBeInTheDocument()
+  })
+
+  it('asks for confirmation before deleting a comment', async () => {
+    render(
+      <CardOverlayModal
+        entry={ENTRY}
+        currentUserHandle="reader"
+        onClose={vi.fn()}
+      />,
+    )
+
+    const ownComment = (await screen.findByText('My own comment')).closest('.overlay-comment-item')
+    fireEvent.click(within(ownComment as HTMLElement).getByRole('button', { name: 'Delete comment' }))
+
+    const dialog = screen.getByRole('alertdialog', { name: 'Delete this comment?' })
+    expect(within(dialog).getByText('This comment will be permanently removed from the discussion. This action cannot be undone.')).toBeInTheDocument()
+    expect(within(dialog).queryByText('My own comment')).not.toBeInTheDocument()
+    expect(deletePostComment).not.toHaveBeenCalled()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog', { name: 'Delete this comment?' })).not.toBeInTheDocument())
+    expect(screen.getByText('My own comment')).toBeInTheDocument()
+
+    const remainingComment = screen.getByText('My own comment').closest('.overlay-comment-item')
+    fireEvent.click(within(remainingComment as HTMLElement).getByRole('button', { name: 'Delete comment' }))
+    fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Delete this comment?' })).getByRole('button', { name: 'Delete comment' }))
+
+    await waitFor(() => expect(deletePostComment).toHaveBeenCalledWith('post-1', 'own-comment', 'current-user'))
+    await waitFor(() => expect(screen.queryByText('My own comment')).not.toBeInTheDocument())
   })
 })

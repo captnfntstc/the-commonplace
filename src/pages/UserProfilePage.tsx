@@ -1897,8 +1897,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
                           transition: (suppressCatalogMotion || activeIsFilterSwitching)
                             ? 'none'
-                            : 'transform 320ms cubic-bezier(0.2, 0, 0, 1)',
-                          willChange: 'transform',
+                            : 'transform 280ms cubic-bezier(0.2, 0, 0, 1)',
                         } : { width: '100%', marginBottom: 14 }}
                       >
                         <Card

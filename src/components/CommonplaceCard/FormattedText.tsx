@@ -149,7 +149,7 @@ export const FormattedText: React.FC<{
   align?: Alignment
   className?: string
   reflowPlainText?: boolean
-}> = ({ text, align, className, reflowPlainText = false }) => {
+}> = React.memo(({ text, align, className, reflowPlainText = false }) => {
   if (!text) return null
 
   const isHtml = /<[a-z][\s\S]*>/i.test(text)
@@ -203,4 +203,4 @@ export const FormattedText: React.FC<{
         : parseInlineFormatting(displayText)}
     </div>
   )
-}
+})
