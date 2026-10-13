@@ -4699,10 +4699,16 @@ async function searchAlbumsMusicBrainz(
 
 // ─── Songs (iTunes primary + MusicBrainz fallback) ───────────────────────────
 
+let itunesRateLimitUntil = 0
+
 async function searchSongs(
   query: string,
   signal?: AbortSignal,
 ): Promise<MetadataResult[]> {
+  if (Date.now() < itunesRateLimitUntil) {
+    return searchSongsMusicBrainz(query, signal)
+  }
+
   const startTime = performance.now()
   try {
     const url = new URL('https://itunes.apple.com/search')
@@ -4713,6 +4719,11 @@ async function searchSongs(
     const res = await fetch(url, { signal })
     const latencyMs = Math.round(performance.now() - startTime)
 
+    if (res.status === 429) {
+      itunesRateLimitUntil = Date.now() + 30_000
+      return searchSongsMusicBrainz(query, signal)
+    }
+
     if (res.ok) {
       const data = (await res.json()) as { results?: ITunesSearchResult[] }
       if (data.results && data.results.length > 0) {
@@ -4720,14 +4731,7 @@ async function searchSongs(
 
         const filtered = preferExplicitSongSearchItems(sortedRaw)
 
-        const hydratedItems = await Promise.all(
-          filtered.slice(0, 15).map(async (item) => ({
-            item,
-            collectionArtworkUrl: await fetchItunesCollectionArtwork(item.collectionId, signal),
-          })),
-        )
-
-        const results = hydratedItems.map(({ item, collectionArtworkUrl }) => {
+        const results = filtered.slice(0, 15).map((item) => {
           const title = item.trackName ?? 'Untitled'
           return {
             id: `itunes:song:${item.trackId || item.collectionId}`,
@@ -4737,7 +4741,7 @@ async function searchSongs(
             provider: item.collectionName ?? '',
             providerId: String(item.trackId || ''),
             genre: item.primaryGenreName,
-            coverUrl: collectionArtworkUrl || formatITunesArt(item.artworkUrl100, item.collectionName || title),
+            coverUrl: formatITunesArt(item.artworkUrl100, item.collectionName || title),
             year: yearFrom(item.releaseDate),
             explicit: isExplicitItunesTrack(item),
           }
@@ -4755,6 +4759,7 @@ async function searchSongs(
     }
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') throw err
+    itunesRateLimitUntil = Date.now() + 30_000
   }
 
   return searchSongsMusicBrainz(query, signal)
