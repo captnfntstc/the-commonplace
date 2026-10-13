@@ -276,6 +276,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [collectionDeleteTarget, setCollectionDeleteTarget] = useState<ProfileCollection | null>(null)
   const [profileContentLoading, setProfileContentLoading] = useState(true)
   const profileLoadingTimerRef = useRef<number | null>(null)
+  const visitedTabsRef = useRef<Set<CatalogMode>>(new Set(['reviewed']))
+  const visitedCollectionsRef = useRef<Set<string>>(new Set())
   const pendingCatalogScrollTopRef = useRef<number | null>(null)
   const [suppressCatalogMotion, setSuppressCatalogMotion] = useState(true)
 
@@ -504,19 +506,15 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     if (id === activeFilter) return
     pendingCatalogScrollTopRef.current = window.scrollY
     if (catalogMode === 'reviewed') {
-      startProfileContentLoading()
       setIsFilterSwitching(true)
       setProfileCategoryFilter(id)
     } else if (catalogMode === 'shelf') {
-      startProfileContentLoading()
       setIsShelfSwitching(true)
       setShelfCategoryFilter(id)
     } else if (selectedCollection) {
-      startProfileContentLoading()
       setIsCollectionSwitching(true)
       setCollectionCategoryFilter(id)
     } else {
-      startProfileContentLoading()
       setCatalogMode('reviewed')
       setIsFilterSwitching(true)
       setProfileCategoryFilter(id)
@@ -724,7 +722,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const handleCatalogModeChange = (mode: CatalogMode) => {
     if (catalogMode === mode) return
     pendingCatalogScrollTopRef.current = window.scrollY
-    startProfileContentLoading(320)
+    if (!visitedTabsRef.current.has(mode)) {
+      visitedTabsRef.current.add(mode)
+      startProfileContentLoading(280)
+    }
     setCatalogMode(mode)
     if (mode === 'collections' || mode === 'saved-collections') setCollectionReturnMode(mode)
     setExpandedCardId('')
@@ -831,7 +832,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       : [createProfileCollection(collectionName, selectedTypes, collectionDetails), ...profileCollections]
     setProfileCollections(nextCollections)
     persistCreatedCollections(nextCollections)
-    startProfileContentLoading()
     setCollectionComposerOpen(false)
   }
 
@@ -928,7 +928,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   }
 
   const handleOpenCollection = (collection: ProfileCollection) => {
-    startProfileContentLoading(340)
+    if (!visitedCollectionsRef.current.has(collection.id)) {
+      visitedCollectionsRef.current.add(collection.id)
+      startProfileContentLoading(240)
+    }
     const returnMode: CollectionCatalogMode = isSavedCollectionsMode ? 'saved-collections' : 'collections'
     setCollectionReturnMode(returnMode)
     setCatalogMode(returnMode)
@@ -941,7 +944,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   }
 
   const handleBackToCollections = () => {
-    startProfileContentLoading(300)
     const returnMode: CollectionCatalogMode = selectedCollectionIsFromSavedView ? 'saved-collections' : 'collections'
     setCollectionReturnMode(returnMode)
     setCatalogMode(returnMode)
@@ -1762,7 +1764,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       type="button"
                       className="shelf-empty-cta"
                       onClick={() => {
-                        startProfileContentLoading(320)
                         setIsFilterSwitching(true)
                         setIsShelfSwitching(true)
                         setCatalogMode('reviewed')
