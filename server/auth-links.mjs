@@ -48,8 +48,16 @@ function getMailTransport(env) {
   return mailTransport
 }
 
-function cleanAppBaseUrl(env) {
-  const raw = requireValue(env.APP_BASE_URL, 'APP_BASE_URL')
+function cleanAppBaseUrl(env = process.env, request) {
+  const requestHost = request?.headers?.['x-forwarded-host'] || request?.headers?.host
+  const requestProto = request?.headers?.['x-forwarded-proto'] || (requestHost?.includes('localhost') ? 'http' : 'https')
+  const detectedUrl = requestHost ? `${requestProto}://${requestHost}` : null
+  const raw = env.APP_BASE_URL || env.RENDER_EXTERNAL_URL || detectedUrl
+  if (!raw) {
+    const error = new Error('APP_BASE_URL is not configured.')
+    error.statusCode = 503
+    throw error
+  }
   const parsed = new URL(raw)
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('APP_BASE_URL must be an HTTP(S) URL.')
   return parsed.origin
@@ -321,7 +329,7 @@ async function sendVerificationLink(request, env) {
     cooldownRef.set({ lastSentAt: FieldValue.serverTimestamp() }, { merge: true }),
   ])
 
-  const cleanLink = `${cleanAppBaseUrl(env)}/v/${token}`
+  const cleanLink = `${cleanAppBaseUrl(env, request)}/v/${token}`
   const sender = env.EMAIL_FROM || `The Commonplace <${requireValue(env.SMTP_USER, 'SMTP_USER')}>`
   try {
     await getMailTransport(env).sendMail({
@@ -572,7 +580,7 @@ async function sendPasswordResetLink(request, env) {
     cooldownRef.set({ lastSentAt: FieldValue.serverTimestamp() }, { merge: true }),
   ])
 
-  const resetUrl = `${cleanAppBaseUrl(env)}/reset-password/${token}`
+  const resetUrl = `${cleanAppBaseUrl(env, request)}/reset-password/${token}`
   const sender = env.EMAIL_FROM || `The Commonplace <${requireValue(env.SMTP_USER, 'SMTP_USER')}>`
   try {
     await getMailTransport(env).sendMail({

@@ -8,6 +8,14 @@ test('normalizes the configured public app URL to its origin', () => {
     authLinkInternals.cleanAppBaseUrl({ APP_BASE_URL: 'https://example.com/some/path' }),
     'https://example.com',
   )
+  assert.equal(
+    authLinkInternals.cleanAppBaseUrl({ RENDER_EXTERNAL_URL: 'https://the-commonplace.onrender.com' }),
+    'https://the-commonplace.onrender.com',
+  )
+  assert.equal(
+    authLinkInternals.cleanAppBaseUrl({}, { headers: { host: 'the-commonplace.onrender.com', 'x-forwarded-proto': 'https' } }),
+    'https://the-commonplace.onrender.com',
+  )
 })
 
 test('escapes user-controlled values before placing them in verification email HTML', () => {

@@ -19,7 +19,7 @@ services:
       - key: APP_CONTACT
         sync: false
       - key: APP_BASE_URL
-        sync: false
+        value: "https://the-commonplace.onrender.com"
       - key: FIREBASE_ADMIN_PROJECT_ID
         sync: false
       - key: FIREBASE_ADMIN_CLIENT_EMAIL
