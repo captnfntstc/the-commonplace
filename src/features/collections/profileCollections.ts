@@ -24,8 +24,11 @@ export type ProfileCollection = {
   description?: string
   entryIds?: string[]
   items?: ProfileCollectionItem[]
-  coverMode?: 'auto' | 'custom'
+  coverMode?: 'auto' | 'custom' | 'gradient'
   customCoverUrl?: string
+  coverStyle?: string
+  isHidden?: boolean
+  spotlightItemId?: string
 }
 
 function normalizeProfileHandle(handle: string) {
@@ -165,7 +168,7 @@ export function saveSavedProfileCollections(handle: string, collections: Profile
 export function createProfileCollection(
   name: string,
   types: EntryType[] = [],
-  options: Pick<ProfileCollection, 'creatorName' | 'creatorHandle' | 'description' | 'entryIds' | 'items' | 'coverMode' | 'customCoverUrl'> = {},
+  options: Pick<ProfileCollection, 'creatorName' | 'creatorHandle' | 'description' | 'entryIds' | 'items' | 'coverMode' | 'customCoverUrl' | 'coverStyle'> = {},
 ): ProfileCollection {
   return {
     id: `collection-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

@@ -126,11 +126,18 @@ describe('CardOverlayModal comment permissions', () => {
     const otherComment = screen.getByText('Another user comment').closest('.overlay-comment-item')
     expect(ownComment).not.toBeNull()
     expect(otherComment).not.toBeNull()
-    expect(within(ownComment as HTMLElement).getByRole('button', { name: 'Delete comment' })).toBeInTheDocument()
-    expect(within(ownComment as HTMLElement).queryByRole('button', { name: 'Report comment' })).not.toBeInTheDocument()
-    expect(within(otherComment as HTMLElement).queryByRole('button', { name: 'Delete comment' })).not.toBeInTheDocument()
+    expect(within(ownComment as HTMLElement).getByRole('button', { name: 'More options' })).toBeInTheDocument()
+    expect(within(otherComment as HTMLElement).getByRole('button', { name: 'More options' })).toBeInTheDocument()
 
-    fireEvent.click(within(otherComment as HTMLElement).getByRole('button', { name: 'Report comment' }))
+    fireEvent.click(within(ownComment as HTMLElement).getByRole('button', { name: 'More options' }))
+    expect(within(ownComment as HTMLElement).getByRole('menuitem', { name: 'Delete comment' })).toBeInTheDocument()
+    expect(within(ownComment as HTMLElement).queryByRole('menuitem', { name: 'Report comment' })).not.toBeInTheDocument()
+
+    fireEvent.click(within(otherComment as HTMLElement).getByRole('button', { name: 'More options' }))
+    expect(within(otherComment as HTMLElement).queryByRole('menuitem', { name: 'Delete comment' })).not.toBeInTheDocument()
+    expect(within(otherComment as HTMLElement).getByRole('menuitem', { name: 'Report comment' })).toBeInTheDocument()
+
+    fireEvent.click(within(otherComment as HTMLElement).getByRole('menuitem', { name: 'Report comment' }))
     fireEvent.click(screen.getByRole('radio', { name: 'Harassment or bullying' }))
     fireEvent.click(screen.getByRole('button', { name: 'Submit report' }))
 
@@ -156,7 +163,8 @@ describe('CardOverlayModal comment permissions', () => {
     )
 
     const ownComment = (await screen.findByText('My own comment')).closest('.overlay-comment-item')
-    fireEvent.click(within(ownComment as HTMLElement).getByRole('button', { name: 'Delete comment' }))
+    fireEvent.click(within(ownComment as HTMLElement).getByRole('button', { name: 'More options' }))
+    fireEvent.click(within(ownComment as HTMLElement).getByRole('menuitem', { name: 'Delete comment' }))
 
     const dialog = screen.getByRole('alertdialog', { name: 'Delete this comment?' })
     expect(within(dialog).getByText('This comment will be permanently removed from the discussion. This action cannot be undone.')).toBeInTheDocument()
@@ -168,10 +176,34 @@ describe('CardOverlayModal comment permissions', () => {
     expect(screen.getByText('My own comment')).toBeInTheDocument()
 
     const remainingComment = screen.getByText('My own comment').closest('.overlay-comment-item')
-    fireEvent.click(within(remainingComment as HTMLElement).getByRole('button', { name: 'Delete comment' }))
+    fireEvent.click(within(remainingComment as HTMLElement).getByRole('button', { name: 'More options' }))
+    fireEvent.click(within(remainingComment as HTMLElement).getByRole('menuitem', { name: 'Delete comment' }))
     fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Delete this comment?' })).getByRole('button', { name: 'Delete comment' }))
 
     await waitFor(() => expect(deletePostComment).toHaveBeenCalledWith('post-1', 'own-comment', 'current-user'))
     await waitFor(() => expect(screen.queryByText('My own comment')).not.toBeInTheDocument())
+  })
+
+  it('allows the entry owner to hide and delete comments by other users', async () => {
+    render(
+      <CardOverlayModal
+        entry={ENTRY}
+        currentUserHandle="owner"
+        onEdit={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    )
+
+    const otherComment = (await screen.findByText('Another user comment')).closest('.overlay-comment-item')
+    expect(otherComment).not.toBeNull()
+
+    // Open options for other user's comment
+    fireEvent.click(within(otherComment as HTMLElement).getByRole('button', { name: 'More options' }))
+    expect(within(otherComment as HTMLElement).getByRole('menuitem', { name: 'Hide comment' })).toBeInTheDocument()
+    expect(within(otherComment as HTMLElement).getByRole('menuitem', { name: 'Delete comment' })).toBeInTheDocument()
+
+    // Hide comment
+    fireEvent.click(within(otherComment as HTMLElement).getByRole('menuitem', { name: 'Hide comment' }))
+    expect(screen.getByText('Comment hidden from readers.')).toBeInTheDocument()
   })
 })

@@ -4,7 +4,11 @@ const M_GAP = 20
 const M_PAD_X = 12
 const M_PAD_TOP = 20
 
-function getColumnCount(width: number, fourColumnBreakpoint: number): number {
+function getColumnCount(width: number, fourColumnBreakpoint: number, minColWidth?: number): number {
+  if (minColWidth && minColWidth > 0) {
+    const raw = Math.floor((width - M_PAD_X * 2 + M_GAP) / (minColWidth + M_GAP))
+    return Math.max(1, Math.min(4, raw))
+  }
   if (width < 640) return 1
   if (width < 960) return 2
   if (width < fourColumnBreakpoint) return 3
@@ -44,6 +48,7 @@ export function useMasonryLayout(
   expandedId?: string,
   activeSignal?: unknown,
   fourColumnBreakpoint = 1280,
+  minColWidth?: number,
 ): MasonryLayout {
   const [layout, setLayout] = useState<MeasuredMasonryLayout | null>(null)
 
@@ -66,7 +71,7 @@ export function useMasonryLayout(
         const w = container.clientWidth
         if (w === 0) return
 
-        const numCols = getColumnCount(w, fourColumnBreakpoint)
+        const numCols = getColumnCount(w, fourColumnBreakpoint, minColWidth)
         const colWidth = (w - M_PAD_X * 2 - M_GAP * (numCols - 1)) / numCols
         const heights = Array<number>(numCols).fill(M_PAD_TOP)
         const positions = new Map<string, MasonryPos>()

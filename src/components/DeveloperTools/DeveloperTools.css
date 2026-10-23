@@ -1,0 +1,535 @@
+/* ─── DEVELOPER TOOLS & ADMIN DOCK (@tcpadmin) ───────────────────────── */
+
+.tcp-admin-dock {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 1200;
+  pointer-events: auto;
+}
+
+.tcp-admin-dock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 8px 10px;
+  background: rgba(18, 14, 10, 0.94);
+  border: 1px solid rgba(201, 169, 110, 0.35);
+  border-radius: 999px;
+  color: var(--text-strong);
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+  cursor: pointer;
+  transition: all 180ms ease;
+}
+
+.tcp-admin-dock-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55), 0 0 16px rgba(201, 169, 110, 0.2);
+}
+
+.tcp-admin-dock-btn.is-alt-active {
+  border-color: rgba(201, 169, 110, 0.6);
+  background: rgba(28, 22, 16, 0.96);
+}
+
+.tcp-admin-dock-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(201, 169, 110, 0.15);
+  color: var(--accent);
+}
+
+.tcp-admin-dock-text {
+  letter-spacing: -0.01em;
+}
+
+.tcp-admin-dock-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tcp-admin-dock-pill.is-alt {
+  background: rgba(201, 169, 110, 0.2);
+  color: var(--accent);
+  border: 1px solid rgba(201, 169, 110, 0.3);
+}
+
+.tcp-admin-dock-pill.is-std {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--secondary);
+}
+
+/* Modal */
+.tcp-dev-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(8px);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.tcp-dev-modal {
+  width: min(640px, 100%);
+  max-height: min(85vh, 720px);
+  background: rgba(22, 18, 14, 0.98);
+  border: 1px solid rgba(201, 169, 110, 0.3);
+  border-radius: 20px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tcp-dev-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid rgba(201, 169, 110, 0.15);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tcp-dev-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tcp-dev-icon-badge {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(201, 169, 110, 0.15);
+  color: var(--accent);
+  border: 1px solid rgba(201, 169, 110, 0.25);
+}
+
+.tcp-dev-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-strong);
+  line-height: 1.2;
+}
+
+.tcp-dev-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.tcp-dev-admin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.tcp-dev-mode-pill {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--secondary);
+}
+
+.tcp-dev-close-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.tcp-dev-close-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-strong);
+  border-color: rgba(201, 169, 110, 0.4);
+}
+
+.tcp-dev-body {
+  padding: 20px 22px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.tcp-dev-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tcp-dev-section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.tcp-dev-section-icon {
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.tcp-dev-section-icon.secondary {
+  color: var(--secondary);
+}
+
+.tcp-dev-section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.tcp-dev-section-desc {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--secondary);
+  line-height: 1.45;
+}
+
+.tcp-dev-options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.tcp-dev-option-card {
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  cursor: pointer;
+  transition: all 180ms ease;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.tcp-dev-option-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(201, 169, 110, 0.35);
+  transform: translateY(-1px);
+}
+
+.tcp-dev-option-card.is-active {
+  background: rgba(201, 169, 110, 0.08);
+  border-color: var(--accent);
+  box-shadow: 0 0 20px rgba(201, 169, 110, 0.12);
+}
+
+.tcp-dev-option-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tcp-dev-option-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--secondary);
+}
+
+.tcp-dev-option-icon.classic {
+  color: #a8a29e;
+}
+
+.tcp-dev-option-icon.alternative {
+  background: rgba(201, 169, 110, 0.18);
+  color: var(--accent);
+}
+
+.tcp-dev-active-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(201, 169, 110, 0.15);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.tcp-dev-option-name {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.tcp-dev-option-detail {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--secondary);
+  line-height: 1.4;
+  flex: 1;
+}
+
+.tcp-dev-preview-hint {
+  margin-top: 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--secondary);
+  opacity: 0.8;
+}
+
+.tcp-dev-preview-hint.highlight {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.tcp-dev-suboptions {
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tcp-dev-suboptions-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tcp-dev-button-group {
+  display: flex;
+  gap: 8px;
+}
+
+.tcp-dev-group-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.tcp-dev-group-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-strong);
+}
+
+.tcp-dev-group-btn.is-selected {
+  background: rgba(201, 169, 110, 0.14);
+  border-color: rgba(201, 169, 110, 0.4);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.tcp-dev-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  padding-top: 4px;
+}
+
+.tcp-dev-toggle-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tcp-dev-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.tcp-dev-actions-row {
+  display: flex;
+  gap: 10px;
+}
+
+.tcp-dev-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.tcp-dev-action-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-strong);
+  border-color: rgba(201, 169, 110, 0.3);
+}
+
+.tcp-dev-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-top: 1px solid rgba(201, 169, 110, 0.12);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.tcp-dev-footer-note {
+  font-size: 11px;
+  color: var(--secondary);
+  opacity: 0.8;
+}
+
+.tcp-dev-done-btn {
+  padding: 7px 18px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #1a140d;
+  font-size: 12.5px;
+  font-weight: 700;
+  border: 0;
+  cursor: pointer;
+  transition: background 150ms ease, transform 150ms ease;
+}
+
+.tcp-dev-done-btn:hover {
+  background: var(--accent-hover, #e0be82);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 640px) {
+  .tcp-dev-options-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Header Developer Tools Button (Beside Home) ─────── */
+.global-header-navigation {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.global-header-nav-btn.devtools-header-nav-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #d6bea2;
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.global-header-nav-btn.devtools-header-nav-btn:hover {
+  color: #fff1dc;
+  transform: translateY(-1px);
+}
+
+.global-header-nav-btn.devtools-header-nav-btn.is-alt-layout {
+  color: #e6bd8c;
+}
+
+.global-header-nav-btn.devtools-header-nav-btn .devtools-nav-chip {
+  position: absolute;
+  bottom: 1px;
+  right: -4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 8.5px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(201, 169, 110, 0.2);
+  color: #e6bd8c;
+  border: 1px solid rgba(201, 169, 110, 0.4);
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+.global-header-nav-btn.devtools-header-nav-btn.is-alt-layout .devtools-nav-chip {
+  background: rgba(245, 158, 11, 0.25);
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.55);
+}
+
+/* On the home page, if DevTools is present, hide the placeholder empty gap */
+.global-header-navigation:has(.devtools-header-nav-btn) .global-header-nav-btn.is-placeholder {
+  display: none;
+}
+
+/* Mobile drawer DevTools item */
+.mobile-menu-drawer .devtools-mobile-item {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.devtools-mobile-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mobile-menu-drawer .devtools-mobile-item .devtools-nav-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(201, 169, 110, 0.2);
+  color: #e6bd8c;
+  border: 1px solid rgba(201, 169, 110, 0.35);
+}
+

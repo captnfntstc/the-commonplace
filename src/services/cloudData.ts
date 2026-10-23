@@ -291,13 +291,19 @@ async function compressImageForFirestore(imageUrl: string, kind: CloudImageKind)
   return compressed
 }
 
-function withoutUndefined<T>(value: T): T {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === null || proto === Object.prototype
+}
+
+export function withoutUndefined<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => withoutUndefined(item)).filter((item) => item !== undefined) as T
   }
-  if (value && typeof value === 'object') {
+  if (isPlainObject(value)) {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
+      Object.entries(value)
         .filter(([, item]) => item !== undefined)
         .map(([key, item]) => [key, withoutUndefined(item)]),
     ) as T
@@ -1207,11 +1213,19 @@ export function subscribePostEngagements(
         isLiked: Boolean(viewerId && snapshot.docs.some((item) => item.id === viewerId)),
       }
       emit()
-    }, (error) => console.error(`Unable to watch likes for post ${postId}.`, error)),
+    }, (error) => {
+      if ((error as { code?: string })?.code !== 'permission-denied') {
+        console.error(`Unable to watch likes for post ${postId}.`, error)
+      }
+    }),
     onSnapshot(collection(db, 'posts', postId, 'comments'), (snapshot) => {
       engagements[postId] = { ...engagements[postId], commentCount: snapshot.size }
       emit()
-    }, (error) => console.error(`Unable to watch comments for post ${postId}.`, error)),
+    }, (error) => {
+      if ((error as { code?: string })?.code !== 'permission-denied') {
+        console.error(`Unable to watch comments for post ${postId}.`, error)
+      }
+    }),
   ])
 
   return () => unsubscribers.forEach((unsubscribe) => unsubscribe())

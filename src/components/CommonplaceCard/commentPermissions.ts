@@ -46,9 +46,65 @@ export function isReportedInteractionHidden(
   targetId: string,
 ) {
   try {
-    const stored = JSON.parse(localStorage.getItem(hiddenReportsStorageKey(userId)) || '[]')
+    const storageKey = hiddenReportsStorageKey(userId)
+    const stored = JSON.parse(localStorage.getItem(storageKey) || '[]')
     return Array.isArray(stored) && stored.includes(hiddenReportId(postId, targetType, targetId))
   } catch {
     return false
   }
 }
+
+export function canDeleteInteraction(
+  interaction: CommentIdentity,
+  currentUserId: string | null,
+  currentUserHandle?: string,
+  isResourceOwner?: boolean,
+) {
+  return Boolean(isResourceOwner || isInteractionOwner(interaction, currentUserId, currentUserHandle))
+}
+
+function ownerHiddenInteractionsStorageKey(postId: string) {
+  return `the-commonplace.owner-hidden-interactions.${postId}`
+}
+
+export function hideOwnerInteraction(
+  postId: string,
+  targetType: 'comment' | 'reply',
+  targetId: string,
+) {
+  try {
+    const storageKey = ownerHiddenInteractionsStorageKey(postId)
+    const stored = JSON.parse(localStorage.getItem(storageKey) || '[]')
+    const hidden = new Set(Array.isArray(stored) ? stored.filter((item): item is string => typeof item === 'string') : [])
+    hidden.add(hiddenReportId(postId, targetType, targetId))
+    localStorage.setItem(storageKey, JSON.stringify([...hidden]))
+  } catch {}
+}
+
+export function unhideOwnerInteraction(
+  postId: string,
+  targetType: 'comment' | 'reply',
+  targetId: string,
+) {
+  try {
+    const storageKey = ownerHiddenInteractionsStorageKey(postId)
+    const stored = JSON.parse(localStorage.getItem(storageKey) || '[]')
+    const hidden = new Set(Array.isArray(stored) ? stored.filter((item): item is string => typeof item === 'string') : [])
+    hidden.delete(hiddenReportId(postId, targetType, targetId))
+    localStorage.setItem(storageKey, JSON.stringify([...hidden]))
+  } catch {}
+}
+
+export function isOwnerInteractionHidden(
+  postId: string,
+  targetType: 'comment' | 'reply',
+  targetId: string,
+) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(ownerHiddenInteractionsStorageKey(postId)) || '[]')
+    return Array.isArray(stored) && stored.includes(hiddenReportId(postId, targetType, targetId))
+  } catch {
+    return false
+  }
+}
+

@@ -24,7 +24,14 @@ import {
   ImagePlus,
   Minus,
   Flag,
+  ImageIcon,
+  LayoutGrid,
+  ChevronLeft,
+  ChevronRight,
+  Compass,
+  Upload,
 } from 'lucide-react'
+import { getGradientCoverStyle, generateCollectionGradientSvg, GRADIENT_NAMES } from '../utils/collectionCovers'
 import { Card } from '../components/CommonplaceCard/Card'
 import { entryTypes, type Entry as CardEntry, type EntryType } from '../features/entries/model'
 import { searchMetadata, type MetadataResult } from '../metadata'
@@ -32,14 +39,16 @@ import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 import { handleTabListKeyDown } from '../utils/keyboard'
 import {
+  CollectionDetailHeroSkeleton,
   CollectionMediaSkeleton,
   CollectionShelfSkeleton,
 } from '../components/Collections/ProfileCollectionSkeletons'
 import { CardSkeletonGrid } from '../components/CommonplaceCard/CardSkeleton'
+import { AlternativeCollectionDetail } from '../components/Collections/AlternativeCollectionDetail'
+import { useDevSettings, isTcpAdmin } from '../components/DeveloperTools/devSettings'
 import type { UserProfileState } from '../types/userProfile'
 import { getEntryTypeIcon } from '../utils/mediaIcons'
 import {
-  buildPopularCollectionRecommendations,
   collectionsCreatedByProfile,
   createProfileCollection,
   duplicateProfileCollectionItem,
@@ -129,7 +138,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onBack,
   showLocalNavigation = true,
   entries,
-  popularDemandEntries = [],
   savedCatalogEntries = entries,
   savedEntryIds = [],
   catalogSavedEntryIds = savedEntryIds,
@@ -245,6 +253,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     ? `${userProfile.firstName} ${userProfile.lastName}`.trim()
     : userProfile.firstName
   const currentUserHandle = (currentUserProfile?.handle || userProfile.handle).replace(/^@/, '')
+  const { settings: devSettings, updateSetting: updateDevSetting } = useDevSettings()
+  const isTcpAdminUser = isTcpAdmin(currentUserHandle)
+  const isAlternativeCollectionActive = isTcpAdminUser && (devSettings.collectionLayout === 'hollis' || devSettings.collectionLayout === 'universal')
   const [profileCollections, setProfileCollections] = useState<ProfileCollection[]>(() =>
     collectionsCreatedByProfile(loadProfileCollections(userProfile.handle), userProfile.handle),
   )
@@ -257,16 +268,33 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [isCollectionSwitching, setIsCollectionSwitching] = useState(false)
   const [collectionComposerOpen, setCollectionComposerOpen] = useState(false)
   const [collectionComposerMode, setCollectionComposerMode] = useState<CollectionComposerMode>('create')
-  const [collectionComposerStep, setCollectionComposerStep] = useState<1 | 2 | 3>(1)
   const [collectionEditingId, setCollectionEditingId] = useState<string | null>(null)
   const [collectionName, setCollectionName] = useState('')
   const [collectionDescription, setCollectionDescription] = useState('')
-  const [collectionCoverMode, setCollectionCoverMode] = useState<'auto' | 'custom'>('auto')
+  const [collectionCoverMode, setCollectionCoverMode] = useState<'auto' | 'custom' | 'gradient'>('auto')
+  const [collectionGradientVariant, setCollectionGradientVariant] = useState<1 | 2 | 3 | 4>(1)
   const [collectionCustomCover, setCollectionCustomCover] = useState('')
+  const collectionPhotoInputRef = useRef<HTMLInputElement>(null)
+  const [collectionDiscardConfirmOpen, setCollectionDiscardConfirmOpen] = useState(false)
+  const [collectionInlineDiscardConfirmOpen, setCollectionInlineDiscardConfirmOpen] = useState(false)
+  const collectionInlineInitialRef = useRef<{
+    name: string
+    description: string
+    coverMode: 'auto' | 'custom' | 'gradient'
+    gradientVariant: 1 | 2 | 3 | 4
+    customCover: string
+  } | null>(null)
+  const collectionInitialSnapshotRef = useRef<{
+    name: string
+    description: string
+    coverMode: 'auto' | 'custom' | 'gradient'
+    gradientVariant: 1 | 2 | 3 | 4
+    customCover: string
+    itemIds: string[]
+  } | null>(null)
   const [collectionItemSearch, setCollectionItemSearch] = useState('')
   const [collectionItemTypeFilter, setCollectionItemTypeFilter] = useState<'all' | EntryType>('all')
   const [collectionSelectedItems, setCollectionSelectedItems] = useState<ProfileCollectionItem[]>([])
-  const [collectionPopularItems, setCollectionPopularItems] = useState<ProfileCollectionItem[]>([])
   const [collectionRemoteResults, setCollectionRemoteResults] = useState<MetadataResult[]>([])
   const [collectionItemSearchStatus, setCollectionItemSearchStatus] = useState<'idle' | 'searching' | 'ready' | 'error'>('idle')
   const [collectionRemovalTarget, setCollectionRemovalTarget] = useState<ProfileCollectionItem | null>(null)
@@ -277,7 +305,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [profileContentLoading, setProfileContentLoading] = useState(true)
   const profileLoadingTimerRef = useRef<number | null>(null)
   const visitedTabsRef = useRef<Set<CatalogMode>>(new Set(['reviewed']))
-  const visitedCollectionsRef = useRef<Set<string>>(new Set())
   const pendingCatalogScrollTopRef = useRef<number | null>(null)
   const [suppressCatalogMotion, setSuppressCatalogMotion] = useState(true)
 
@@ -347,21 +374,57 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   // ── Bookmark press animation ────────────────────────────────────────────────
 
+  const isCollectionComposerDirty = () => {
+    const initial = collectionInitialSnapshotRef.current
+    if (!initial) return false
+    if (collectionComposerMode === 'add') {
+      return collectionSelectedItems.length > 0
+    }
+    if (collectionName.trim() !== initial.name.trim()) return true
+    if (collectionDescription.trim() !== initial.description.trim()) return true
+    if (collectionCoverMode !== initial.coverMode) return true
+    if (collectionCoverMode === 'gradient' && collectionGradientVariant !== initial.gradientVariant) return true
+    if (collectionCoverMode === 'custom' && collectionCustomCover !== initial.customCover) return true
+    const currentItemIds = collectionSelectedItems.map((item) => item.id).sort()
+    if (currentItemIds.length !== initial.itemIds.length) return true
+    for (let i = 0; i < currentItemIds.length; i++) {
+      if (currentItemIds[i] !== initial.itemIds[i]) return true
+    }
+    return false
+  }
+
+  const handleRequestCloseCollectionComposer = () => {
+    if (isCollectionComposerDirty()) {
+      setCollectionDiscardConfirmOpen(true)
+    } else {
+      setCollectionComposerOpen(false)
+    }
+  }
+
   // ── Follow modal ────────────────────────────────────────────────────────────
   const [activeFollowModal, setActiveFollowModal] = useState<'followers' | 'following' | null>(null)
   const collectionEditDialogRef = useAccessibleDialog<HTMLElement>({
     open: collectionComposerOpen && collectionComposerMode === 'edit',
-    onClose: () => setCollectionComposerOpen(false),
-    closeOnEscape: !collectionRemovalTarget,
+    onClose: handleRequestCloseCollectionComposer,
+    closeOnEscape: !collectionRemovalTarget && !collectionDiscardConfirmOpen,
   })
   const collectionAddDialogRef = useAccessibleDialog<HTMLElement>({
     open: collectionComposerOpen && collectionComposerMode === 'add',
-    onClose: () => setCollectionComposerOpen(false),
-    closeOnEscape: !collectionDuplicateTarget,
+    onClose: handleRequestCloseCollectionComposer,
+    closeOnEscape: !collectionDuplicateTarget && !collectionDiscardConfirmOpen,
   })
   const collectionCreateDialogRef = useAccessibleDialog<HTMLDivElement>({
     open: collectionComposerOpen && collectionComposerMode === 'create',
-    onClose: () => setCollectionComposerOpen(false),
+    onClose: handleRequestCloseCollectionComposer,
+    closeOnEscape: !collectionDiscardConfirmOpen,
+  })
+  const collectionDiscardDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: collectionDiscardConfirmOpen,
+    onClose: () => setCollectionDiscardConfirmOpen(false),
+  })
+  const collectionInlineDiscardDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: collectionInlineDiscardConfirmOpen,
+    onClose: () => setCollectionInlineDiscardConfirmOpen(false),
   })
   const collectionDeleteDialogRef = useAccessibleDialog<HTMLDivElement>({
     open: Boolean(collectionDeleteTarget),
@@ -440,7 +503,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const displayedProfileCollections = collectionsCreatedByProfile(
     isOwnProfile ? profileCollections : (publicCollections ?? []),
     userProfile.handle,
-  )
+  ).filter((collection) => isOwnProfile || !collection.isHidden)
   const displayedSavedProfileCollections = isOwnProfile ? viewerSavedProfileCollections : publicSavedCollections
   const visibleCollections = isSavedCollectionsMode ? displayedSavedProfileCollections : displayedProfileCollections
 
@@ -580,9 +643,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const collectionComposerItems = useMemo(() => {
     const query = collectionItemSearch.trim().toLowerCase()
     if (!query) {
-      return collectionPopularItems.filter(
-        (item) => collectionItemTypeFilter === 'all' || item.type === collectionItemTypeFilter,
-      )
+      if (collectionItemTypeFilter === 'all') {
+        return collectionSelectedItems
+      }
+      return collectionSelectedItems.filter((item) => item.type === collectionItemTypeFilter)
     }
 
     const localItems = [...entries].sort(
@@ -609,9 +673,39 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       seen.add(identity)
       return true
     })
-  }, [collectionItemSearch, collectionItemTypeFilter, collectionPopularItems, collectionRemoteResults, entries])
+  }, [collectionItemSearch, collectionItemTypeFilter, collectionSelectedItems, collectionRemoteResults, entries])
 
-  const collectionAddItems = useMemo(() => {
+  const collectionLibraryItems = useMemo(() => {
+    if (collectionComposerMode !== 'add') return []
+    const query = collectionItemSearch.trim().toLowerCase()
+    const allUserEntries = [...entries, ...(savedCatalogEntries || [])]
+    const localItems = allUserEntries
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+      .map(profileCollectionItemFromEntry)
+      .filter((item) => collectionItemTypeFilter === 'all' || item.type === collectionItemTypeFilter)
+
+    const seen = new Set<string>()
+    const uniqueLocal = localItems.filter((item) => {
+      const identity = profileCollectionItemIdentity(item)
+      if (seen.has(identity)) return false
+      seen.add(identity)
+      return true
+    })
+
+    if (!query) return uniqueLocal
+
+    return uniqueLocal.filter((item) => {
+      return (
+        item.title.toLowerCase().includes(query) ||
+        item.creator.toLowerCase().includes(query) ||
+        item.provider.toLowerCase().includes(query) ||
+        item.type.toLowerCase().includes(query) ||
+        (item.genre?.toLowerCase().includes(query) ?? false)
+      )
+    })
+  }, [collectionComposerMode, entries, savedCatalogEntries, collectionItemSearch, collectionItemTypeFilter])
+
+  const collectionDiscoverItems = useMemo(() => {
     if (collectionComposerMode !== 'add') return []
     const seen = new Set<string>()
     return collectionRemoteResults
@@ -624,6 +718,30 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         return true
       })
   }, [collectionComposerMode, collectionItemTypeFilter, collectionRemoteResults])
+
+  const collectionAddItems = useMemo(() => {
+    const query = collectionItemSearch.trim().toLowerCase()
+    if (!query) {
+      return collectionLibraryItems
+    }
+    const seen = new Set<string>()
+    const combined: ProfileCollectionItem[] = []
+    for (const item of collectionLibraryItems) {
+      const id = profileCollectionItemIdentity(item)
+      if (!seen.has(id)) {
+        seen.add(id)
+        combined.push(item)
+      }
+    }
+    for (const item of collectionDiscoverItems) {
+      const id = profileCollectionItemIdentity(item)
+      if (!seen.has(id)) {
+        seen.add(id)
+        combined.push(item)
+      }
+    }
+    return combined
+  }, [collectionItemSearch, collectionLibraryItems, collectionDiscoverItems])
 
   useEffect(() => {
     const query = collectionItemSearch.trim()
@@ -697,24 +815,21 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
     let firstFrame = 0
     let secondFrame = 0
-    const timer = window.setTimeout(() => {
+    firstFrame = window.requestAnimationFrame(() => {
       setIsFilterSwitching(false)
       setIsShelfSwitching(false)
       setIsCollectionSwitching(false)
-      firstFrame = window.requestAnimationFrame(() => {
-        secondFrame = window.requestAnimationFrame(() => setSuppressCatalogMotion(false))
-      })
-    }, 140)
+      secondFrame = window.requestAnimationFrame(() => setSuppressCatalogMotion(false))
+    })
 
     return () => {
-      window.clearTimeout(timer)
       window.cancelAnimationFrame(firstFrame)
       window.cancelAnimationFrame(secondFrame)
     }
   }, [activeMasonryLayout, activeFilter, activeSearchQuery, catalogMode, profileContentLoading])
 
   const showCatalogSkeleton = (catalogMode === 'reviewed' || catalogMode === 'shelf')
-    && (profileContentLoading || (activeEntries.length > 0 && (activeIsFilterSwitching || !activeMasonryLayout)))
+    && profileContentLoading
   const showCollectionMediaSkeleton = isCollectionDetail
     && (profileContentLoading || (activeEntries.length > 0 && (isCollectionSwitching || !collectionMasonryLayout)))
 
@@ -738,19 +853,33 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const openCollectionComposer = (collection?: ProfileCollection, mode: CollectionComposerMode = collection ? 'add' : 'create') => {
     setCollectionComposerMode(mode)
     setCollectionEditingId(collection?.id ?? null)
-    setCollectionComposerStep(1)
     setCollectionName(collection?.name ?? '')
     setCollectionDescription(collection?.description ?? '')
-    setCollectionCoverMode(collection?.coverMode ?? 'auto')
-    setCollectionCustomCover(collection?.customCoverUrl ?? '')
+    const restoredMode = collection?.coverMode ?? (collection?.customCoverUrl ? (collection.customCoverUrl.startsWith('data:image/svg') ? 'gradient' : 'custom') : 'auto')
+    const initialMode = restoredMode as 'auto' | 'custom' | 'gradient'
+    setCollectionCoverMode(initialMode)
+    const variantMatch = collection?.coverStyle?.match(/gradient-(\d)/)
+    const initialVariant = variantMatch ? (Number(variantMatch[1]) as 1 | 2 | 3 | 4) : 1
+    setCollectionGradientVariant(initialVariant)
+    const initialCover = collection?.customCoverUrl ?? ''
+    setCollectionCustomCover(initialCover)
     setCollectionItemSearch('')
     setCollectionItemTypeFilter('all')
-    setCollectionSelectedItems(mode === 'add' ? [] : collection?.items ?? [])
-    setCollectionPopularItems(buildPopularCollectionRecommendations(popularDemandEntries))
+    const initialItems = mode === 'add' ? [] : (collection?.items ?? [])
+    setCollectionSelectedItems(initialItems)
     setCollectionRemoteResults([])
     setCollectionItemSearchStatus('idle')
     setCollectionRemovalTarget(null)
     setCollectionDuplicateTarget(null)
+    setCollectionDiscardConfirmOpen(false)
+    collectionInitialSnapshotRef.current = {
+      name: collection?.name ?? '',
+      description: collection?.description ?? '',
+      coverMode: initialMode,
+      gradientVariant: initialVariant,
+      customCover: initialCover,
+      itemIds: initialItems.map((item) => item.id).sort(),
+    }
     setCollectionComposerOpen(true)
   }
 
@@ -784,19 +913,22 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       setCollectionDuplicateTarget(item)
       return
     }
-    setCollectionSelectedItems((current) => [item, ...current])
+    setCollectionSelectedItems((current) => [...current, item])
   }
 
   const confirmAddDuplicateCollectionItem = () => {
     if (!collectionDuplicateTarget) return
     setCollectionSelectedItems((current) => [
-      duplicateProfileCollectionItem(collectionDuplicateTarget),
       ...current,
+      duplicateProfileCollectionItem(collectionDuplicateTarget),
     ])
     setCollectionDuplicateTarget(null)
   }
 
   const handleCollectionCoverUpload = (file?: File) => {
+    if (collectionPhotoInputRef.current) {
+      collectionPhotoInputRef.current.value = ''
+    }
     if (!file || !file.type.startsWith('image/')) return
     const reader = new FileReader()
     reader.onload = () => {
@@ -805,6 +937,48 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       setCollectionCoverMode('custom')
     }
     reader.readAsDataURL(file)
+  }
+
+  const COVER_STYLE_KEYS = ['photo', 'auto', 'g1', 'g2', 'g3', 'g4'] as const
+
+  const getCurrentStyleKey = () => {
+    if (collectionCoverMode === 'custom') return 'photo'
+    if (collectionCoverMode === 'auto') return 'auto'
+    return `g${collectionGradientVariant}` as const
+  }
+
+  const applyCoverStyleKey = (key: typeof COVER_STYLE_KEYS[number]) => {
+    if (key === 'photo') {
+      setCollectionCoverMode('custom')
+    } else if (key === 'auto') {
+      setCollectionCoverMode('auto')
+    } else if (key === 'g1') {
+      setCollectionCoverMode('gradient')
+      setCollectionGradientVariant(1)
+    } else if (key === 'g2') {
+      setCollectionCoverMode('gradient')
+      setCollectionGradientVariant(2)
+    } else if (key === 'g3') {
+      setCollectionCoverMode('gradient')
+      setCollectionGradientVariant(3)
+    } else if (key === 'g4') {
+      setCollectionCoverMode('gradient')
+      setCollectionGradientVariant(4)
+    }
+  }
+
+  const handlePrevCoverStyle = () => {
+    const cur = getCurrentStyleKey()
+    const idx = COVER_STYLE_KEYS.indexOf(cur)
+    const prevIdx = (idx - 1 + COVER_STYLE_KEYS.length) % COVER_STYLE_KEYS.length
+    applyCoverStyleKey(COVER_STYLE_KEYS[prevIdx])
+  }
+
+  const handleNextCoverStyle = () => {
+    const cur = getCurrentStyleKey()
+    const idx = COVER_STYLE_KEYS.indexOf(cur)
+    const nextIdx = (idx + 1) % COVER_STYLE_KEYS.length
+    applyCoverStyleKey(COVER_STYLE_KEYS[nextIdx])
   }
 
   const handleSaveCollection = () => {
@@ -823,7 +997,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       entryIds: savedItems.flatMap((item) => item.entryId ? [item.entryId] : []),
       items: savedItems,
       coverMode: collectionCoverMode,
-      customCoverUrl: collectionCoverMode === 'custom' ? collectionCustomCover : '',
+      coverStyle: collectionCoverMode === 'gradient' ? `gradient-${collectionGradientVariant}` : undefined,
+      customCoverUrl: collectionCoverMode === 'custom'
+        ? collectionCustomCover
+        : collectionCoverMode === 'gradient'
+          ? generateCollectionGradientSvg(collectionName.trim() || 'Untitled Collection', collectionGradientVariant, savedItems)
+          : '',
     }
     const nextCollections = collectionEditingId
       ? profileCollections.map((collection) => collection.id === collectionEditingId
@@ -832,6 +1011,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       : [createProfileCollection(collectionName, selectedTypes, collectionDetails), ...profileCollections]
     setProfileCollections(nextCollections)
     persistCreatedCollections(nextCollections)
+    collectionInitialSnapshotRef.current = null
     setCollectionComposerOpen(false)
   }
 
@@ -843,29 +1023,97 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   const startInlineCollectionEdit = () => {
     if (!selectedCollection) return
-    setCollectionName(selectedCollection.name)
-    setCollectionDescription(selectedCollection.description ?? '')
+    const initialName = selectedCollection.name
+    const initialDesc = selectedCollection.description ?? ''
+    const mode = selectedCollection.coverMode || 'auto'
+    const initialCover = selectedCollection.customCoverUrl ?? ''
+    const rawVariant = selectedCollection.coverStyle?.startsWith('gradient-')
+      ? Number(selectedCollection.coverStyle.replace('gradient-', ''))
+      : 1
+    const initialVariant = (rawVariant >= 1 && rawVariant <= 4 ? rawVariant : 1) as 1 | 2 | 3 | 4
+
+    setCollectionName(initialName)
+    setCollectionDescription(initialDesc)
+    setCollectionCoverMode(mode)
+    setCollectionCustomCover(initialCover)
+    setCollectionGradientVariant(initialVariant)
     setCollectionInlineRemovalTarget(null)
+
+    collectionInlineInitialRef.current = {
+      name: initialName,
+      description: initialDesc,
+      coverMode: mode,
+      gradientVariant: initialVariant,
+      customCover: initialCover,
+    }
+
     setCollectionInlineEditing(true)
   }
 
+  const hasInlineCollectionChanges = () => {
+    if (!collectionInlineInitialRef.current) return false
+    const initial = collectionInlineInitialRef.current
+    return (
+      collectionName !== initial.name ||
+      collectionDescription !== initial.description ||
+      collectionCoverMode !== initial.coverMode ||
+      collectionCustomCover !== initial.customCover ||
+      collectionGradientVariant !== initial.gradientVariant
+    )
+  }
+
   const cancelInlineCollectionEdit = () => {
+    if (hasInlineCollectionChanges()) {
+      setCollectionInlineDiscardConfirmOpen(true)
+    } else {
+      setCollectionInlineEditing(false)
+      setCollectionInlineRemovalTarget(null)
+    }
+  }
+
+  const handleConfirmInlineDiscard = () => {
+    setCollectionInlineDiscardConfirmOpen(false)
+    if (collectionInlineInitialRef.current) {
+      setCollectionName(collectionInlineInitialRef.current.name)
+      setCollectionDescription(collectionInlineInitialRef.current.description)
+      setCollectionCoverMode(collectionInlineInitialRef.current.coverMode)
+      setCollectionCustomCover(collectionInlineInitialRef.current.customCover)
+      setCollectionGradientVariant(collectionInlineInitialRef.current.gradientVariant)
+    }
     setCollectionInlineEditing(false)
     setCollectionInlineRemovalTarget(null)
   }
 
   const saveInlineCollectionEdit = () => {
     if (!selectedCollection || !collectionName.trim()) return
+    if (collectionCoverMode === 'custom' && !collectionCustomCover) return
     const nextCollections = profileCollections.map((collection) => collection.id === selectedCollection.id
       ? {
           ...collection,
           name: collectionName.trim(),
           description: collectionDescription.trim(),
+          coverMode: collectionCoverMode,
+          coverStyle: collectionCoverMode === 'gradient' ? `gradient-${collectionGradientVariant}` : undefined,
+          customCoverUrl: collectionCoverMode === 'custom'
+            ? collectionCustomCover
+            : collectionCoverMode === 'gradient'
+              ? generateCollectionGradientSvg(collectionName.trim() || 'Untitled Collection', collectionGradientVariant, selectedCollection.items || [])
+              : '',
         }
       : collection)
     setProfileCollections(nextCollections)
     persistCreatedCollections(nextCollections)
     setCollectionInlineEditing(false)
+  }
+
+  const handleToggleHideCollection = () => {
+    if (!selectedCollection) return
+    const nextHidden = !selectedCollection.isHidden
+    const nextCollections = profileCollections.map((collection) =>
+      collection.id === selectedCollection.id ? { ...collection, isHidden: nextHidden } : collection
+    )
+    setProfileCollections(nextCollections)
+    persistCreatedCollections(nextCollections)
   }
 
   const confirmInlineCollectionRemoval = () => {
@@ -928,10 +1176,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   }
 
   const handleOpenCollection = (collection: ProfileCollection) => {
-    if (!visitedCollectionsRef.current.has(collection.id)) {
-      visitedCollectionsRef.current.add(collection.id)
-      startProfileContentLoading(240)
-    }
+    startProfileContentLoading(280)
     const returnMode: CollectionCatalogMode = isSavedCollectionsMode ? 'saved-collections' : 'collections'
     setCollectionReturnMode(returnMode)
     setCatalogMode(returnMode)
@@ -1013,6 +1258,72 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       case 'tv': return { Icon: getEntryTypeIcon('tv'), label: 'Shows' }
       default: return { Icon: BookOpen, label: 'Books' }
     }
+  }
+
+  const renderCollectionCoverArtwork = ({
+    name,
+    coverMode,
+    coverStyle,
+    customCoverUrl,
+    items,
+  }: {
+    name: string
+    coverMode?: 'auto' | 'custom' | 'gradient'
+    coverStyle?: string
+    customCoverUrl?: string
+    items: Array<{ id?: string; type: EntryType; coverUrl?: string; coverTone?: string }>
+  }) => {
+    const isGradient = coverMode === 'gradient'
+      || Boolean(coverStyle?.startsWith('gradient-'))
+      || Boolean(customCoverUrl?.startsWith('data:image/svg+xml'))
+
+    if (isGradient) {
+      const rawVariant = coverStyle?.startsWith('gradient-')
+        ? Number(coverStyle.replace('gradient-', ''))
+        : 1
+      const variant = (rawVariant >= 1 && rawVariant <= 4 ? rawVariant : 1) as 1 | 2 | 3 | 4
+      const isDark = variant === 1 || variant === 2
+      return (
+        <div
+          className={`collection-apple-cover variant-${variant} ${items.length === 0 ? 'no-items' : ''}`}
+          style={getGradientCoverStyle(variant, items)}
+        >
+          <span
+            className="collection-apple-cover-title"
+            style={{
+              color: items.length === 0
+                ? 'rgba(237, 229, 216, 0.45)'
+                : (isDark ? '#ffffff' : '#0e0d0b'),
+              textShadow: (items.length > 0 && isDark)
+                ? '0 2px 10px rgba(0, 0, 0, 0.55)'
+                : 'none',
+            }}
+          >
+            {name.trim() || 'Untitled Collection'}
+          </span>
+        </div>
+      )
+    }
+
+    const isCustom = (coverMode === 'custom' || (!coverMode && customCoverUrl && !customCoverUrl.startsWith('data:image/svg+xml'))) && Boolean(customCoverUrl)
+    if (isCustom && customCoverUrl) {
+      return <img className="collection-preview-custom-cover" src={customCoverUrl} alt="" loading="lazy" decoding="async" />
+    }
+
+    return (
+      <div className="collection-preview-collage-grid">
+        {Array.from({ length: 4 }, (_, index) => {
+          const entry = items[index]
+          return (
+            <span key={entry?.id ?? `empty-cover-slot-${index}`} className={!entry ? 'empty' : ''}>
+              {entry && (entry.coverUrl
+                ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
+                : React.createElement(getTypeMeta(entry.type).Icon))}
+            </span>
+          )
+        })}
+      </div>
+    )
   }
 
   return (
@@ -1281,7 +1592,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       <motion.span
                         className="profile-catalog-tab-underline"
                         layoutId={`profile-catalog-tab-${userProfile.handle}`}
-                        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+                        transition={{
+                          type: 'spring',
+                          stiffness: 480,
+                          damping: 34,
+                          mass: 0.6,
+                        }}
                       />
                     )}
                   </button>
@@ -1299,7 +1615,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       <motion.span
                         className="profile-catalog-tab-underline"
                         layoutId={`profile-catalog-tab-${userProfile.handle}`}
-                        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+                        transition={{
+                          type: 'spring',
+                          stiffness: 480,
+                          damping: 34,
+                          mass: 0.6,
+                        }}
                       />
                     )}
                   </button>
@@ -1365,7 +1686,61 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               </div>
             )}
 
-            <div className={`profile-catalog-header ${isCollectionDetail ? 'has-collection-detail' : ''}`}>
+            {isAlternativeCollectionActive && selectedCollection ? (
+              <AlternativeCollectionDetail
+                collection={selectedCollection}
+                items={selectedCollectionEntries}
+                creatorHandle={selectedCollectionCreatorHandle}
+                creatorName={selectedCollectionCreatorName}
+                currentUserHandle={currentUserHandle}
+                isOwnedByCurrentUser={selectedCollectionIsOwnedByCurrentUser}
+                isSaved={selectedCollectionIsSaved}
+                isTcpAdminUser={isTcpAdminUser}
+                isEditingInline={collectionInlineEditing}
+                collectionName={collectionName}
+                setCollectionName={setCollectionName}
+                collectionDescription={collectionDescription}
+                setCollectionDescription={setCollectionDescription}
+                onSaveInlineEdit={saveInlineCollectionEdit}
+                onCancelInlineEdit={cancelInlineCollectionEdit}
+                onBack={handleBackToCollections}
+                onOpenMedia={onOpenMediaProfile}
+                onSelectEntry={onSelectEntry}
+                onOpenCreator={onOpenEntryCreator}
+                onOpenAlbum={onOpenEntryAlbum}
+                onOpenUserProfile={onSelectUserProfile}
+                onAddMedia={() => openCollectionComposer(selectedCollection, 'add')}
+                onStartInlineEdit={startInlineCollectionEdit}
+                onDeleteCollection={() => handleDeleteCollection(selectedCollection)}
+                onToggleSave={() => toggleSaveCollection(selectedCollection)}
+                followersCount={dynamicFollowersList.length}
+                followingCount={dynamicFollowingList.length}
+                isFollowingUser={isFollowingUser}
+                onToggleFollow={() => isFollowingUser
+                  ? onToggleFollowUser?.(userProfile.handle)
+                  : onToggleFollowRequest?.(userProfile.handle)}
+                onRemoveItem={(entry) => setCollectionInlineRemovalTarget(entry)}
+                collectionCoverMode={collectionCoverMode}
+                setCollectionCoverMode={setCollectionCoverMode}
+                collectionCustomCover={collectionCustomCover}
+                setCollectionCustomCover={setCollectionCustomCover}
+                collectionGradientVariant={collectionGradientVariant}
+                setCollectionGradientVariant={setCollectionGradientVariant}
+                onCoverUpload={handleCollectionCoverUpload}
+                onToggleHideFromProfile={handleToggleHideCollection}
+                renderCoverArtwork={() => renderCollectionCoverArtwork({
+                  name: collectionInlineEditing ? collectionName : selectedCollection.name,
+                  coverMode: collectionInlineEditing ? collectionCoverMode : selectedCollection.coverMode,
+                  coverStyle: collectionInlineEditing
+                    ? (collectionCoverMode === 'gradient' ? `gradient-${collectionGradientVariant}` : undefined)
+                    : selectedCollection.coverStyle,
+                  customCoverUrl: collectionInlineEditing ? collectionCustomCover : selectedCollection.customCoverUrl,
+                  items: selectedCollectionEntries,
+                })}
+              />
+            ) : (
+              <>
+                <div className={`profile-catalog-header ${isCollectionDetail ? 'has-collection-detail' : ''}`}>
 
               {/* Render only the active title so outgoing and incoming catalog states never share the header. */}
                 {catalogMode === 'reviewed' ? (
@@ -1394,35 +1769,64 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     key={selectedCollection ? `header-${selectedCollection.id}` : 'header-collections'}
                     className="catalog-header-title-group"
                   >
-                    {selectedCollection ? (
+                    {isCollectionDetail && (!selectedCollection || profileContentLoading) ? (
+                      <CollectionDetailHeroSkeleton />
+                    ) : selectedCollection ? (
                       <div className="collection-detail-heading">
-                        <button
-                          type="button"
-                          className="collection-back-btn"
-                          onClick={handleBackToCollections}
-                          aria-label="Back to collections"
-                          title="Back to collections"
-                        >
-                          <ArrowLeft aria-hidden="true" />
-                        </button>
+                        <div className="collection-detail-nav">
+                          <button
+                            type="button"
+                            className="collection-back-btn"
+                            onClick={handleBackToCollections}
+                            aria-label="Back to collections"
+                            title="Back to collections"
+                          >
+                            <ArrowLeft aria-hidden="true" />
+                            <span className="collection-back-btn-text">Back to Collections</span>
+                          </button>
+                          {isTcpAdminUser && (
+                            <div className="tcp-admin-layout-switcher" title="Seamlessly toggle between collection layouts (@tcpadmin)">
+                              <span className="tcp-switcher-label">
+                                <Sparkles size={12} aria-hidden="true" />
+                                <span>Dev Layout:</span>
+                              </span>
+                              <div className="tcp-switcher-pill-group">
+                                <button
+                                  type="button"
+                                  className={`tcp-switcher-pill ${devSettings.collectionLayout === 'classic' ? 'is-active' : ''}`}
+                                  onClick={() => updateDevSetting('collectionLayout', 'classic')}
+                                >
+                                  Classic
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`tcp-switcher-pill ${devSettings.collectionLayout === 'hollis' ? 'is-active' : ''}`}
+                                  onClick={() => updateDevSetting('collectionLayout', 'hollis')}
+                                >
+                                  Layout 1 (Hollis)
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`tcp-switcher-pill ${devSettings.collectionLayout === 'universal' ? 'is-active' : ''}`}
+                                  onClick={() => updateDevSetting('collectionLayout', 'universal')}
+                                >
+                                  Layout 2 (Universal)
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
                         <div className="collection-detail-hero">
+                          <div className="collection-detail-hero-glow" aria-hidden="true" />
                           <div className="collection-detail-hero-cover" aria-hidden="true">
-                            {selectedCollection.customCoverUrl ? (
-                              <img className="collection-detail-custom-cover" src={selectedCollection.customCoverUrl} alt="" loading="lazy" decoding="async" />
-                            ) : selectedCollectionEntries.length > 0 ? (
-                              Array.from({ length: 4 }, (_, index) => {
-                                const entry = selectedCollectionEntries[index]
-                                return (
-                                  <span key={entry?.id ?? `empty-hero-${index}`} className={!entry ? 'empty' : ''}>
-                                    {entry && (entry.coverUrl
-                                      ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
-                                      : React.createElement(getTypeMeta(entry.type).Icon))}
-                                  </span>
-                                )
-                              })
-                            ) : (
-                              <span className="collection-detail-hero-empty"><FolderHeart /></span>
-                            )}
+                            {renderCollectionCoverArtwork({
+                              name: selectedCollection.name,
+                              coverMode: selectedCollection.coverMode,
+                              coverStyle: selectedCollection.coverStyle,
+                              customCoverUrl: selectedCollection.customCoverUrl,
+                              items: selectedCollectionEntries,
+                            })}
                           </div>
 
                           <div className="collection-detail-hero-body">
@@ -1451,16 +1855,27 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                                 </>
                               ) : (
                                 <>
-                                  <h2 className="profile-catalog-title">{selectedCollection.name}</h2>
-                                  <span className="collection-detail-curator">Created by {selectedCollectionCreatorName}</span>
-                                  <div className="collection-detail-meta">
-                                    <span>{filteredCollectionEntries.length} {filteredCollectionEntries.length === 1 ? 'item' : 'items'}</span>
-                                    <i aria-hidden="true">·</i>
-                                    <span>{[...new Set(selectedCollectionEntries.map((entry) => getTypeMeta(entry.type).label))].join(', ') || 'Mixed media'}</span>
+                                  <div className="collection-detail-eyebrow">
+                                    <span className="collection-detail-badge">Curated Collection</span>
+                                    <span className="collection-detail-curator">Created by {selectedCollectionCreatorName}</span>
                                   </div>
-                                  <p className="collection-detail-description">
-                                    {selectedCollection.description || 'A personal collection of media worth returning to.'}
-                                  </p>
+                                  <h2 className="profile-catalog-title collection-detail-title">{selectedCollection.name}</h2>
+                                  <div className="collection-detail-meta">
+                                    <span className="collection-meta-pill count">
+                                      <Layers size={13} aria-hidden="true" />
+                                      <span>{filteredCollectionEntries.length} {filteredCollectionEntries.length === 1 ? 'item' : 'items'}</span>
+                                    </span>
+                                    {[...new Set(selectedCollectionEntries.map((entry) => getTypeMeta(entry.type).label))].map((typeLabel) => (
+                                      <span key={typeLabel} className="collection-meta-pill type">
+                                        {typeLabel}
+                                      </span>
+                                    ))}
+                                  </div>
+                                  {Boolean(selectedCollection.description?.trim()) && (
+                                    <p className="collection-detail-description">
+                                      {selectedCollection.description}
+                                    </p>
+                                  )}
                                 </>
                               )}
                             </div>
@@ -1468,39 +1883,53 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                             {selectedCollectionIsOwnedByCurrentUser ? (
                               <div className="collection-detail-hero-actions">
                                 {collectionInlineEditing ? (
-                                  <button
-                                    type="button"
-                                    className="collection-detail-icon-btn is-done"
-                                    onClick={saveInlineCollectionEdit}
-                                    disabled={!collectionName.trim()}
-                                    aria-label="Finish editing"
-                                    title="Finish editing"
-                                  >
-                                    <Check aria-hidden="true" />
-                                  </button>
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="collection-hero-btn is-primary is-done"
+                                      onClick={saveInlineCollectionEdit}
+                                      disabled={!collectionName.trim()}
+                                      aria-label="Finish editing"
+                                      title="Finish editing"
+                                    >
+                                      <Check aria-hidden="true" />
+                                      <span>Done</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="collection-hero-btn is-secondary"
+                                      onClick={cancelInlineCollectionEdit}
+                                      aria-label="Cancel editing"
+                                      title="Cancel editing"
+                                    >
+                                      <span>Cancel</span>
+                                    </button>
+                                  </>
                                 ) : (
                                   <>
                                     <button
                                       type="button"
-                                      className="collection-detail-icon-btn"
-                                      onClick={startInlineCollectionEdit}
-                                      aria-label="Edit collection"
-                                      title="Edit collection"
-                                    >
-                                      <Edit3 aria-hidden="true" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="collection-detail-icon-btn"
+                                      className="collection-hero-btn is-primary"
                                       onClick={() => openCollectionComposer(selectedCollection, 'add')}
-                                      aria-label="Add items"
-                                      title="Add items"
+                                      aria-label="Add media"
+                                      title="Add media"
                                     >
                                       <Plus aria-hidden="true" />
+                                      <span>Add Media</span>
                                     </button>
                                     <button
                                       type="button"
-                                      className="collection-detail-icon-btn is-danger"
+                                      className="collection-hero-btn is-secondary"
+                                      onClick={startInlineCollectionEdit}
+                                      aria-label="Edit collection details"
+                                      title="Edit collection details"
+                                    >
+                                      <Edit3 aria-hidden="true" />
+                                      <span>Edit</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="collection-hero-btn is-danger"
                                       onClick={() => handleDeleteCollection(selectedCollection)}
                                       aria-label={`Delete ${selectedCollection.name}`}
                                       title="Delete collection"
@@ -1604,7 +2033,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         <motion.span
                           className="profile-filter-pill"
                           layoutId={`profile-media-filter-${userProfile.handle}-${catalogMode}`}
-                          transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+                          transition={{
+                            type: 'spring',
+                            stiffness: 480,
+                            damping: 34,
+                            mass: 0.6,
+                          }}
                           aria-hidden="true"
                         />
                       )}
@@ -1645,31 +2079,21 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           onClick={() => handleOpenCollection(collection)}
                         >
                           <span className="profile-collection-preview" aria-hidden="true">
-                            {collection.customCoverUrl ? (
-                              <span className="profile-collection-preview-tile is-custom-cover">
-                                <img src={collection.customCoverUrl} alt="" loading="lazy" decoding="async" />
-                              </span>
-                            ) : (
-                              <>
-                                {collectionEntries.slice(0, 4).map((entry) => (
-                                  <span key={entry.id} className="profile-collection-preview-tile">
-                                    {entry.coverUrl ? (
-                                      <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
-                                    ) : (
-                                      React.createElement(getTypeMeta(entry.type).Icon)
-                                    )}
-                                  </span>
-                                ))}
-                                {collectionEntries.length === 0 && (
-                                  <span className="profile-collection-preview-empty"><FolderHeart /></span>
-                                )}
-                              </>
-                            )}
+                            {renderCollectionCoverArtwork({
+                              name: collection.name,
+                              coverMode: collection.coverMode,
+                              coverStyle: collection.coverStyle,
+                              customCoverUrl: collection.customCoverUrl,
+                              items: collectionEntries,
+                            })}
                           </span>
                           <span className="profile-collection-card-copy">
-                            <strong>{collection.name}</strong>
-                            <span>Created by {collectionCreator}</span>
-                            <small>{collectionEntries.length} {collectionEntries.length === 1 ? 'item' : 'items'}</small>
+                            <strong title={collection.name}>{collection.name}</strong>
+                            <span className="profile-collection-meta-line">
+                              <span>By {collectionCreator}</span>
+                              <span className="profile-collection-meta-dot">·</span>
+                              <small>{collectionEntries.length} {collectionEntries.length === 1 ? 'item' : 'items'}</small>
+                            </span>
                           </span>
                         </button>
                         {isCollectionOwner && catalogMode === 'collections' ? (
@@ -1724,7 +2148,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             <div
               key={catalogMode}
               className="profile-catalog-content"
-              aria-busy={showCatalogSkeleton || showCollectionMediaSkeleton}
+              aria-busy={showCatalogSkeleton || showCollectionMediaSkeleton || activeIsFilterSwitching}
             >
               {showCatalogSkeleton && (
                 <CardSkeletonGrid
@@ -1775,7 +2199,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 </div>
               )}
 
-              {!profileContentLoading && activeEntries.length === 0 && isCollectionDetail && selectedCollection && (
+              {!profileContentLoading && activeEntries.length === 0 && isCollectionDetail && selectedCollection && !isAlternativeCollectionActive && (
                 <div className="profile-empty collection-empty">
                   <FolderHeart size={32} opacity={0.5} aria-hidden="true" />
                   <h3>No matching media yet</h3>
@@ -1787,28 +2211,35 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 </div>
               )}
 
-              {isCollectionDetail && selectedCollection && activeEntries.length > 0 && (
-                <section
-                  className="profile-collection-media-list"
-                  aria-label={`${selectedCollection.name} media`}
-                  aria-hidden={showCollectionMediaSkeleton}
-                  ref={collectionGridRef}
+              {isCollectionDetail && selectedCollection && activeEntries.length > 0 && !isAlternativeCollectionActive && (
+                <div
+                  className="collection-media-shelf-container"
                   style={{
                     position: showCollectionMediaSkeleton ? 'absolute' : 'relative',
                     inset: showCollectionMediaSkeleton ? 0 : undefined,
                     width: '100%',
-                    height: collectionMasonryLayout?.height ?? 'auto',
-                    minHeight: 240,
                     visibility: showCollectionMediaSkeleton ? 'hidden' : 'visible',
                     opacity: showCollectionMediaSkeleton ? 0 : 1,
                     pointerEvents: showCollectionMediaSkeleton ? 'none' : undefined,
-                    transition: 'none',
                   }}
                 >
+                  <section
+                    className="profile-collection-media-list"
+                    aria-label={`${selectedCollection.name} media`}
+                    aria-hidden={showCollectionMediaSkeleton}
+                    ref={collectionGridRef}
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      height: collectionMasonryLayout?.height ?? 'auto',
+                      minHeight: 240,
+                    }}
+                  >
                     {activeEntries.map((entry, index) => {
                       const { Icon, label } = getTypeMeta(entry.type)
                       const isSquareArtwork = entry.type === 'album' || entry.type === 'song'
                       const pos = collectionMasonryLayout?.positions.get(entry.id)
+                      const typeSingular = label.replace(/s$/, '')
                       return (
                         <article
                           className={`profile-collection-media-item masonry-item ${isSquareArtwork ? 'is-square-artwork' : 'is-poster-artwork'}`}
@@ -1836,13 +2267,15 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                               {entry.coverUrl
                                 ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
                                 : <Icon aria-hidden="true" />}
+                              <span className="profile-collection-media-type" aria-label={typeSingular}>
+                                <Icon aria-hidden="true" />
+                                <span className="profile-collection-media-type-label">{typeSingular}</span>
+                              </span>
+                              <span className="profile-collection-media-sheen" aria-hidden="true" />
                             </span>
                             <span className="profile-collection-media-copy">
-                              <strong>{entry.title}</strong>
+                              <strong title={entry.title}>{entry.title}</strong>
                               <small>{entry.creator}{entry.year ? ` · ${entry.year}` : ''}</small>
-                            </span>
-                            <span className="profile-collection-media-type" aria-label={label.replace(/s$/, '')}>
-                              <Icon aria-hidden="true" />
                             </span>
                           </button>
                           {isOwnProfile && collectionInlineEditing && (
@@ -1859,7 +2292,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         </article>
                       )
                     })}
-                </section>
+                  </section>
+                </div>
               )}
 
               {/* Cards masonry grid */}
@@ -1877,7 +2311,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     visibility: showCatalogSkeleton ? 'hidden' : 'visible',
                     opacity: showCatalogSkeleton ? 0 : 1,
                     pointerEvents: showCatalogSkeleton ? 'none' : undefined,
-                    transition: 'none',
+                    transition: 'opacity 180ms ease',
                   }}
                 >
                   {activeEntries.map((entry) => {
@@ -1896,9 +2330,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           left: 0,
                           width: pos.width,
                           transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
-                          transition: (suppressCatalogMotion || activeIsFilterSwitching)
+                          transition: suppressCatalogMotion
                             ? 'none'
-                            : 'transform 280ms cubic-bezier(0.2, 0, 0, 1)',
+                            : 'transform 260ms cubic-bezier(0.16, 1, 0.3, 1)',
                         } : { width: '100%', marginBottom: 14 }}
                       >
                         <Card
@@ -1937,6 +2371,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 </section>
               )}
             </div>
+          </>
+        )}
           </section>
         )}
       </div>
@@ -1999,7 +2435,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
       <AnimatePresence>
         {collectionComposerOpen && collectionComposerMode === 'edit' && selectedCollection && (
-          <div className="collection-composer-backdrop" onClick={() => setCollectionComposerOpen(false)}>
+          <div className="collection-composer-backdrop" onClick={handleRequestCloseCollectionComposer}>
             <motion.section
               ref={collectionEditDialogRef}
               className="collection-quick-dialog collection-edit-dialog"
@@ -2019,7 +2455,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                   <h2 id="collection-edit-title">Collection details</h2>
                   <p>Update its identity, cover, and the media already inside.</p>
                 </div>
-                <button type="button" onClick={() => setCollectionComposerOpen(false)} aria-label="Close editor">
+                <button type="button" onClick={handleRequestCloseCollectionComposer} aria-label="Close editor">
                   <X aria-hidden="true" />
                 </button>
               </header>
@@ -2117,7 +2553,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               </div>
 
               <footer className="collection-quick-actions">
-                <button type="button" className="collection-composer-cancel" onClick={() => setCollectionComposerOpen(false)}>Cancel</button>
+                <button type="button" className="collection-composer-cancel" onClick={handleRequestCloseCollectionComposer}>Cancel</button>
                 <button
                   type="button"
                   className="collection-composer-submit"
@@ -2161,133 +2597,290 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
       <AnimatePresence>
         {collectionComposerOpen && collectionComposerMode === 'add' && selectedCollection && (
-          <div className="collection-composer-backdrop" onClick={() => setCollectionComposerOpen(false)}>
+          <div className="collection-composer-backdrop" onClick={handleRequestCloseCollectionComposer}>
             <motion.section
               ref={collectionAddDialogRef}
-              className="collection-quick-dialog collection-add-dialog"
+              className="collection-quick-dialog collection-add-dialog collection-add-modal-redesign"
               role="dialog"
               aria-modal="true"
               aria-labelledby="collection-add-title"
               tabIndex={-1}
-              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              initial={{ opacity: 0, scale: 0.95, y: 14 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 12 }}
-              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+              exit={{ opacity: 0, scale: 0.95, y: 14 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
               onClick={(event) => event.stopPropagation()}
             >
-              <header className="collection-quick-header">
-                <div>
-                  <span>Add media</span>
-                  <h2 id="collection-add-title">Add to {selectedCollection.name}</h2>
-                  <p>New selections will snap into the top-left of the collection.</p>
+              {/* Header */}
+              <header className="collection-add-modal-header">
+                <div className="collection-add-modal-header-info">
+                  <div className="collection-add-modal-badge-row">
+                    <span className="collection-add-modal-eyebrow">Add to {selectedCollection.name}</span>
+                    <span className="collection-add-modal-target-pill">
+                      <Layers size={11} aria-hidden="true" />
+                      <span className="collection-add-modal-target-count">
+                        {selectedCollection.items?.length || 0} {selectedCollection.items?.length === 1 ? 'item' : 'items'}
+                      </span>
+                    </span>
+                  </div>
+                  <h2 id="collection-add-title" className="collection-add-modal-title">
+                    Select Media to Add
+                  </h2>
                 </div>
-                <button type="button" onClick={() => setCollectionComposerOpen(false)} aria-label="Close media picker">
-                  <X aria-hidden="true" />
+                <button
+                  type="button"
+                  className="collection-add-modal-close-btn"
+                  onClick={handleRequestCloseCollectionComposer}
+                  aria-label="Close media picker"
+                >
+                  <X size={16} aria-hidden="true" />
                 </button>
               </header>
 
-              <div className="collection-add-content">
-                <label className="collection-item-search">
-                  <Search aria-hidden="true" />
-                  <input
-                    type="search"
-                    value={collectionItemSearch}
-                    onChange={(event) => handleCollectionItemSearchChange(event.target.value)}
-                    placeholder="Search your catalog and all media..."
-                    aria-label="Search catalog and all media"
-                    autoFocus
-                  />
-                  {collectionItemSearch && (
-                    <button type="button" onClick={() => handleCollectionItemSearchChange('')} aria-label="Clear item search">
-                      <X aria-hidden="true" />
-                    </button>
-                  )}
-                </label>
+              {/* Toolbar: Unified Search Input and Type Filter Pills */}
+              <div className="collection-add-toolbar">
+                <div className="collection-add-toolbar-top">
+                  {/* Search bar */}
+                  <label className="collection-add-search-input-wrap">
+                    <Search size={15} aria-hidden="true" />
+                    <input
+                      type="search"
+                      value={collectionItemSearch}
+                      onChange={(event) => handleCollectionItemSearchChange(event.target.value)}
+                      placeholder="Search books, movies, albums, games, podcasts in library and all media..."
+                      aria-label="Search media"
+                      autoFocus
+                    />
+                    {collectionItemSearch && (
+                      <button
+                        type="button"
+                        className="collection-add-search-clear"
+                        onClick={() => handleCollectionItemSearchChange('')}
+                        aria-label="Clear item search"
+                      >
+                        <X size={13} aria-hidden="true" />
+                      </button>
+                    )}
+                  </label>
+                </div>
 
-                <div className="collection-item-filters" role="group" aria-label="Filter items by media type">
+                {/* Media Type Filter Pills */}
+                <div className="collection-add-type-filters" role="group" aria-label="Filter items by media type">
                   <button
                     type="button"
-                    className={collectionItemTypeFilter === 'all' ? 'active' : ''}
+                    className={`collection-add-type-pill ${collectionItemTypeFilter === 'all' ? 'active' : ''}`}
                     onClick={() => handleCollectionItemTypeChange('all')}
                   >
-                    <Layers aria-hidden="true" /><span>All</span>
+                    <Layers size={12} aria-hidden="true" />
+                    <span>All</span>
                   </button>
                   {entryTypes.map(({ id, label, Icon }) => (
                     <button
                       type="button"
                       key={id}
-                      className={collectionItemTypeFilter === id ? 'active' : ''}
+                      className={`collection-add-type-pill ${collectionItemTypeFilter === id ? 'active' : ''}`}
                       onClick={() => handleCollectionItemTypeChange(id)}
                     >
-                      <Icon aria-hidden="true" /><span>{label}</span>
+                      <Icon size={12} aria-hidden="true" />
+                      <span>{label}</span>
                     </button>
                   ))}
                 </div>
-
-                <div className="collection-item-picker collection-add-picker" role="list" aria-label="Media results">
-                  {collectionAddItems.map((item) => {
-                    const identity = profileCollectionItemIdentity(item)
-                    const isSelected = collectionSelectedItems.some(
-                      (selectedItem) => profileCollectionItemIdentity(selectedItem) === identity,
-                    )
-                    const isAlreadyInCollection = selectedCollection.items?.some(
-                      (existingItem) => profileCollectionItemIdentity(existingItem) === identity,
-                    )
-                    const { Icon, label } = getTypeMeta(item.type)
-                    return (
-                      <button
-                        type="button"
-                        className={`collection-item-option ${isSelected ? 'selected' : ''} ${isAlreadyInCollection ? 'already-added' : ''}`}
-                        key={item.id}
-                        role="listitem"
-                        aria-pressed={isSelected}
-                        onClick={() => toggleCollectionItem(item)}
-                      >
-                        <span className="collection-item-art">
-                          {item.coverUrl ? <img src={item.coverUrl} alt="" loading="lazy" decoding="async" /> : <Icon aria-hidden="true" />}
-                        </span>
-                        <span className="collection-item-copy">
-                          <strong>{item.title}</strong>
-                          <small>{item.creator}{item.year ? ` · ${item.year}` : ''}</small>
-                        </span>
-                        <span className="collection-item-type"><Icon aria-hidden="true" /> {label.replace(/s$/, '')}</span>
-                        <span className="collection-item-toggle" aria-hidden="true">
-                          {isSelected ? <Check /> : isAlreadyInCollection ? <AlertTriangle /> : <Plus />}
-                        </span>
-                      </button>
-                    )
-                  })}
-                  {collectionItemSearchStatus === 'searching' && (
-                    <div className="collection-item-loading" role="status"><span aria-hidden="true" /> Searching across all media...</div>
-                  )}
-                  {collectionAddItems.length === 0 && collectionItemSearchStatus !== 'searching' && (
-                    <div className="collection-item-empty">
-                      <Search aria-hidden="true" />
-                      <span>{collectionItemSearch.trim().length < 2
-                        ? 'Everything shown is already in this collection, or there are no items yet.'
-                        : collectionItemSearchStatus === 'error'
-                          ? 'Media search is unavailable right now.'
-                          : 'No new media found.'}</span>
-                    </div>
-                  )}
-                </div>
               </div>
 
-              <footer className="collection-quick-actions">
-                <span>{collectionSelectedItems.length} selected</span>
-                <div>
-                  <button type="button" className="collection-composer-cancel" onClick={() => setCollectionComposerOpen(false)}>Cancel</button>
+              {/* Main Content Area */}
+              <div className="collection-add-body">
+                {collectionItemSearchStatus === 'searching' && (
+                  <div className="collection-add-loading-state" role="status">
+                    <div className="collection-add-spinner" aria-hidden="true" />
+                    <span>Searching books, films, games, music, and podcasts...</span>
+                  </div>
+                )}
+
+                {collectionAddItems.length > 0 ? (
+                  <div
+                    className="collection-add-grid"
+                    role="list"
+                    aria-label="Media results"
+                  >
+                    {collectionAddItems.map((item) => {
+                      const identity = profileCollectionItemIdentity(item)
+                      const isSelected = collectionSelectedItems.some(
+                        (selectedItem) => profileCollectionItemIdentity(selectedItem) === identity,
+                      )
+                      const isAlreadyInCollection = selectedCollection.items?.some(
+                        (existingItem) => profileCollectionItemIdentity(existingItem) === identity,
+                      )
+                      const { Icon, label } = getTypeMeta(item.type)
+                      const isSquareArtwork = item.type === 'album' || item.type === 'song'
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`collection-add-card ${isSelected ? 'is-selected' : ''} ${isAlreadyInCollection ? 'is-in-collection' : ''}`}
+                          role="listitem"
+                          onClick={() => toggleCollectionItem(item)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              toggleCollectionItem(item)
+                            }
+                          }}
+                          tabIndex={0}
+                          aria-pressed={isSelected}
+                        >
+                          <div className={`collection-add-card-art type-${item.type} ${isSquareArtwork ? 'is-square' : 'is-poster'}`}>
+                            {item.coverUrl ? (
+                              <img src={item.coverUrl} alt="" loading="lazy" decoding="async" />
+                            ) : (
+                              <div className="collection-add-card-fallback-art">
+                                <Icon size={22} aria-hidden="true" />
+                              </div>
+                            )}
+                            <span className="collection-add-card-type-chip">
+                              <Icon size={9} aria-hidden="true" />
+                              <span>{label.replace(/s$/, '')}</span>
+                            </span>
+                          </div>
+
+                          <div className="collection-add-card-content">
+                            <div className="collection-add-card-header">
+                              <h4 className="collection-add-card-title" title={item.title}>
+                                {item.title}
+                              </h4>
+                              <p className="collection-add-card-creator">
+                                {item.creator}
+                                {item.year ? ` · ${item.year}` : ''}
+                              </p>
+                            </div>
+
+                            <div className="collection-add-card-footer">
+                              {isAlreadyInCollection ? (
+                                <span className="collection-add-status-pill in-collection">
+                                  <Check size={11} aria-hidden="true" />
+                                  <span>In collection</span>
+                                </span>
+                              ) : isSelected ? (
+                                <span className="collection-add-status-pill selected">
+                                  <Check size={11} aria-hidden="true" />
+                                  <span>Selected</span>
+                                </span>
+                              ) : (
+                                <span className="collection-add-status-pill add-action">
+                                  <Plus size={11} aria-hidden="true" />
+                                  <span>Add</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  collectionItemSearchStatus !== 'searching' && (
+                    <div className="collection-add-empty-container">
+                      {collectionItemSearch.trim().length > 0 ? (
+                        <div className="collection-add-empty-box">
+                          <Search size={26} aria-hidden="true" />
+                          <h3>No results found</h3>
+                          <p>No media found for "{collectionItemSearch}". Try a different search term or change the category filter.</p>
+                        </div>
+                      ) : (
+                        <div className="collection-add-empty-box">
+                          <Compass size={26} aria-hidden="true" />
+                          <h3>Find media to add</h3>
+                          <p>Type a title, creator, or keyword above to search books, films, albums, games, and podcasts.</p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                )}
+              </div>
+
+              {/* Selected Staging Tray Dock */}
+              {collectionSelectedItems.length > 0 && (
+                <div className="collection-add-staging-bar">
+                  <div className="collection-add-staging-header">
+                    <span className="collection-add-staging-label">
+                      Ready to add ({collectionSelectedItems.length})
+                    </span>
+                    <button
+                      type="button"
+                      className="collection-add-staging-clear-btn"
+                      onClick={() => setCollectionSelectedItems([])}
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <div className="collection-add-staging-chips-row">
+                    {collectionSelectedItems.map((item) => {
+                      const { Icon } = getTypeMeta(item.type)
+                      return (
+                        <div key={item.id} className="collection-add-staging-chip">
+                          <span className="collection-add-staging-chip-art">
+                            {item.coverUrl ? (
+                              <img src={item.coverUrl} alt="" />
+                            ) : (
+                              <Icon size={11} aria-hidden="true" />
+                            )}
+                          </span>
+                          <span className="collection-add-staging-chip-title" title={item.title}>
+                            {item.title}
+                          </span>
+                          <button
+                            type="button"
+                            className="collection-add-staging-chip-remove"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setCollectionSelectedItems((current) => current.filter((i) => i.id !== item.id))
+                            }}
+                            aria-label={`Remove ${item.title}`}
+                          >
+                            <X size={11} aria-hidden="true" />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Footer Actions */}
+              <footer className="collection-add-modal-footer">
+                <span className="collection-add-footer-status">
+                  {collectionSelectedItems.length > 0 ? (
+                    <>
+                      Adding <strong>{collectionSelectedItems.length}</strong> {collectionSelectedItems.length === 1 ? 'item' : 'items'} to {selectedCollection.name}
+                    </>
+                  ) : (
+                    <>Select media above to add to this collection</>
+                  )}
+                </span>
+                <div className="collection-add-footer-buttons">
                   <button
                     type="button"
-                    className="collection-composer-submit"
+                    className="collection-add-cancel-btn"
+                    onClick={handleRequestCloseCollectionComposer}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="collection-add-submit-btn"
                     disabled={collectionSelectedItems.length === 0}
                     onClick={handleSaveCollection}
                   >
-                    <Plus aria-hidden="true" /> Add {collectionSelectedItems.length || ''} {collectionSelectedItems.length === 1 ? 'item' : 'items'}
+                    <Plus size={14} aria-hidden="true" />
+                    <span>
+                      Add {collectionSelectedItems.length ? `${collectionSelectedItems.length} ` : ''}
+                      {collectionSelectedItems.length === 1 ? 'item' : 'items'}
+                    </span>
                   </button>
                 </div>
               </footer>
 
+              {/* Duplicate confirmation dialog */}
               <AnimatePresence>
                 {collectionDuplicateTarget && (
                   <div className="collection-remove-confirm-backdrop" onClick={() => setCollectionDuplicateTarget(null)}>
@@ -2324,7 +2917,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
       <AnimatePresence>
         {collectionComposerOpen && collectionComposerMode === 'create' && (
-          <div className="collection-composer-backdrop" onClick={() => setCollectionComposerOpen(false)}>
+          <div className="collection-composer-backdrop" onClick={handleRequestCloseCollectionComposer}>
             <motion.div
               ref={collectionCreateDialogRef}
               className="collection-composer"
@@ -2338,163 +2931,265 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
               onClick={(event) => event.stopPropagation()}
             >
-              <section className="collection-composer-form">
-                <div className="collection-composer-header">
-                  <div>
-                    <h2 id="collection-composer-title">{collectionEditingId ? 'Edit Collection' : 'New Collection'}</h2>
-                    <p>{collectionEditingId ? 'Add, remove, or review what belongs on this shelf.' : 'Build a little shelf for the things that matter.'}</p>
-                  </div>
-                </div>
+              <button
+                type="button"
+                className="collection-composer-close"
+                onClick={handleRequestCloseCollectionComposer}
+                aria-label="Close collection creator"
+              >
+                <X aria-hidden="true" />
+              </button>
 
-                <ol className="collection-composer-steps" aria-label="Collection creation progress">
-                  {(['Details', 'Choose items', 'Confirmation'] as const).map((label, index) => {
-                    const step = (index + 1) as 1 | 2 | 3
-                    return (
-                      <li key={label} className={collectionComposerStep === step ? 'active' : collectionComposerStep > step ? 'complete' : ''}>
-                        <span>{collectionComposerStep > step ? <Check aria-hidden="true" /> : step}</span>
-                        <strong>{label}</strong>
-                      </li>
-                    )
-                  })}
-                </ol>
+              <aside className="collection-composer-preview">
+                <div className="collection-showcase-stage">
+                  <div className="collection-preview-cover-stage">
+                    <button
+                      type="button"
+                      className="collection-cover-nav-btn prev"
+                      onClick={handlePrevCoverStyle}
+                      aria-label="Previous cover style"
+                      title="Previous style"
+                    >
+                      <ChevronLeft aria-hidden="true" size={18} />
+                    </button>
 
-                <div className="collection-composer-fields">
-                  {collectionComposerStep === 1 && (
-                  <div className="collection-step-pane collection-step-details">
-                    <div className="collection-details-fields">
-                  <label className="collection-name-field">
-                    <span>Collection name</span>
-                    <span className="collection-input-wrap">
-                      <input
-                        type="text"
-                        value={collectionName}
-                        onChange={(event) => setCollectionName(event.target.value)}
-                        placeholder="Untitled Collection"
-                        maxLength={50}
-                        autoFocus
-                      />
-                      <small>{collectionName.length}/50</small>
-                    </span>
-                  </label>
-
-                  <label className="collection-name-field collection-description-field">
-                    <span>Description <em>(optional)</em></span>
-                    <span className="collection-input-wrap">
-                      <textarea
-                        value={collectionDescription}
-                        onChange={(event) => setCollectionDescription(event.target.value)}
-                        placeholder="A short note about this collection…"
-                        maxLength={200}
-                      />
-                      <small>{collectionDescription.length}/200</small>
-                    </span>
-                  </label>
-
-                    </div>
-
-                    <div className="collection-appearance-field">
-                      <div className="collection-appearance-heading">
-                        <strong>Collection appearance</strong>
-                        <span>Choose how your collection cover will look.</span>
-                      </div>
-                      <div className="collection-appearance-options">
-                        <button
-                          type="button"
-                          className={`collection-appearance-option ${collectionCoverMode === 'auto' ? 'selected' : ''}`}
-                          onClick={() => setCollectionCoverMode('auto')}
+                    <div className="collection-preview-cover">
+                      <AnimatePresence initial={false} mode="sync">
+                        <motion.div
+                          key={
+                            collectionCoverMode === 'custom'
+                              ? `custom-${collectionCustomCover ? 'img' : 'empty'}`
+                              : collectionCoverMode === 'gradient'
+                                ? `grad-${collectionGradientVariant}`
+                                : 'auto'
+                          }
+                          className="collection-preview-cover-layer"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
                         >
-                          <span className="collection-appearance-copy">
-                            <strong>Auto collage</strong>
-                            <small>Uses your first four selected items.</small>
-                          </span>
-                          <span className="collection-appearance-mini-collage" aria-hidden="true">
-                            {Array.from({ length: 4 }, (_, index) => {
-                              const entry = collectionSelectedItems[index]
-                              return (
-                                <span key={entry?.id ?? `empty-auto-${index}`} className={!entry ? 'empty' : ''}>
-                                  {entry && (entry.coverUrl
-                                    ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
-                                    : React.createElement(getTypeMeta(entry.type).Icon))}
-                                </span>
-                              )
-                            })}
-                          </span>
-                        </button>
-
-                        <label className={`collection-appearance-option custom ${collectionCoverMode === 'custom' ? 'selected' : ''}`}>
-                          <span className="collection-appearance-copy">
-                            <strong>Custom cover</strong>
-                            <small>Upload an image from your device.</small>
-                          </span>
-                          <span className="collection-custom-upload-preview">
-                            {collectionCustomCover ? <img src={collectionCustomCover} alt="Custom cover preview" /> : <ImagePlus aria-hidden="true" />}
-                          </span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(event) => handleCollectionCoverUpload(event.target.files?.[0])}
-                          />
-                        </label>
-                      </div>
-                      <p className="collection-appearance-note"><Sparkles aria-hidden="true" /> You can change this anytime.</p>
+                          {collectionCoverMode === 'custom' && !collectionCustomCover ? (
+                            <button
+                              type="button"
+                              className="collection-preview-custom-empty-upload"
+                              title="Click to upload cover photo"
+                              onClick={() => collectionPhotoInputRef.current?.click()}
+                            >
+                              <Upload aria-hidden="true" size={24} />
+                              <span>Click to upload cover</span>
+                            </button>
+                          ) : collectionCoverMode === 'custom' && collectionCustomCover ? (
+                            <div className="collection-preview-custom-cover-wrap">
+                              <img
+                                className="collection-preview-custom-cover"
+                                src={collectionCustomCover}
+                                alt="Collection custom cover"
+                              />
+                              <div
+                                className="collection-custom-cover-hover-overlay"
+                                onClick={() => collectionPhotoInputRef.current?.click()}
+                                title="Change cover photo"
+                              >
+                                <Upload size={22} aria-hidden="true" />
+                                <span>Change photo</span>
+                              </div>
+                            </div>
+                          ) : (
+                            renderCollectionCoverArtwork({
+                              name: collectionName,
+                              coverMode: collectionCoverMode,
+                              coverStyle: collectionCoverMode === 'gradient' ? `gradient-${collectionGradientVariant}` : undefined,
+                              customCoverUrl: collectionCustomCover,
+                              items: collectionSelectedItems,
+                            })
+                          )}
+                        </motion.div>
+                      </AnimatePresence>
                     </div>
+
+                    <button
+                      type="button"
+                      className="collection-cover-nav-btn next"
+                      onClick={handleNextCoverStyle}
+                      aria-label="Next cover style"
+                      title="Next style"
+                    >
+                      <ChevronRight aria-hidden="true" size={18} />
+                    </button>
                   </div>
-                  )}
 
-                  {collectionComposerStep === 2 && (
-                  <div className="collection-step-pane collection-step-items">
-                  <div className="collection-item-field">
-                    <div className="collection-item-heading">
-                      <span>
-                        <strong>Add items</strong>
-                        <small>Popular across the community, shuffled each time.</small>
-                      </span>
-                      <em>{collectionSelectedItems.length} selected</em>
-                    </div>
-
-                    <label className="collection-item-search">
-                      <Search aria-hidden="true" />
-                      <input
-                        type="search"
-                        value={collectionItemSearch}
-                        onChange={(event) => handleCollectionItemSearchChange(event.target.value)}
-                        placeholder="Search your catalog and all media..."
-                        aria-label="Search catalog and all media"
-                      />
-                      {collectionItemSearch && (
-                        <button
-                          type="button"
-                          onClick={() => handleCollectionItemSearchChange('')}
-                          aria-label="Clear item search"
-                        >
-                          <X aria-hidden="true" />
-                        </button>
-                      )}
-                    </label>
-
-                    <div className="collection-item-filters" role="group" aria-label="Filter items by media type">
+                  <div className="collection-cover-controls">
+                    <div className="collection-cover-dots" role="tablist" aria-label="Cover appearance styles">
                       <button
                         type="button"
-                        className={collectionItemTypeFilter === 'all' ? 'active' : ''}
-                        onClick={() => handleCollectionItemTypeChange('all')}
+                        className={`collection-cover-dot photo-dot ${collectionCoverMode === 'custom' ? 'active' : ''}`}
+                        onClick={() => {
+                          if (collectionCoverMode === 'custom' || !collectionCustomCover) {
+                            collectionPhotoInputRef.current?.click()
+                          } else {
+                            setCollectionCoverMode('custom')
+                          }
+                        }}
+                        title={
+                          collectionCoverMode === 'custom' && collectionCustomCover
+                            ? 'Change custom photo'
+                            : collectionCustomCover
+                              ? 'Switch to custom photo'
+                              : 'Upload custom photo'
+                        }
+                        aria-label="Custom photo"
                       >
-                        <Layers aria-hidden="true" />
-                        <span>All</span>
+                        <ImageIcon aria-hidden="true" size={13} />
                       </button>
-                      {entryTypes.map(({ id, label, Icon }) => (
+
+                      <button
+                        type="button"
+                        className={`collection-cover-dot collage-dot ${collectionCoverMode === 'auto' ? 'active' : ''}`}
+                        onClick={() => setCollectionCoverMode('auto')}
+                        title="Auto collage"
+                        aria-label="Auto collage"
+                      >
+                        <LayoutGrid aria-hidden="true" size={13} />
+                      </button>
+
+                      {([1, 2, 3, 4] as const).map((variant) => (
                         <button
+                          key={variant}
                           type="button"
-                          key={id}
-                          className={collectionItemTypeFilter === id ? 'active' : ''}
-                          onClick={() => handleCollectionItemTypeChange(id)}
+                          className={`collection-cover-dot ${collectionCoverMode === 'gradient' && collectionGradientVariant === variant ? 'active' : ''}`}
+                          onClick={() => {
+                            setCollectionCoverMode('gradient')
+                            setCollectionGradientVariant(variant)
+                          }}
+                          title={`Apple Music · ${GRADIENT_NAMES[variant]}`}
+                          aria-label={`Apple Music · ${GRADIENT_NAMES[variant]}`}
                         >
-                          <Icon aria-hidden="true" />
-                          <span>{label}</span>
+                          <span className="dot-pip" />
                         </button>
                       ))}
                     </div>
 
-                    <div className="collection-item-picker" role="list" aria-label="Catalog items">
+                    <input
+                      ref={collectionPhotoInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="sr-only"
+                      style={{ display: 'none' }}
+                      onChange={(event) => handleCollectionCoverUpload(event.target.files?.[0])}
+                    />
+                  </div>
+
+                  <div className="collection-showcase-note">
+                    <Sparkles aria-hidden="true" size={13} />
+                    <span>You can change this anytime.</span>
+                  </div>
+                </div>
+              </aside>
+
+              <section className="collection-composer-form">
+                <div className="collection-composer-header">
+                  <div>
+                    <h2 id="collection-composer-title">{collectionEditingId ? 'Edit Collection' : 'New Collection'}</h2>
+                  </div>
+                </div>
+
+                <div className="collection-composer-fields">
+                  <div className="collection-composer-identity">
+                    <label className="collection-field-group">
+                      <div className="collection-field-header">
+                        <span>Collection name</span>
+                        <small>{collectionName.length}/50</small>
+                      </div>
+                      <div className="collection-input-wrap">
+                        <input
+                          type="text"
+                          value={collectionName}
+                          onChange={(event) => setCollectionName(event.target.value)}
+                          placeholder="Untitled Collection"
+                          maxLength={50}
+                          autoFocus
+                        />
+                      </div>
+                    </label>
+
+                    <label className="collection-field-group">
+                      <div className="collection-field-header">
+                        <span>Description <em>(optional)</em></span>
+                        <small>{collectionDescription.length}/200</small>
+                      </div>
+                      <div className="collection-input-wrap">
+                        <textarea
+                          value={collectionDescription}
+                          onChange={(event) => setCollectionDescription(event.target.value)}
+                          placeholder="A short note about this collection…"
+                          maxLength={200}
+                          rows={3}
+                        />
+                      </div>
+                    </label>
+                  </div>
+
+                  <div className="collection-composer-curation">
+                    <div className="collection-curation-header">
+                      <div className="collection-curation-title">
+                        <span>Add items</span>
+                        <em>(optional)</em>
+                      </div>
+                      <span className="collection-curation-count">
+                        {collectionSelectedItems.length} {collectionSelectedItems.length === 1 ? 'item' : 'items'}
+                      </span>
+                    </div>
+
+                    <div className="collection-curation-toolbar">
+                      <label className="collection-item-search">
+                        <Search aria-hidden="true" />
+                        <input
+                          type="search"
+                          value={collectionItemSearch}
+                          onChange={(event) => handleCollectionItemSearchChange(event.target.value)}
+                          placeholder="Search your catalog and all media..."
+                          aria-label="Search catalog and all media"
+                        />
+                        {collectionItemSearch && (
+                          <button
+                            type="button"
+                            onClick={() => handleCollectionItemSearchChange('')}
+                            aria-label="Clear item search"
+                          >
+                            <X aria-hidden="true" />
+                          </button>
+                        )}
+                      </label>
+
+                      <div className="collection-item-filters" role="group" aria-label="Filter items by media type">
+                        <button
+                          type="button"
+                          className={collectionItemTypeFilter === 'all' ? 'active' : ''}
+                          onClick={() => handleCollectionItemTypeChange('all')}
+                        >
+                          <Layers aria-hidden="true" />
+                          <span>All</span>
+                        </button>
+                        {entryTypes.map(({ id, label, Icon }) => (
+                          <button
+                            type="button"
+                            key={id}
+                            className={collectionItemTypeFilter === id ? 'active' : ''}
+                            onClick={() => handleCollectionItemTypeChange(id)}
+                          >
+                            <Icon aria-hidden="true" />
+                            <span>{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div
+                      className={`collection-item-picker ${collectionComposerItems.length === 0 ? 'is-empty' : ''}`}
+                      role="list"
+                      aria-label="Catalog items"
+                    >
                       {collectionComposerItems.map((item) => {
                         const itemIdentity = profileCollectionItemIdentity(item)
                         const isSelected = collectionSelectedItems.some(
@@ -2532,103 +3227,117 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       {collectionComposerItems.length === 0 && collectionItemSearchStatus !== 'searching' && (
                         <div className="collection-item-empty">
                           <Search aria-hidden="true" />
-                          <span>{collectionItemSearch.trim().length < 2
-                            ? 'Search for any movie, book, song, show, album, or game.'
-                            : collectionItemSearchStatus === 'error'
-                              ? 'Media search is unavailable right now.'
-                              : 'No media found.'}</span>
+                          <span>{!collectionItemSearch.trim()
+                            ? (collectionSelectedItems.length === 0
+                                ? 'No items added yet. Search your catalog or media above to add items.'
+                                : 'No items match the selected media filter.')
+                            : collectionItemSearch.trim().length < 2
+                              ? 'Search for any movie, book, song, show, album, or game.'
+                              : collectionItemSearchStatus === 'error'
+                                ? 'Media search is unavailable right now.'
+                                : 'No media found.'}</span>
                         </div>
                       )}
                     </div>
                   </div>
-                  </div>
-                  )}
-
-                  {collectionComposerStep === 3 && (
-                    <div className="collection-confirmation-copy">
-                      <span className="collection-composer-eyebrow">Ready for the shelf</span>
-                      <h3>{collectionEditingId ? 'Save these collection changes?' : 'Create this collection?'}</h3>
-                      <p>The shelf beside you is the final version. If it feels right, set it down in your profile—you can keep shaping it whenever something new belongs there.</p>
-                      <div className="collection-confirmation-note">
-                        <Sparkles aria-hidden="true" />
-                        <span>{collectionEditingId
-                          ? 'Your latest changes will replace the current arrangement.'
-                          : 'This collection will appear at the front of your collection shelf.'}</span>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 <div className="collection-composer-actions">
-                  <button
-                    type="button"
-                    className="collection-composer-cancel"
-                    onClick={() => collectionComposerStep === 1
-                      ? setCollectionComposerOpen(false)
-                      : setCollectionComposerStep((collectionComposerStep - 1) as 1 | 2)}
-                  >
-                    {collectionComposerStep === 1 ? 'Cancel' : 'Back'}
-                  </button>
-                  <button
-                    type="button"
-                    className="collection-composer-submit"
-                    disabled={!collectionName.trim() || (collectionCoverMode === 'custom' && !collectionCustomCover)}
-                    onClick={() => collectionComposerStep === 3
-                      ? handleSaveCollection()
-                      : setCollectionComposerStep((collectionComposerStep + 1) as 2 | 3)}
-                  >
-                    {collectionComposerStep === 3
-                      ? collectionEditingId ? 'Save Changes' : 'Create Collection'
-                      : 'Continue'}
-                  </button>
+                  <div className="collection-composer-status">
+                    <span>
+                      {collectionSelectedItems.length === 0
+                        ? 'Can start empty or add items now'
+                        : `${collectionSelectedItems.length} item${collectionSelectedItems.length === 1 ? '' : 's'} ready for your shelf`}
+                    </span>
+                  </div>
+                  <div className="collection-composer-buttons">
+                    <button
+                      type="button"
+                      className="collection-composer-cancel"
+                      onClick={handleRequestCloseCollectionComposer}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="collection-composer-submit"
+                      disabled={!collectionName.trim() || (collectionCoverMode === 'custom' && !collectionCustomCover)}
+                      onClick={handleSaveCollection}
+                    >
+                      {collectionEditingId ? 'Save Changes' : 'Create Collection'}
+                    </button>
+                  </div>
                 </div>
               </section>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
-              <aside className="collection-composer-preview">
-                <div className="collection-preview-heading-row">
-                  <div className="collection-preview-heading">
-                    <h3>Preview</h3>
-                    <p>This is how your collection will appear.</p>
-                  </div>
-                  <button
-                    type="button"
-                    className="collection-composer-close"
-                    onClick={() => setCollectionComposerOpen(false)}
-                    aria-label="Close collection creator"
-                  >
-                    <X aria-hidden="true" />
-                  </button>
-                </div>
-                <div className="collection-preview-card">
-                  <div className="collection-preview-cover">
-                    {collectionCoverMode === 'custom' && collectionCustomCover ? (
-                      <img className="collection-preview-custom-cover" src={collectionCustomCover} alt="" />
-                    ) : (
-                      Array.from({ length: 4 }, (_, index) => {
-                        const entry = collectionSelectedItems[index]
-                        return (
-                          <span key={entry?.id ?? `empty-preview-${index}`} className={!entry ? 'empty' : ''}>
-                            {entry && (entry.coverUrl
-                              ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
-                              : React.createElement(getTypeMeta(entry.type).Icon))}
-                          </span>
-                        )
-                      })
-                    )}
-                  </div>
-                  <h4>{collectionName.trim() || 'Untitled Collection'}</h4>
-                  <div className="collection-preview-meta">
-                    <Bookmark aria-hidden="true" />
-                    <span>{collectionSelectedItems.length} {collectionSelectedItems.length === 1 ? 'item' : 'items'}</span>
-                  </div>
-                </div>
-                <div className="collection-preview-note">
-                  <Sparkles aria-hidden="true" />
-                  <p>{collectionSelectedItems.length > 0
-                    ? `${collectionSelectedItems.length} ${collectionSelectedItems.length === 1 ? 'item is' : 'items are'} ready. You can keep adding more later.`
-                    : 'You can start empty or search for items before creating.'}</p>
-                </div>
-              </aside>
+      <AnimatePresence>
+        {collectionDiscardConfirmOpen && (
+          <div className="collection-inline-remove-backdrop" onClick={() => setCollectionDiscardConfirmOpen(false)}>
+            <motion.div
+              ref={collectionDiscardDialogRef}
+              className="collection-remove-confirm"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="collection-discard-title"
+              tabIndex={-1}
+              initial={{ opacity: 0, scale: 0.94, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 8 }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <AlertTriangle aria-hidden="true" />
+              <h3 id="collection-discard-title">Discard unsaved changes?</h3>
+              <p>You have unsaved changes that will be lost if you leave now.</p>
+              <div>
+                <button type="button" onClick={() => setCollectionDiscardConfirmOpen(false)}>Keep editing</button>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    setCollectionDiscardConfirmOpen(false)
+                    setCollectionComposerOpen(false)
+                  }}
+                >
+                  Discard
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {collectionInlineDiscardConfirmOpen && (
+          <div className="collection-inline-remove-backdrop" onClick={() => setCollectionInlineDiscardConfirmOpen(false)}>
+            <motion.div
+              ref={collectionInlineDiscardDialogRef}
+              className="collection-remove-confirm"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="collection-inline-discard-title"
+              tabIndex={-1}
+              initial={{ opacity: 0, scale: 0.94, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 8 }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <AlertTriangle aria-hidden="true" />
+              <h3 id="collection-inline-discard-title">Discard unsaved changes?</h3>
+              <p>You have unsaved changes that will be lost if you leave now.</p>
+              <div>
+                <button type="button" onClick={() => setCollectionInlineDiscardConfirmOpen(false)}>Keep editing</button>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={handleConfirmInlineDiscard}
+                >
+                  Discard
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

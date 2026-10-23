@@ -61,20 +61,72 @@ export function ProfileCatalogSkeleton({
   )
 }
 
+export function CollectionDetailHeroSkeleton() {
+  return (
+    <div className="collection-detail-heading collection-detail-skeleton-heading" role="status" aria-label="Loading collection details">
+      <div className="collection-detail-nav">
+        <span className="skeleton-box collection-skeleton-back-btn" />
+      </div>
+
+      <div className="collection-detail-hero collection-detail-hero-skeleton">
+        <div className="collection-detail-hero-glow" aria-hidden="true" />
+        <div className="collection-detail-hero-cover collection-detail-cover-skeleton" aria-hidden="true">
+          <span className="skeleton-box collection-skeleton-hero-cover-art" />
+        </div>
+
+        <div className="collection-detail-hero-body collection-detail-body-skeleton">
+          <div className="collection-detail-copy">
+            <div className="collection-detail-eyebrow">
+              <span className="skeleton-box collection-skeleton-badge" />
+              <span className="skeleton-box collection-skeleton-curator" />
+            </div>
+            <span className="skeleton-box collection-skeleton-hero-title" />
+            <div className="collection-detail-meta">
+              <span className="skeleton-box collection-skeleton-meta-pill count" />
+              <span className="skeleton-box collection-skeleton-meta-pill" />
+              <span className="skeleton-box collection-skeleton-meta-pill short" />
+            </div>
+            <div className="collection-skeleton-description">
+              <span className="skeleton-box" />
+              <span className="skeleton-box short" />
+            </div>
+          </div>
+
+          <div className="collection-detail-hero-actions">
+            <span className="skeleton-box collection-skeleton-action-btn primary" />
+            <span className="skeleton-box collection-skeleton-action-btn secondary" />
+            <span className="skeleton-box collection-skeleton-action-btn danger" />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function CollectionMediaSkeleton({ count = 8 }: { count?: number }) {
   return (
-    <div className="profile-collection-media-skeleton-grid" role="status" aria-label="Loading collection media">
-      {Array.from({ length: count }, (_, index) => (
-        <div
-          className={`profile-collection-media-skeleton ${index % 4 === 1 ? 'is-square' : 'is-poster'}`}
-          key={index}
-          aria-hidden="true"
-        >
-          <span className="skeleton-box profile-media-skeleton-art" />
-          <span className="skeleton-box profile-media-skeleton-title" />
-          <span className="skeleton-box profile-media-skeleton-creator" />
-        </div>
-      ))}
+    <div className="collection-media-skeleton-wrapper" role="status" aria-label="Loading collection media">
+      <div className="profile-collection-media-skeleton-grid">
+        {Array.from({ length: count }, (_, index) => {
+          const isSquare = index % 3 !== 0
+          return (
+            <div
+              className={`profile-collection-media-skeleton ${isSquare ? 'is-square' : 'is-poster'}`}
+              key={index}
+              aria-hidden="true"
+            >
+              <div className="profile-media-skeleton-art-wrap">
+                <span className="skeleton-box profile-media-skeleton-art" />
+                <span className="skeleton-box profile-media-skeleton-type-pill" />
+              </div>
+              <div className="profile-media-skeleton-copy">
+                <span className="skeleton-box profile-media-skeleton-title" />
+                <span className="skeleton-box profile-media-skeleton-creator" />
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

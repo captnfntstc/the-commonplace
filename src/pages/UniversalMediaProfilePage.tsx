@@ -32,7 +32,9 @@ import { buildMostQuotedWorks, type MostQuotedWork } from '../features/quotes/qu
 import { StarRating } from '../components/CommonplaceCard/CardHeader'
 import { FormattedText } from '../components/CommonplaceCard/FormattedText'
 import { EntityLoadingSkeleton } from '../components/PageLoadingSkeleton'
+import { NotFoundPage } from './NotFoundPage'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../data/universalMediaEntities'
+import { MOCK_ENTITY_PROFILES } from '../data/entityProfiles'
 import {
   type UniversalMediaEntity,
   type MediaEntityType,
@@ -247,6 +249,7 @@ interface UniversalMediaProfilePageProps {
   entity: UniversalMediaEntity
   onBack: () => void
   onHome?: () => void
+  onNotFound?: () => void
   showLocalNavigation?: boolean
   communityEntries: CardEntry[]
   onSelectEntry?: (entry: CardEntry) => void
@@ -1649,6 +1652,7 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
   entity,
   onBack,
   onHome,
+  onNotFound,
   showLocalNavigation = true,
   communityEntries,
   onSelectEntry,
@@ -3028,6 +3032,73 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     )
   }
 
+  const isPredefined = Boolean(
+    UNIVERSAL_MEDIA_ENTITIES[entity.id] ||
+    MOCK_ENTITY_PROFILES[entity.id],
+  )
+  const hasCommunityReviews = matchingReviews.length > 0 || humanWorkReviews.length > 0
+  const hasApiCover = Boolean(apiCoverUrl && !apiCoverUrl.startsWith('data:image/svg+xml'))
+  const hasEntityCover = Boolean(entity.artworkUrl && !entity.artworkUrl.startsWith('data:image/svg+xml'))
+  const hasSummary = Boolean(
+    apiSummary ||
+    (entity.description &&
+      !entity.description.startsWith('Catalog entry for ') &&
+      !entity.description.startsWith('profile for ') &&
+      !entity.description.startsWith('Artist profile for ') &&
+      !entity.description.startsWith('Author profile for ') &&
+      !entity.description.startsWith('Director profile for ') &&
+      !entity.description.startsWith('Creator profile for ')),
+  )
+  const hasTracks = (liveTrackItems?.length || 0) > 0 || (entity.primaryCollection?.items?.length || 0) > 0
+  const hasCollections = (liveCollectionItems?.length || 0) > 0 || (entity.secondaryCollection?.items?.length || 0) > 0
+  const hasScreenCredits = (liveScreenCredits?.length || 0) > 0
+  const hasPublishedWorks = (livePublishedWorks?.length || 0) > 0
+  const hasCast = (liveCastMembers?.length || 0) > 0
+  const hasRelated =
+    (liveRelatedAlbums?.length || 0) > 0 ||
+    (liveRelatedArtists?.length || 0) > 0 ||
+    (liveRelatedTitles?.length || 0) > 0 ||
+    (entity.relatedEntities?.items?.length || 0) > 0
+  const hasAppearances = (liveSongAppearances?.length || 0) > 0
+  const hasLyrics = Boolean(liveSongLyrics)
+  const hasGameMeta = Boolean(liveGameMetadata || entity.gameMetadata)
+  const hasTvMeta = Boolean(liveTvSeasonResult?.seasons?.length || entity.tvMetadata)
+  const hasAlbumChips = Boolean(liveAlbumChips?.length)
+  const hasKnownCreator = Boolean(
+    entity.metadataChips?.some(
+      (chip) =>
+        ['artist', 'creator', 'author', 'director', 'studio'].includes(chip.label.toLowerCase()) &&
+        chip.value &&
+        chip.value.toLowerCase() !== 'unknown' &&
+        chip.value.toLowerCase() !== 'artist',
+    ),
+  )
+
+  const hasResolvedContent =
+    isPredefined ||
+    hasCommunityReviews ||
+    hasApiCover ||
+    hasEntityCover ||
+    hasSummary ||
+    hasTracks ||
+    hasCollections ||
+    hasScreenCredits ||
+    hasPublishedWorks ||
+    hasCast ||
+    hasRelated ||
+    hasAppearances ||
+    hasLyrics ||
+    hasGameMeta ||
+    hasTvMeta ||
+    hasAlbumChips ||
+    hasKnownCreator
+
+  useEffect(() => {
+    if (!isLoadingApi && !hasResolvedContent) {
+      onNotFound?.()
+    }
+  }, [isLoadingApi, hasResolvedContent, onNotFound])
+
   if (isLoadingApi) {
     return (
       <div
@@ -3039,6 +3110,15 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
       >
         <EntityLoadingSkeleton showHeader={showLocalNavigation} />
       </div>
+    )
+  }
+
+  if (!hasResolvedContent) {
+    return (
+      <NotFoundPage
+        onHome={onHome || onBack}
+        onBack={onBack}
+      />
     )
   }
 
@@ -3221,7 +3301,12 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
                 <motion.span
                   className="media-tab-underline"
                   layoutId="media-tab-underline"
-                  transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+                  transition={{
+                    type: 'spring',
+                    stiffness: 480,
+                    damping: 34,
+                    mass: 0.6,
+                  }}
                 />
               )}
             </button>

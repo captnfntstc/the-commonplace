@@ -18,10 +18,14 @@ import {
   TriangleAlert,
   WifiOff,
   X,
+  Code,
 } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import '../App.css'
+import { DeveloperToolsModal } from '../components/DeveloperTools/DeveloperToolsModal'
+import { DeveloperToolsDock } from '../components/DeveloperTools/DeveloperToolsDock'
+import { isTcpAdmin, useDevSettings } from '../components/DeveloperTools/devSettings'
 import {
   type MetadataResult,
   searchMetadata,
@@ -438,6 +442,8 @@ export default function AppController() {
   const [postEngagements, setPostEngagements] = useState<Record<string, PostEngagement>>({})
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<EntryType | 'all'>('all')
+  const [devToolsOpen, setDevToolsOpen] = useState(false)
+  const { settings: devSettings } = useDevSettings()
   const { expandedCardId, setExpandedCardId, toggleCardExpanded } = useCardExpansion()
 
   const {
@@ -1997,8 +2003,7 @@ export default function AppController() {
   const [isFilterSwitching, setIsFilterSwitching] = useState(false)
   const showHomeSkeleton = homeDataStatus === 'loading'
     || personalizedFeed.loading
-    || isFilterSwitching
-    || (filteredEntries.length > 0 && !masonryLayout)
+    || (isInitialRender && filteredEntries.length > 0 && !masonryLayout)
 
   const handleTypeFilterChange = (nextFilter: EntryType | 'all') => {
     if (nextFilter === typeFilter) return
@@ -2035,11 +2040,11 @@ export default function AppController() {
       return
     }
     if (masonryLayout) {
-      const timer = setTimeout(() => {
+      const frame = window.requestAnimationFrame(() => {
         setIsInitialRender(false)
         setIsFilterSwitching(false)
-      }, 120)
-      return () => clearTimeout(timer)
+      })
+      return () => window.cancelAnimationFrame(frame)
     }
   }, [filteredEntries.length, masonryLayout, typeFilter])
 
@@ -2215,6 +2220,21 @@ export default function AppController() {
           >
             <Home aria-hidden="true" />
           </button>
+
+          {isTcpAdmin(userProfile.handle) && (
+            <button
+              type="button"
+              className={`global-header-nav-btn devtools-header-nav-btn ${devSettings.collectionLayout !== 'classic' ? 'is-alt-layout' : ''}`}
+              onClick={() => setDevToolsOpen(true)}
+              aria-label="Open Developer Tools"
+              title={`Developer Tools (@tcpadmin) — Collections: ${devSettings.collectionLayout === 'universal' ? 'Layout 2 (Universal)' : devSettings.collectionLayout === 'hollis' ? 'Layout 1 (Hollis)' : 'Standard Classic'}`}
+            >
+              <Code aria-hidden="true" />
+              <span className="devtools-nav-chip">
+                {devSettings.collectionLayout === 'universal' ? 'UNI' : devSettings.collectionLayout === 'hollis' ? 'HOL' : 'DEV'}
+              </span>
+            </button>
+          )}
         </div>
 
         <button
@@ -2300,6 +2320,19 @@ export default function AppController() {
               <CircleHelp aria-hidden="true" />
               <span>Help &amp; Support</span>
             </button>
+            {isTcpAdmin(userProfile.handle) && (
+              <button
+                type="button"
+                className="menu-item devtools-menu-item"
+                onClick={() => {
+                  setDevToolsOpen(true)
+                  setProfileMenuOpen(false)
+                }}
+              >
+                <Code aria-hidden="true" />
+                <span>Developer Tools</span>
+              </button>
+            )}
             <button type="button" className="menu-item" onClick={handleLogout}>
               <LogOut aria-hidden="true" />
               <span>Log out</span>
@@ -2394,6 +2427,24 @@ export default function AppController() {
               )}
             </div>
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleHome() }}><Home aria-hidden="true" /> Home</button>
+            {isTcpAdmin(userProfile.handle) && (
+              <button
+                type="button"
+                className="devtools-mobile-item"
+                onClick={() => {
+                  setMobileMenuOpen(false)
+                  setDevToolsOpen(true)
+                }}
+              >
+                <span className="devtools-mobile-label">
+                  <Code aria-hidden="true" />
+                  <span>Developer Tools</span>
+                </span>
+                <span className="devtools-nav-chip">
+                  {devSettings.collectionLayout === 'universal' ? 'UNI' : devSettings.collectionLayout === 'hollis' ? 'HOL' : 'DEV'}
+                </span>
+              </button>
+            )}
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenUserProfile(userProfile.handle) }}><CircleUserRound aria-hidden="true" /> Profile</button>
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenActivity() }}><Activity aria-hidden="true" /> Activity</button>
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenSettings() }}><Settings aria-hidden="true" /> Settings</button>
@@ -2448,6 +2499,19 @@ export default function AppController() {
       }}
       onConfirm={confirmLogout}
     />
+    {isTcpAdmin(userProfile.handle) && (
+      <>
+        <DeveloperToolsDock
+          currentHandle={userProfile.handle}
+          onOpen={() => setDevToolsOpen(true)}
+        />
+        <DeveloperToolsModal
+          isOpen={devToolsOpen}
+          onClose={() => setDevToolsOpen(false)}
+          currentHandle={userProfile.handle}
+        />
+      </>
+    )}
     </>
     )
   }
@@ -3016,6 +3080,7 @@ export default function AppController() {
             entity={universalEntity}
             onBack={handlePageBack}
             onHome={handleHome}
+            onNotFound={() => setActiveView('not-found')}
             showLocalNavigation={false}
             communityEntries={allHomepageEntries}
             onSelectEntry={openEntryOverlay}
@@ -3153,7 +3218,12 @@ export default function AppController() {
                   <motion.div
                     layoutId="activeFilterPill"
                     className="active-tab-pill"
-                    transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+                    transition={{
+                      type: 'spring',
+                      stiffness: 480,
+                      damping: 34,
+                      mass: 0.6,
+                    }}
                   />
                 )}
                 <span>All</span>
@@ -3171,7 +3241,12 @@ export default function AppController() {
                       <motion.div
                         layoutId="activeFilterPill"
                         className="active-tab-pill"
-                        transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+                        transition={{
+                      type: 'spring',
+                      stiffness: 480,
+                      damping: 34,
+                      mass: 0.6,
+                    }}
                       />
                     )}
                     <Icon aria-hidden="true" />
@@ -3199,11 +3274,11 @@ export default function AppController() {
               minHeight: filteredEntries.length === 0 ? 320 : undefined,
               visibility: !showHomeSkeleton ? 'visible' : 'hidden',
               opacity: !showHomeSkeleton ? 1 : 0,
-              transition: 'none',
+              transition: 'opacity 180ms ease',
               pointerEvents: showHomeSkeleton ? 'none' : undefined,
             }}
             aria-label="Saved entries"
-            aria-busy={showHomeSkeleton}
+            aria-busy={showHomeSkeleton || isFilterSwitching}
             aria-hidden={showHomeSkeleton}
           >
           {filteredEntries.map((entry) => {
@@ -3224,9 +3299,9 @@ export default function AppController() {
                   left: 0,
                   width: pos.width,
                   transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
-                  transition: (isInitialRender || isFilterSwitching || !hadMeasuredPosition)
+                  transition: (isInitialRender || !hadMeasuredPosition)
                     ? 'none'
-                    : 'transform 280ms cubic-bezier(0.2, 0, 0, 1)',
+                    : 'transform 260ms cubic-bezier(0.16, 1, 0.3, 1)',
                 } : { width: '100%', marginBottom: 14 }}
               >
                 <Card

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Entry } from '../features/entries/model'
 import type { UniversalMediaEntity } from '../types/mediaEntity'
@@ -405,4 +405,36 @@ describe('universal media profile related content', () => {
     expect(screen.getByText('#1')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /Community Reviews/ })).not.toBeInTheDocument()
   })
+
+  it('renders NotFoundPage and calls onNotFound if the artist or media does not exist', async () => {
+    const onNotFound = vi.fn()
+    const nonexistentArtist: UniversalMediaEntity = {
+      id: 'artist:nonexistent-user',
+      name: 'Nonexistent User',
+      type: 'artist',
+      categoryLabel: 'Artist',
+      artworkUrl: '',
+      description: '',
+      metadataChips: [{ label: 'Profession', value: 'Artist' }],
+      communityRating: {
+        average: 0,
+        count: 0,
+        distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+      },
+    }
+
+    render(
+      <UniversalMediaProfilePage
+        entity={nonexistentArtist}
+        communityEntries={[]}
+        onBack={vi.fn()}
+        onNotFound={onNotFound}
+      />,
+    )
+
+    expect(await screen.findByRole('heading', { name: 'This page slipped between the margins.' })).toBeInTheDocument()
+    expect(screen.getByText('404')).toBeInTheDocument()
+    await waitFor(() => expect(onNotFound).toHaveBeenCalled())
+  })
 })
+

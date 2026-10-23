@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Entry } from '../features/entries/model'
 import type { UserProfileState } from '../types/userProfile'
+import { serverTimestamp } from 'firebase/firestore'
 import {
   isAccountCurrentlyDeactivated,
   mergeMigrationSnapshots,
   resolveSavedEntryIds,
+  withoutUndefined,
   type UserCloudSnapshot,
 } from './cloudData'
 
@@ -111,3 +113,36 @@ describe('account migration recovery', () => {
     expect(merged.entries.map(({ id }) => id)).toEqual(['local-entry', 'cloud-entry'])
   })
 })
+
+describe('withoutUndefined', () => {
+  it('strips undefined values from plain objects and arrays', () => {
+    const input = {
+      name: 'John',
+      empty: undefined,
+      tags: ['a', undefined, 'b'],
+      nested: {
+        value: 123,
+        removed: undefined,
+      },
+    }
+    expect(withoutUndefined(input)).toEqual({
+      name: 'John',
+      tags: ['a', 'b'],
+      nested: { value: 123 },
+    })
+  })
+
+  it('preserves FieldValue instances like serverTimestamp without converting them to plain objects', () => {
+    const timestamp = serverTimestamp()
+    const input = {
+      handle: 'johnappleseed',
+      empty: undefined,
+      createdAt: timestamp,
+    }
+    const result = withoutUndefined(input)
+    expect(result.handle).toBe('johnappleseed')
+    expect(result.empty).toBeUndefined()
+    expect(result.createdAt).toBe(timestamp)
+  })
+})
+

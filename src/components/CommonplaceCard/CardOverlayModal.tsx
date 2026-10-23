@@ -11,6 +11,10 @@ import {
   Trash2,
   Flag,
   Pencil,
+  Eye,
+  EyeOff,
+  MoreHorizontal,
+  Share2,
 } from 'lucide-react'
 import { FormattedText } from './FormattedText'
 import { StarRating } from './CardHeader'
@@ -22,8 +26,10 @@ import { useAuth } from '../../context/AuthContext'
 import { useAccessibleDialog } from '../../hooks/useAccessibleDialog'
 import { ReportDialog } from '../Reports/ReportDialog'
 import {
+  canDeleteInteraction,
+  hideOwnerInteraction,
+  unhideOwnerInteraction,
   hideReportedInteraction,
-  isInteractionOwner,
   isReportedInteractionHidden,
 } from './commentPermissions'
 import {
@@ -198,6 +204,61 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   const replyInputRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
   const commentItemRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const replyItemRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const isEntryOwner = Boolean(
+    onEdit ||
+    (cloudUserId && entry?.ownerId && cloudUserId === entry.ownerId) ||
+    (currentUserHandle && entry?.authorHandle && currentUserHandle.replace(/^@/, '').toLowerCase() === entry.authorHandle.replace(/^@/, '').toLowerCase())
+  )
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
+  const [ownerHiddenIds, setOwnerHiddenIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(`the-commonplace.owner-hidden-interactions.${activeEntryId}`)
+      return new Set(raw ? JSON.parse(raw) : [])
+    } catch {
+      return new Set()
+    }
+  })
+
+  useEffect(() => {
+    if (!activeMenuId) return
+    const handleOutsideClick = () => setActiveMenuId(null)
+    window.addEventListener('click', handleOutsideClick)
+    return () => window.removeEventListener('click', handleOutsideClick)
+  }, [activeMenuId])
+
+  const handleShareInteraction = async (type: 'comment' | 'reply', id: string) => {
+    const shareUrl = `${window.location.origin}${window.location.pathname}#${type}-${id}`
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl)
+        setReportToast(`${type === 'comment' ? 'Comment' : 'Reply'} link copied to clipboard!`)
+      } else {
+        setReportToast(`${type === 'comment' ? 'Comment' : 'Reply'} link ready.`)
+      }
+    } catch {
+      setReportToast(`${type === 'comment' ? 'Comment' : 'Reply'} link ready.`)
+    }
+    window.setTimeout(() => setReportToast(null), 3000)
+  }
+
+  const toggleHideInteraction = (type: 'comment' | 'reply', id: string) => {
+    if (!activeEntryId) return
+    const key = `${activeEntryId}:${type}:${id}`
+    setOwnerHiddenIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+        unhideOwnerInteraction(activeEntryId, type, id)
+        setReportToast(`${type === 'comment' ? 'Comment' : 'Reply'} unhidden.`)
+      } else {
+        next.add(key)
+        hideOwnerInteraction(activeEntryId, type, id)
+        setReportToast(`${type === 'comment' ? 'Comment' : 'Reply'} hidden from readers.`)
+      }
+      return next
+    })
+    window.setTimeout(() => setReportToast(null), 3000)
+  }
   const [visibleCommentsCount, setVisibleCommentsCount] = useState(5)
   const [visibleRepliesCount, setVisibleRepliesCount] = useState<Record<string, number>>({})
   const [focusedInteractionId, setFocusedInteractionId] = useState<string | null>(null)
@@ -434,7 +495,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
 
   const handleDeleteComment = (commentId: string) => {
     const comment = comments.find((item) => item.id === commentId)
-    if (!comment || !isInteractionOwner(comment, cloudUserId, currentUserHandle)) return
+    if (!comment || !canDeleteInteraction(comment, cloudUserId, currentUserHandle, isEntryOwner)) return
     setCommentDeleteError(null)
     setCommentDeleteTarget(comment)
   }
@@ -442,7 +503,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   const confirmDeleteComment = async () => {
     if (!commentDeleteTarget || commentDeletePending) return
     const comment = comments.find((item) => item.id === commentDeleteTarget.id)
-    if (!comment || !isInteractionOwner(comment, cloudUserId, currentUserHandle)) {
+    if (!comment || !canDeleteInteraction(comment, cloudUserId, currentUserHandle, isEntryOwner)) {
       setCommentDeleteTarget(null)
       return
     }
@@ -465,7 +526,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
 
   const handleDeleteReply = (commentId: string, replyId: string) => {
     const reply = comments.find((item) => item.id === commentId)?.replies.find((item) => item.id === replyId)
-    if (!reply || !isInteractionOwner(reply, cloudUserId, currentUserHandle)) return
+    if (!reply || !canDeleteInteraction(reply, cloudUserId, currentUserHandle, isEntryOwner)) return
     if (!window.confirm('Delete this reply?')) return
     const removeReply = () => setComments((prev) =>
       prev.map((comment) =>
@@ -484,11 +545,16 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   }
 
   const sortedComments = sortOrder === 'newest' ? [...comments].reverse() : comments
+  const filteredComments = sortedComments.filter((c) => {
+    const isOwnerHidden = ownerHiddenIds.has(`${entry.id}:comment:${c.id}`)
+    if (!isEntryOwner && isOwnerHidden) return false
+    return true
+  })
   const focusedCommentIndex = focusCommentId
-    ? sortedComments.findIndex(({ id }) => id === focusCommentId)
+    ? filteredComments.findIndex(({ id }) => id === focusCommentId)
     : -1
   const effectiveVisibleCommentsCount = Math.max(visibleCommentsCount, focusedCommentIndex + 1)
-  const visibleComments = sortedComments.slice(0, effectiveVisibleCommentsCount)
+  const visibleComments = filteredComments.slice(0, effectiveVisibleCommentsCount)
 
   return (
     <main className={`entry-reading-page tone-${entry.coverTone}`}>
@@ -642,13 +708,20 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
 
             <div className="overlay-comments-list">
               {visibleComments.map((c) => {
-                const canDeleteC = isInteractionOwner(c, cloudUserId, currentUserHandle)
+                const isCommentOwnerHidden = ownerHiddenIds.has(`${entry.id}:comment:${c.id}`)
+                const canDeleteC = canDeleteInteraction(c, cloudUserId, currentUserHandle, isEntryOwner)
+                const canHideC = isEntryOwner
                 const canReportC = Boolean(cloudUserId && !canDeleteC)
                 const focusedReplyIndex = c.id === focusCommentId && focusReplyId
                   ? c.replies.findIndex(({ id }) => id === focusReplyId)
                   : -1
+                const filteredReplies = c.replies.filter((r) => {
+                  const isOwnerHidden = ownerHiddenIds.has(`${entry.id}:reply:${r.id}`)
+                  if (!isEntryOwner && isOwnerHidden) return false
+                  return true
+                })
                 const maxReplies = Math.max(visibleRepliesCount[c.id] || 3, focusedReplyIndex + 1)
-                const visibleReplies = c.replies.slice(0, maxReplies)
+                const visibleReplies = filteredReplies.slice(0, maxReplies)
 
                 return (
                   <div
@@ -672,6 +745,11 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                           <span className="overlay-comment-author">{c.author}</span>
                         )}
                         <span className="overlay-comment-time">{formatCommentTimestamp(c.createdAt)}</span>
+                        {isCommentOwnerHidden && (
+                          <span className="overlay-comment-hidden-badge" title="Hidden from other readers">
+                            <EyeOff size={10} /> Hidden
+                          </span>
+                        )}
                       </div>
                       <p className="overlay-comment-text">{c.text}</p>
 
@@ -711,34 +789,89 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                           <CornerUpLeft size={12} />
                           <span>{replyingToId === c.id ? 'Cancel' : 'Reply'}</span>
                         </button>
-                        {canDeleteC && (
+                        <div className="comment-ellipsis-wrap">
                           <button
                             type="button"
-                            className="comment-action-btn danger"
-                            onClick={() => handleDeleteComment(c.id)}
-                            title="Delete comment"
-                            aria-label="Delete comment"
+                            className="comment-action-btn"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setActiveMenuId((prev) => (prev === `comment-${c.id}` ? null : `comment-${c.id}`))
+                            }}
+                            title="More options"
+                            aria-label="More options"
                           >
-                            <Trash2 size={12} />
+                            <MoreHorizontal size={13} />
                           </button>
-                        )}
-                        {canReportC && (
-                          <button
-                            type="button"
-                            className="comment-action-btn danger"
-                            onClick={() => setInteractionReportTarget({
-                              targetType: 'comment',
-                              targetId: c.id,
-                              targetHandle: c.authorHandle,
-                              targetLabel: `comment by ${c.authorHandle ? `@${c.authorHandle.replace(/^@/, '')}` : c.author}`,
-                            })}
-                            title="Report comment"
-                            aria-label="Report comment"
-                          >
-                            <Flag size={12} />
-                            <span>Report</span>
-                          </button>
-                        )}
+
+                          {activeMenuId === `comment-${c.id}` && (
+                            <div className="comment-dropdown-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                className="comment-dropdown-item"
+                                onClick={() => {
+                                  setActiveMenuId(null)
+                                  void handleShareInteraction('comment', c.id)
+                                }}
+                                role="menuitem"
+                              >
+                                <Share2 size={12} />
+                                <span>Share comment</span>
+                              </button>
+
+                              {canHideC && (
+                                <button
+                                  type="button"
+                                  className="comment-dropdown-item"
+                                  onClick={() => {
+                                    setActiveMenuId(null)
+                                    toggleHideInteraction('comment', c.id)
+                                  }}
+                                  role="menuitem"
+                                >
+                                  {isCommentOwnerHidden ? <Eye size={12} /> : <EyeOff size={12} />}
+                                  <span>{isCommentOwnerHidden ? 'Unhide comment' : 'Hide comment'}</span>
+                                </button>
+                              )}
+
+                              {canReportC && (
+                                <button
+                                  type="button"
+                                  className="comment-dropdown-item"
+                                  onClick={() => {
+                                    setActiveMenuId(null)
+                                    setInteractionReportTarget({
+                                      targetType: 'comment',
+                                      targetId: c.id,
+                                      targetHandle: c.authorHandle,
+                                      targetLabel: `comment by ${c.authorHandle ? `@${c.authorHandle.replace(/^@/, '')}` : c.author}`,
+                                    })
+                                  }}
+                                  role="menuitem"
+                                  aria-label="Report comment"
+                                >
+                                  <Flag size={12} />
+                                  <span>Report comment</span>
+                                </button>
+                              )}
+
+                              {canDeleteC && (
+                                <button
+                                  type="button"
+                                  className="comment-dropdown-item danger"
+                                  onClick={() => {
+                                    setActiveMenuId(null)
+                                    handleDeleteComment(c.id)
+                                  }}
+                                  role="menuitem"
+                                  aria-label="Delete comment"
+                                >
+                                  <Trash2 size={12} />
+                                  <span>Delete comment</span>
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {/* Inline reply form */}
@@ -818,7 +951,9 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                       {c.replies.length > 0 && (
                         <div className="overlay-replies-list">
                           {visibleReplies.map((r) => {
-                            const canDeleteR = isInteractionOwner(r, cloudUserId, currentUserHandle)
+                            const isReplyOwnerHidden = ownerHiddenIds.has(`${entry.id}:reply:${r.id}`)
+                            const canDeleteR = canDeleteInteraction(r, cloudUserId, currentUserHandle, isEntryOwner)
+                            const canHideR = isEntryOwner
                             const canReportR = Boolean(cloudUserId && !canDeleteR)
                             return (
                               <div
@@ -842,6 +977,11 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                                       <span className="overlay-comment-author">{r.author}</span>
                                     )}
                                     <span className="overlay-comment-time">{formatCommentTimestamp(r.createdAt)}</span>
+                                    {isReplyOwnerHidden && (
+                                      <span className="overlay-comment-hidden-badge" title="Hidden from other readers">
+                                        <EyeOff size={10} /> Hidden
+                                      </span>
+                                    )}
                                   </div>
                                   <p className="overlay-comment-text">{r.text}</p>
                                   <div className="comment-actions-bar">
@@ -875,35 +1015,90 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                                       <CornerUpLeft size={11} />
                                       <span>Reply</span>
                                     </button>
-                                    {canDeleteR && (
+                                    <div className="comment-ellipsis-wrap">
                                       <button
                                         type="button"
-                                        className="comment-action-btn danger"
-                                        onClick={() => handleDeleteReply(c.id, r.id)}
-                                        title="Delete reply"
-                                        aria-label="Delete reply"
+                                        className="comment-action-btn"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setActiveMenuId((prev) => (prev === `reply-${r.id}` ? null : `reply-${r.id}`))
+                                        }}
+                                        title="More options"
+                                        aria-label="More options"
                                       >
-                                        <Trash2 size={11} />
+                                        <MoreHorizontal size={12} />
                                       </button>
-                                    )}
-                                    {canReportR && (
-                                      <button
-                                        type="button"
-                                        className="comment-action-btn danger"
-                                        onClick={() => setInteractionReportTarget({
-                                          targetType: 'reply',
-                                          targetId: r.id,
-                                          parentCommentId: c.id,
-                                          targetHandle: r.authorHandle,
-                                          targetLabel: `reply by ${r.authorHandle ? `@${r.authorHandle.replace(/^@/, '')}` : r.author}`,
-                                        })}
-                                        title="Report reply"
-                                        aria-label="Report reply"
-                                      >
-                                        <Flag size={11} />
-                                        <span>Report</span>
-                                      </button>
-                                    )}
+
+                                      {activeMenuId === `reply-${r.id}` && (
+                                        <div className="comment-dropdown-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                                          <button
+                                            type="button"
+                                            className="comment-dropdown-item"
+                                            onClick={() => {
+                                              setActiveMenuId(null)
+                                              void handleShareInteraction('reply', r.id)
+                                            }}
+                                            role="menuitem"
+                                          >
+                                            <Share2 size={11} />
+                                            <span>Share reply</span>
+                                          </button>
+
+                                          {canHideR && (
+                                            <button
+                                              type="button"
+                                              className="comment-dropdown-item"
+                                              onClick={() => {
+                                                setActiveMenuId(null)
+                                                toggleHideInteraction('reply', r.id)
+                                              }}
+                                              role="menuitem"
+                                            >
+                                              {isReplyOwnerHidden ? <Eye size={11} /> : <EyeOff size={11} />}
+                                              <span>{isReplyOwnerHidden ? 'Unhide reply' : 'Hide reply'}</span>
+                                            </button>
+                                          )}
+
+                                          {canReportR && (
+                                            <button
+                                              type="button"
+                                              className="comment-dropdown-item"
+                                              onClick={() => {
+                                                setActiveMenuId(null)
+                                                setInteractionReportTarget({
+                                                  targetType: 'reply',
+                                                  targetId: r.id,
+                                                  parentCommentId: c.id,
+                                                  targetHandle: r.authorHandle,
+                                                  targetLabel: `reply by ${r.authorHandle ? `@${r.authorHandle.replace(/^@/, '')}` : r.author}`,
+                                                })
+                                              }}
+                                              role="menuitem"
+                                              aria-label="Report reply"
+                                            >
+                                              <Flag size={11} />
+                                              <span>Report reply</span>
+                                            </button>
+                                          )}
+
+                                          {canDeleteR && (
+                                            <button
+                                              type="button"
+                                              className="comment-dropdown-item danger"
+                                              onClick={() => {
+                                                setActiveMenuId(null)
+                                                handleDeleteReply(c.id, r.id)
+                                              }}
+                                              role="menuitem"
+                                              aria-label="Delete reply"
+                                            >
+                                              <Trash2 size={11} />
+                                              <span>Delete reply</span>
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
                               </div>
