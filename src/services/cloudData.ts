@@ -25,6 +25,47 @@ import type { AppNotification } from '../types/notification'
 import type { UserProfileState } from '../types/userProfile'
 import { removeLegacySeedEntryIds } from '../utils/legacySeedCleanup'
 import { db, isFirebaseConfigured } from './firebase'
+import { supabase, isSupabaseConfigured } from './supabase'
+
+function mapSupabaseEntryToClientEntry(row: Record<string, any>): Entry {
+  const meta = (row.metadata as Record<string, any>) || {}
+  const profile = (row.profiles as Record<string, any>) || {}
+  const authorName =
+    profile.name ||
+    (profile.first_name ? `${profile.first_name} ${profile.last_name || ''}`.trim() : '') ||
+    (profile.handle ? `@${profile.handle}` : '')
+
+  return {
+    id: String(row.id),
+    type: row.type,
+    title: row.title,
+    creator: row.creator || '',
+    year: row.year || '',
+    genre: row.genre || '',
+    summary: row.summary || '',
+    coverUrl: row.cover_url || '',
+    coverTone: row.cover_tone || undefined,
+    artworkUrl: row.artwork_url || '',
+    rating: row.rating ? Number(row.rating) : 0,
+    quote: row.quote || '',
+    favoritePassage: row.favorite_passage || '',
+    passageAlign: row.passage_align || 'left',
+    reflection: row.reflection || '',
+    reflectionAlign: row.reflection_align || 'left',
+    lyrics: row.lyrics || '',
+    provider: row.provider || '',
+    providerId: row.provider_id || '',
+    enableDropCap: row.enable_drop_cap ?? meta.enableDropCap,
+    preferWikipediaArtwork: row.prefer_wikipedia_artwork ?? meta.preferWikipediaArtwork,
+    explicit: row.explicit ?? meta.explicit,
+    createdAt: row.created_at || meta.createdAt || new Date().toISOString(),
+    updatedAt: row.updated_at || meta.updatedAt || new Date().toISOString(),
+    authorHandle: profile.handle || meta.authorHandle || '',
+    authorName: authorName || meta.authorName || '',
+    authorAvatarUrl: profile.avatar_url || meta.authorAvatarUrl || '',
+    ...meta,
+  } as Entry
+}
 
 export const CLOUD_MIGRATION_VERSION = 3
 
@@ -165,7 +206,7 @@ export function mergeMigrationSnapshots(
 }
 
 export function canUseCloudData(userId?: string | null) {
-  return Boolean(isFirebaseConfigured && userId)
+  return Boolean((isSupabaseConfigured || isFirebaseConfigured) && userId)
 }
 
 function cleanHandle(handle: string) {
@@ -343,55 +384,75 @@ export async function saveUserProfile(
 ) {
   if (!canUseCloudData(userId)) return profile
 
-  const userRef = doc(db, 'users', userId)
   const nextHandle = cleanHandle(profile.handle)
-  const {
-    email,
-    birthday,
-    createdAt: _createdAt,
-    accountStatus: _accountStatus,
-    ...publicProfile
-  } = profile
-  void _createdAt
-  void _accountStatus
-
-  await runTransaction(db, async (transaction) => {
-    const nextHandleRef = doc(db, 'handles', nextHandle)
-    const [existing, nextHandleSnapshot] = await Promise.all([
-      transaction.get(userRef),
-      transaction.get(nextHandleRef),
-    ])
-    const previousHandle = existing.exists() ? cleanHandle(String(existing.data().handle || '')) : ''
-    const existingHandleOwner = nextHandleSnapshot.exists() ? String(nextHandleSnapshot.data().uid || '') : ''
-    if (existingHandleOwner && existingHandleOwner !== userId) {
-      throw new Error('That username is already in use.')
-    }
-
-    transaction.set(userRef, withoutUndefined({
-      ...publicProfile,
+  if (isSupabaseConfigured) {
+    void supabase.from('profiles').upsert({
+      id: userId,
       handle: nextHandle,
-      ...(!existing.exists() || !existing.data().createdAt ? { createdAt: serverTimestamp() } : {}),
-      migrationVersion: options.markMigrated === false ? 0 : CLOUD_MIGRATION_VERSION,
-      updatedAt: new Date().toISOString(),
-    }), { merge: true })
-    transaction.set(doc(db, 'users', userId, 'private', 'settings'), withoutUndefined({
+      first_name: profile.firstName || '',
+      last_name: profile.lastName || '',
+      name: `${profile.firstName || ''} ${profile.lastName || ''}`.trim() || nextHandle,
+      bio: profile.bio || '',
+      avatar_url: profile.avatarUrl || '',
+      cover_url: profile.coverUrl || '',
+      birthdate: profile.birthday || null,
+      is_private: Boolean(profile.isPrivate),
+      show_full_name: profile.showFullName !== false,
+      allow_comments: profile.allowComments !== false,
+      updated_at: new Date().toISOString(),
+    })
+  }
+
+  if (isFirebaseConfigured) {
+    const userRef = doc(db, 'users', userId)
+    const {
       email,
       birthday,
-      lastUsernameChangeDate: profile.lastUsernameChangeDate,
-      updatedAt: new Date().toISOString(),
-    }), { merge: true })
-    transaction.set(nextHandleRef, {
-      uid: userId,
-      handle: nextHandle,
-      ...(!nextHandleSnapshot.exists() || !nextHandleSnapshot.data().createdAt
-        ? { createdAt: serverTimestamp() }
-        : {}),
-      updatedAt: new Date().toISOString(),
+      createdAt: _createdAt,
+      accountStatus: _accountStatus,
+      ...publicProfile
+    } = profile
+    void _createdAt
+    void _accountStatus
+
+    await runTransaction(db, async (transaction) => {
+      const nextHandleRef = doc(db, 'handles', nextHandle)
+      const [existing, nextHandleSnapshot] = await Promise.all([
+        transaction.get(userRef),
+        transaction.get(nextHandleRef),
+      ])
+      const previousHandle = existing.exists() ? cleanHandle(String(existing.data().handle || '')) : ''
+      const existingHandleOwner = nextHandleSnapshot.exists() ? String(nextHandleSnapshot.data().uid || '') : ''
+      if (existingHandleOwner && existingHandleOwner !== userId) {
+        throw new Error('That username is already in use.')
+      }
+
+      transaction.set(userRef, withoutUndefined({
+        ...publicProfile,
+        handle: nextHandle,
+        ...(!existing.exists() || !existing.data().createdAt ? { createdAt: serverTimestamp() } : {}),
+        migrationVersion: options.markMigrated === false ? 0 : CLOUD_MIGRATION_VERSION,
+        updatedAt: new Date().toISOString(),
+      }), { merge: true })
+      transaction.set(doc(db, 'users', userId, 'private', 'settings'), withoutUndefined({
+        email,
+        birthday,
+        lastUsernameChangeDate: profile.lastUsernameChangeDate,
+        updatedAt: new Date().toISOString(),
+      }), { merge: true })
+      transaction.set(nextHandleRef, {
+        uid: userId,
+        handle: nextHandle,
+        ...(!nextHandleSnapshot.exists() || !nextHandleSnapshot.data().createdAt
+          ? { createdAt: serverTimestamp() }
+          : {}),
+        updatedAt: new Date().toISOString(),
+      })
+      if (previousHandle && previousHandle !== nextHandle) {
+        transaction.delete(doc(db, 'handles', previousHandle))
+      }
     })
-    if (previousHandle && previousHandle !== nextHandle) {
-      transaction.delete(doc(db, 'handles', previousHandle))
-    }
-  })
+  }
 
   const [avatarUrl, coverUrl] = await Promise.all([
     resolveUserImage(userId, profile.avatarUrl),
@@ -402,16 +463,58 @@ export async function saveUserProfile(
 
 export async function reactivateUserAccount(userId: string) {
   if (!canUseCloudData(userId)) return
-  await setDoc(doc(db, 'users', userId), {
-    accountStatus: 'active',
-    reactivatedAt: serverTimestamp(),
-    updatedAt: new Date().toISOString(),
-  }, { merge: true })
+  if (isSupabaseConfigured) {
+    void supabase.from('profiles').update({
+      account_status: 'active',
+      reactivates_at: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', userId)
+  }
+  if (isFirebaseConfigured) {
+    await setDoc(doc(db, 'users', userId), {
+      accountStatus: 'active',
+      reactivatedAt: serverTimestamp(),
+      updatedAt: new Date().toISOString(),
+    }, { merge: true })
+  }
   accountIdentityCache.delete(userId)
 }
 
 export async function loadUserProfile(userId: string): Promise<UserProfileState | null> {
   if (!canUseCloudData(userId)) return null
+
+  if (isSupabaseConfigured) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle()
+    if (profile) {
+      const [avatarUrl, coverUrl] = await Promise.all([
+        resolveUserImage(userId, String(profile.avatar_url || '')),
+        resolveUserImage(userId, String(profile.cover_url || '')),
+      ])
+      return {
+        firstName: String(profile.first_name || ''),
+        lastName: String(profile.last_name || ''),
+        showFullName: profile.show_full_name !== false,
+        handle: String(profile.handle || ''),
+        email: '',
+        bio: String(profile.bio || ''),
+        avatarUrl,
+        coverUrl,
+        createdAt: profile.created_at || new Date().toISOString(),
+        birthday: profile.birthdate ? String(profile.birthdate) : undefined,
+        lastUsernameChangeDate: undefined,
+        showFollowLists: true,
+        allowComments: profile.allow_comments !== false,
+        isPrivate: Boolean(profile.is_private),
+        showSavedActivity: false,
+      }
+    }
+  }
+
+  if (!isFirebaseConfigured) return null
   const [publicSnapshot, privateSnapshot] = await Promise.all([
     getDoc(doc(db, 'users', userId)),
     getDoc(doc(db, 'users', userId, 'private', 'settings')),
@@ -508,6 +611,27 @@ export function saveUserEntries(
 
 export async function loadUserEntries(userId: string): Promise<Entry[]> {
   if (!canUseCloudData(userId)) return []
+
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase
+      .from('entries')
+      .select('*, profiles:owner_id (*)')
+      .eq('owner_id', userId)
+      .order('created_at', { ascending: false })
+    if (!error && data && data.length > 0) {
+      return Promise.all(data.map(async (row) => {
+        const entry = mapSupabaseEntryToClientEntry(row)
+        return {
+          ...entry,
+          authorAvatarUrl: entry.authorAvatarUrl
+            ? await resolveUserImage(userId, entry.authorAvatarUrl)
+            : entry.authorAvatarUrl,
+        }
+      }))
+    }
+  }
+
+  if (!isFirebaseConfigured) return []
   const snapshot = await getDocs(collection(db, 'users', userId, 'entries'))
   const entries = await Promise.all(snapshot.docs.map(async (entry) => {
     const data = entry.data() as Entry
@@ -523,6 +647,17 @@ export async function loadUserEntries(userId: string): Promise<Entry[]> {
 }
 
 export async function loadPostEntry(postId: string): Promise<Entry | null> {
+  if (isSupabaseConfigured && postId) {
+    const { data, error } = await supabase
+      .from('entries')
+      .select('*, profiles:owner_id (*)')
+      .eq('id', postId)
+      .maybeSingle()
+    if (!error && data) {
+      return mapSupabaseEntryToClientEntry(data)
+    }
+  }
+
   if (!isFirebaseConfigured || !postId) return null
   const postSnapshot = await getDoc(doc(db, 'posts', postId))
   if (!postSnapshot.exists()) return null
@@ -559,6 +694,19 @@ export async function loadPostEntry(postId: string): Promise<Entry | null> {
 export async function saveUserCloudState(userId: string, patch: Partial<UserCloudState>) {
   if (!canUseCloudData(userId)) return
   const updatedAt = new Date().toISOString()
+  if (isSupabaseConfigured) {
+    void supabase.from('user_cloud_state').upsert({
+      user_id: userId,
+      ...(patch.likedEntryIds ? { liked_entry_ids: patch.likedEntryIds } : {}),
+      ...(patch.savedEntryIds ? { saved_entries: patch.savedEntryIds } : {}),
+      ...(patch.disabledCommentEntryIds ? { disabled_comment_entry_ids: patch.disabledCommentEntryIds } : {}),
+      ...(patch.followedUserHandles ? { followed_user_handles: patch.followedUserHandles } : {}),
+      ...(patch.followRequestedHandles ? { follow_requested_handles: patch.followRequestedHandles } : {}),
+      updated_at: updatedAt,
+    })
+  }
+
+  if (!isFirebaseConfigured) return
   const writes: Promise<void>[] = [
     setDoc(
       doc(db, 'users', userId, 'private', 'app-state'),
@@ -608,6 +756,26 @@ export function resolveSavedEntryIds(
 
 export async function loadUserCloudState(userId: string): Promise<UserCloudState> {
   if (!canUseCloudData(userId)) return DEFAULT_CLOUD_STATE
+
+  if (isSupabaseConfigured) {
+    const { data } = await supabase
+      .from('user_cloud_state')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (data) {
+      return {
+        likedEntryIds: data.liked_entry_ids || [],
+        savedEntryIds: Array.isArray(data.saved_entries) ? data.saved_entries : [],
+        disabledCommentEntryIds: data.disabled_comment_entry_ids || [],
+        followedUserHandles: data.followed_user_handles || [],
+        followRequestedHandles: data.follow_requested_handles || [],
+        notifications: [],
+      }
+    }
+  }
+
+  if (!isFirebaseConfigured) return DEFAULT_CLOUD_STATE
   const [snapshot, savedActivitySnapshot] = await Promise.all([
     getDoc(doc(db, 'users', userId, 'private', 'app-state')),
     getDoc(doc(db, 'users', userId, 'activity', 'saved')),
@@ -784,6 +952,14 @@ export async function loadUserCollections(userId: string, kind: CloudCollectionK
 }
 
 export async function resolveUserIdByHandle(handle: string) {
+  if (isSupabaseConfigured) {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id')
+      .ilike('handle', cleanHandle(handle))
+      .maybeSingle()
+    if (data?.id) return data.id
+  }
   if (!isFirebaseConfigured) return null
   const snapshot = await getDoc(doc(db, 'handles', cleanHandle(handle)))
   return snapshot.exists() ? String(snapshot.data().uid || '') || null : null
@@ -997,9 +1173,29 @@ export async function loadPublicUserByHandle(handle: string, viewerId?: string |
 }
 
 export async function searchPublicUsers(searchText: string, limit = 12): Promise<PublicUserSummary[]> {
-  if (!isFirebaseConfigured) return []
   const normalized = searchText.replace(/^@/, '').trim().toLowerCase()
   if (!normalized) return []
+
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, handle, first_name, last_name, name, avatar_url, is_private, account_status')
+      .neq('account_status', 'deactivated')
+      .or(`handle.ilike.%${normalized}%,name.ilike.%${normalized}%`)
+      .limit(limit)
+
+    if (!error && data && data.length > 0) {
+      return Promise.all(data.map(async (row) => ({
+        uid: row.id,
+        handle: row.handle,
+        name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || `@${row.handle}`,
+        avatarUrl: await resolveUserImage(row.id, String(row.avatar_url || '')),
+        isPrivate: Boolean(row.is_private),
+      })))
+    }
+  }
+
+  if (!isFirebaseConfigured) return []
   const snapshot = await getDocs(collection(db, 'users'))
   const matches = snapshot.docs
     .map((userDocument) => ({ uid: userDocument.id, data: userDocument.data() }))
@@ -1027,6 +1223,39 @@ export async function searchPublicUsers(searchText: string, limit = 12): Promise
 }
 
 export async function loadPublicFeedEntries(excludedUserId?: string | null): Promise<Entry[]> {
+  if (isSupabaseConfigured) {
+    let queryBuilder = supabase
+      .from('entries')
+      .select('*, profiles:owner_id (*)')
+    if (excludedUserId) {
+      queryBuilder = queryBuilder.neq('owner_id', excludedUserId)
+    }
+    const { data, error } = await queryBuilder
+    if (!error && data && data.length > 0) {
+      const publicEntries = data.filter((row: any) => {
+        const p = row.profiles
+        return (
+          p &&
+          p.is_private !== true &&
+          p.account_status !== 'deactivated' &&
+          Boolean(cleanHandle(String(p.handle || '')))
+        )
+      })
+      const entries = await Promise.all(
+        publicEntries.map(async (row: any) => {
+          const entry = mapSupabaseEntryToClientEntry(row)
+          return {
+            ...entry,
+            authorAvatarUrl: entry.authorAvatarUrl
+              ? await resolveUserImage(row.owner_id, entry.authorAvatarUrl)
+              : entry.authorAvatarUrl,
+          }
+        }),
+      )
+      return entries
+    }
+  }
+
   if (!isFirebaseConfigured) return []
   const snapshot = await getDocs(collection(db, 'users'))
   const publicUsers = snapshot.docs.filter((userDocument) => (
@@ -1062,10 +1291,34 @@ export async function saveFollowRelationship(
   if (!canUseCloudData(followerId)) return
   const targetId = await resolveUserIdByHandle(targetHandle)
   if (!targetId) return
+
+  if (isSupabaseConfigured) {
+    if (following) {
+      void supabase.from('follows').upsert({
+        follower_id: followerId,
+        following_id: targetId,
+        target_handle: cleanHandle(targetHandle),
+        created_at: new Date().toISOString(),
+      })
+    } else {
+      void supabase.from('follows').delete().match({
+        follower_id: followerId,
+        following_id: targetId,
+      })
+    }
+  }
+
+  if (!isFirebaseConfigured) return
   const followRef = doc(db, 'follows', `${followerId}_${targetId}`)
   const notificationRef = doc(db, 'users', targetId, 'notifications', `follow_${followerId}`)
   if (!following) {
-    await deleteDoc(followRef)
+    try {
+      await deleteDoc(followRef)
+    } catch (error: any) {
+      if (error?.code !== 'permission-denied') {
+        console.warn('The remote follow record could not be deleted.', error)
+      }
+    }
     if (targetId !== followerId) {
       try {
         await deleteDoc(notificationRef)
@@ -1076,12 +1329,23 @@ export async function saveFollowRelationship(
     return
   }
   const createdAt = new Date().toISOString()
-  await setDoc(followRef, {
-    followerId,
-    followingId: targetId,
-    targetHandle: cleanHandle(targetHandle),
-    createdAt,
-  })
+  try {
+    await setDoc(followRef, {
+      followerId,
+      followingId: targetId,
+      targetHandle: cleanHandle(targetHandle),
+      createdAt,
+    })
+  } catch (error: any) {
+    if (error?.code === 'permission-denied') {
+      console.warn(
+        'The follow is saved in your account cloud state, but the public follow index in Firebase requires publishing the updated firestore.rules to the Firebase Console.',
+        error,
+      )
+      return
+    }
+    throw error
+  }
   if (targetId !== followerId) {
     try {
       await setDoc(notificationRef, withoutUndefined({
