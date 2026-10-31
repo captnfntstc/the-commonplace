@@ -473,6 +473,7 @@ export default function AppController() {
     displayName: currentUserDisplayName,
     email: currentUserEmail,
     photoURL: currentUserPhotoUrl,
+    handle: (currentUser as any)?.handle || null,
     metadata: { creationTime: currentUserCreationTime },
   } : null, [
     currentUserCreationTime,
@@ -480,6 +481,7 @@ export default function AppController() {
     currentUserEmail,
     currentUserId,
     currentUserPhotoUrl,
+    (currentUser as any)?.handle,
   ])
   const cloudUserId = authProfile?.uid || null
   const [homeDataStatus, setHomeDataStatus] = useState<'loading' | 'ready'>(() =>
@@ -886,11 +888,6 @@ export default function AppController() {
   useEffect(() => {
     if (!currentUser?.uid) return
     if (profileBelongsToAuthUser(userProfile, currentUser)) return
-    const isSyntheticGhostHandle = Boolean(userProfile.handle?.endsWith(`_${currentUser.uid.toLowerCase().slice(-6)}`))
-    if (userProfile.handle && !isSyntheticGhostHandle && userProfile.handle !== 'reader') {
-      setUserProfile((prev) => ({ ...prev, email: currentUser.email || prev.email }))
-      return
-    }
     const accountProfile = accountProfileForUser(currentUser)
     setUserProfile(accountProfile)
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(accountProfile))
@@ -1699,6 +1696,7 @@ export default function AppController() {
     if (!cloudUserId || !authProfile) {
       setPublicFeedEntries([])
       setHomeDataStatus('ready')
+      cloudHydratedUserRef.current = null
       return
     }
     if (cloudHydratedUserRef.current === cloudUserId) {
