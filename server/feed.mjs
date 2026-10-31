@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { FieldPath, FieldValue } from 'firebase-admin/firestore'
 import { bearerToken, getAdminServices, readJsonBody } from './firebase-admin.mjs'
+import { getSupabaseAdmin } from './supabase-admin.mjs'
 
 export const FEED_TYPES = new Set(['album', 'book', 'film', 'game', 'song', 'tv'])
 const FEED_WINDOW_SIZE = 40
@@ -369,32 +370,160 @@ async function storeSignal(adminDb, viewerId, raw, now = Date.now()) {
   return { recorded: true }
 }
 
+async function loadFeedPageSupabase(supabaseAdmin, viewerId, category, cursor) {
+  let query = supabaseAdmin
+    .from('entries')
+    .select('*, profiles:owner_id (*)')
+    .order('created_at', { ascending: false })
+    .limit(FEED_WINDOW_SIZE)
+
+  if (category && category !== 'all') {
+    query = query.eq('type', category)
+  }
+  if (cursor?.createdAt) {
+    query = query.lt('created_at', cursor.createdAt)
+  }
+
+  const { data: entries, error } = await query
+  if (error) throw error
+
+  const visibleEntries = (entries || []).filter((row) => {
+    const profile = row.profiles
+    if (!profile || profile.account_status === 'deactivated') return false
+    const isOwn = row.owner_id === viewerId
+    if (isOwn) return true
+    if (profile.is_private) return false
+    return row.visibility !== 'private'
+  })
+
+  const entryIds = visibleEntries.map((e) => e.id)
+  const likesMap = new Map()
+  const commentsMap = new Map()
+  const viewerLikesSet = new Set()
+
+  if (entryIds.length > 0) {
+    const [{ data: likes }, { data: comments }] = await Promise.all([
+      supabaseAdmin.from('entry_likes').select('entry_id, user_id').in('entry_id', entryIds),
+      supabaseAdmin.from('comments').select('entry_id').in('entry_id', entryIds),
+    ])
+    if (likes) {
+      for (const like of likes) {
+        likesMap.set(like.entry_id, (likesMap.get(like.entry_id) || 0) + 1)
+        if (like.user_id === viewerId) viewerLikesSet.add(like.entry_id)
+      }
+    }
+    if (comments) {
+      for (const comment of comments) {
+        commentsMap.set(comment.entry_id, (commentsMap.get(comment.entry_id) || 0) + 1)
+      }
+    }
+  }
+
+  const items = visibleEntries.map((row) => {
+    const profile = row.profiles || {}
+    const authorName =
+      profile.name ||
+      (profile.first_name ? `${profile.first_name} ${profile.last_name || ''}`.trim() : '') ||
+      profile.handle ||
+      'reader'
+    return {
+      id: row.id,
+      type: row.type,
+      title: row.title,
+      creator: row.creator || '',
+      year: row.year || '',
+      genre: row.genre || '',
+      summary: row.summary || '',
+      coverUrl: row.cover_url || '',
+      coverTone: row.cover_tone || undefined,
+      artworkUrl: row.artwork_url || '',
+      rating: row.rating ? Number(row.rating) : 0,
+      quote: row.quote || '',
+      favoritePassage: row.favorite_passage || '',
+      passageAlign: row.passage_align || 'left',
+      reflection: row.reflection || '',
+      reflectionAlign: row.reflection_align || 'left',
+      lyrics: row.lyrics || '',
+      provider: row.provider || '',
+      providerId: row.provider_id || '',
+      enableDropCap: Boolean(row.enable_drop_cap),
+      preferWikipediaArtwork: Boolean(row.prefer_wikipedia_artwork),
+      explicit: Boolean(row.explicit),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      ownerId: row.owner_id,
+      authorHandle: profile.handle || '',
+      authorName,
+      authorAvatarUrl: profile.avatar_url || '',
+      visibility: row.visibility || 'public',
+      engagement: {
+        likeCount: likesMap.get(row.id) || 0,
+        commentCount: commentsMap.get(row.id) || 0,
+        isLiked: viewerLikesSet.has(row.id),
+      },
+    }
+  })
+
+  const lastItem = visibleEntries.at(-1)
+  const nextCursor = visibleEntries.length >= FEED_WINDOW_SIZE && lastItem
+    ? encodeCursor({ v: 1, category, createdAt: lastItem.created_at, path: lastItem.id, ownerIds: [], types: [] })
+    : null
+
+  return { items, nextCursor, hasMore: Boolean(nextCursor) }
+}
+
 async function authenticate(request, env, services) {
   const token = bearerToken(request)
   if (!token) throw httpError('Authentication required.', 401)
-  const { adminAuth, adminDb } = services || getAdminServices(env)
-  const decoded = await adminAuth.verifyIdToken(token).catch(() => {
+
+  if (services?.adminAuth) {
+    const decoded = await services.adminAuth.verifyIdToken(token).catch(() => {
+      throw httpError('Invalid authentication session.', 401)
+    })
+    return { viewerId: decoded.uid, adminDb: services.adminDb, isSupabase: false }
+  }
+
+  if (env?.VITE_SUPABASE_URL || env?.SUPABASE_URL) {
+    try {
+      const supabaseAdmin = getSupabaseAdmin(env)
+      const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
+      if (!error && user?.id) {
+        return { viewerId: user.id, supabaseAdmin, isSupabase: true }
+      }
+    } catch {}
+  }
+
+  try {
+    const { adminAuth, adminDb } = services || getAdminServices(env)
+    const decoded = await adminAuth.verifyIdToken(token)
+    return { viewerId: decoded.uid, adminDb, isSupabase: false }
+  } catch {
     throw httpError('Invalid authentication session.', 401)
-  })
-  return { viewerId: decoded.uid, adminDb }
+  }
 }
 
 export async function handleFeedApiRequest(request, env = process.env, services) {
   try {
     const url = new URL(request.url || '/', 'http://localhost')
     if (!url.pathname.startsWith('/api/feed')) return null
-    const { viewerId, adminDb } = await authenticate(request, env, services)
+    const authResult = await authenticate(request, env, services)
+    const { viewerId, adminDb, supabaseAdmin, isSupabase } = authResult
 
     if (request.method === 'GET' && url.pathname === '/api/feed') {
       const category = cleanText(url.searchParams.get('category') || 'all', 20)
       if (category !== 'all' && !FEED_TYPES.has(category)) throw httpError('Invalid feed category.', 400)
       const cursor = decodeFeedCursor(url.searchParams.get('cursor'), category)
+      if (isSupabase) {
+        return loadFeedPageSupabase(supabaseAdmin, viewerId, category, cursor)
+      }
       return loadFeedPage(adminDb, viewerId, category, cursor)
     }
     if (request.method === 'POST' && url.pathname === '/api/feed/signals') {
+      if (isSupabase) return { recorded: true }
       return storeSignal(adminDb, viewerId, await readJsonBody(request))
     }
     if (request.method === 'DELETE' && url.pathname === '/api/feed/preferences') {
+      if (isSupabase) return { reset: true }
       await adminDb.collection('users').doc(viewerId).collection('private').doc('feed-preferences').delete()
       return { reset: true }
     }

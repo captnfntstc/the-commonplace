@@ -386,7 +386,7 @@ export async function saveUserProfile(
 
   const nextHandle = cleanHandle(profile.handle)
   if (isSupabaseConfigured) {
-    void supabase.from('profiles').upsert({
+    const { error } = await supabase.from('profiles').upsert({
       id: userId,
       handle: nextHandle,
       first_name: profile.firstName || '',
@@ -401,6 +401,12 @@ export async function saveUserProfile(
       allow_comments: profile.allowComments !== false,
       updated_at: new Date().toISOString(),
     })
+    if (error) console.error('Error saving user profile in Supabase:', error)
+    const [avatarUrl, coverUrl] = await Promise.all([
+      resolveUserImage(userId, profile.avatarUrl),
+      resolveUserImage(userId, profile.coverUrl),
+    ])
+    return { ...profile, handle: nextHandle, avatarUrl, coverUrl }
   }
 
   if (isFirebaseConfigured) {
@@ -480,7 +486,7 @@ export async function reactivateUserAccount(userId: string) {
   accountIdentityCache.delete(userId)
 }
 
-export async function loadUserProfile(userId: string): Promise<UserProfileState | null> {
+export async function loadUserProfile(userId: string, fallbackEmail?: string): Promise<UserProfileState | null> {
   if (!canUseCloudData(userId)) return null
 
   if (isSupabaseConfigured) {
@@ -490,6 +496,9 @@ export async function loadUserProfile(userId: string): Promise<UserProfileState 
       .eq('id', userId)
       .maybeSingle()
     if (profile) {
+      const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }))
+      const sessionUser = sessionData?.session?.user
+      const email = (sessionUser?.id === userId ? sessionUser.email : fallbackEmail) || fallbackEmail || ''
       const [avatarUrl, coverUrl] = await Promise.all([
         resolveUserImage(userId, String(profile.avatar_url || '')),
         resolveUserImage(userId, String(profile.cover_url || '')),
@@ -499,7 +508,7 @@ export async function loadUserProfile(userId: string): Promise<UserProfileState 
         lastName: String(profile.last_name || ''),
         showFullName: profile.show_full_name !== false,
         handle: String(profile.handle || ''),
-        email: '',
+        email,
         bio: String(profile.bio || ''),
         avatarUrl,
         coverUrl,
@@ -554,6 +563,49 @@ async function writeUserEntries(
   disabledCommentEntryIds: string[] = [],
 ) {
   if (!canUseCloudData(userId)) return
+
+  if (isSupabaseConfigured) {
+    const rows = entries.map((entry) => ({
+      id: entry.id,
+      owner_id: userId,
+      type: entry.type,
+      title: entry.title,
+      creator: entry.creator || '',
+      year: entry.year || '',
+      genre: entry.genre || '',
+      summary: entry.summary || '',
+      cover_url: entry.coverUrl || '',
+      cover_tone: entry.coverTone || null,
+      artwork_url: (entry as any).artworkUrl || entry.coverUrl || '',
+      rating: entry.rating || 0,
+      quote: (entry as any).quote || '',
+      favorite_passage: entry.favoritePassage || '',
+      passage_align: entry.passageAlign || 'left',
+      reflection: entry.reflection || '',
+      reflection_align: entry.reflectionAlign || 'left',
+      lyrics: entry.lyrics || '',
+      provider: entry.provider || '',
+      provider_id: entry.providerId || '',
+      enable_drop_cap: Boolean(entry.enableDropCap),
+      prefer_wikipedia_artwork: Boolean(entry.preferWikipediaArtwork),
+      explicit: Boolean(entry.explicit),
+      notable_lines: (entry as any).notableLines || [],
+      tags: (entry as any).tags || [],
+      visibility: entry.visibility || 'public',
+      comments_disabled: disabledCommentEntryIds.includes(entry.id),
+      metadata: withoutUndefined({ ...entry }),
+      created_at: entry.createdAt,
+      updated_at: entry.updatedAt || new Date().toISOString(),
+    }))
+    if (rows.length > 0) {
+      await supabase.from('entries').upsert(rows)
+      const currentIds = entries.map((e) => e.id)
+      await supabase.from('entries').delete().eq('owner_id', userId).not('id', 'in', `(${currentIds.join(',')})`)
+    } else {
+      await supabase.from('entries').delete().eq('owner_id', userId)
+    }
+    return
+  }
   const entriesRef = collection(db, 'users', userId, 'entries')
   const existing = await getDocs(entriesRef)
   const existingPostSnapshots = await Promise.all(
@@ -695,7 +747,7 @@ export async function saveUserCloudState(userId: string, patch: Partial<UserClou
   if (!canUseCloudData(userId)) return
   const updatedAt = new Date().toISOString()
   if (isSupabaseConfigured) {
-    void supabase.from('user_cloud_state').upsert({
+    const { error } = await supabase.from('user_cloud_state').upsert({
       user_id: userId,
       ...(patch.likedEntryIds ? { liked_entry_ids: patch.likedEntryIds } : {}),
       ...(patch.savedEntryIds ? { saved_entries: patch.savedEntryIds } : {}),
@@ -704,6 +756,8 @@ export async function saveUserCloudState(userId: string, patch: Partial<UserClou
       ...(patch.followRequestedHandles ? { follow_requested_handles: patch.followRequestedHandles } : {}),
       updated_at: updatedAt,
     })
+    if (error) console.error('Error saving user cloud state in Supabase:', error)
+    return
   }
 
   if (!isFirebaseConfigured) return
@@ -727,6 +781,24 @@ export async function saveUserCloudState(userId: string, patch: Partial<UserClou
 export async function setCloudSavedEntry(userId: string, entryId: string, saved: boolean) {
   if (!canUseCloudData(userId)) return
   const updatedAt = new Date().toISOString()
+
+  if (isSupabaseConfigured) {
+    const { data: current } = await supabase
+      .from('user_cloud_state')
+      .select('saved_entries')
+      .eq('user_id', userId)
+      .maybeSingle()
+    const currentSaved: string[] = Array.isArray(current?.saved_entries) ? current.saved_entries : []
+    const nextSaved = saved
+      ? Array.from(new Set([...currentSaved, entryId]))
+      : currentSaved.filter((id) => id !== entryId)
+    await supabase.from('user_cloud_state').upsert({
+      user_id: userId,
+      saved_entries: nextSaved,
+      updated_at: updatedAt,
+    })
+    return
+  }
   const savedEntryTransform = saved ? arrayUnion(entryId) : arrayRemove(entryId)
   await Promise.all([
     setDoc(doc(db, 'users', userId, 'private', 'app-state'), {
@@ -798,6 +870,34 @@ export async function loadOrMigrateUserData(
   localSnapshot: UserCloudSnapshot,
 ): Promise<UserCloudSnapshot> {
   if (!canUseCloudData(userId)) return localSnapshot
+
+  if (isSupabaseConfigured) {
+    const [profile, entries, state] = await Promise.all([
+      loadUserProfile(userId, localSnapshot.profile.email),
+      loadUserEntries(userId),
+      loadUserCloudState(userId),
+    ])
+    if (profile) {
+      return {
+        profile: {
+          ...profile,
+          email: profile.email || localSnapshot.profile.email,
+        },
+        entries,
+        state,
+      }
+    }
+    const [savedProfile] = await Promise.all([
+      saveUserProfile(userId, localSnapshot.profile, { markMigrated: false }),
+      saveUserEntries(userId, localSnapshot.entries, localSnapshot.state.disabledCommentEntryIds),
+      saveUserCloudState(userId, localSnapshot.state),
+    ])
+    return {
+      ...localSnapshot,
+      profile: savedProfile,
+    }
+  }
+
   const userSnapshot = await getDoc(doc(db, 'users', userId))
 
   if (userSnapshot.exists() && !userSnapshot.data().createdAt) {
@@ -898,6 +998,35 @@ export async function saveUserCollections(
   collections: ProfileCollection[],
 ) {
   if (!canUseCloudData(userId)) return collections
+
+  if (isSupabaseConfigured) {
+    const normalizedCollections = await Promise.all(collections.map(async (item) => {
+      const customCoverUrl = item.customCoverUrl?.startsWith('data:')
+        ? await uploadUserImage(userId, 'collection-cover', item.customCoverUrl, `${kind}-${item.id}`)
+        : item.customCoverUrl
+      return { ...item, customCoverUrl }
+    }))
+    const rows = normalizedCollections.map((item) => ({
+      id: item.id,
+      owner_id: userId,
+      kind,
+      title: item.name,
+      description: item.description || '',
+      cover_url: item.customCoverUrl || '',
+      visibility: item.isHidden ? 'private' : 'public',
+      item_ids: item.entryIds || item.items?.map((it) => it.id) || [],
+      updated_at: new Date().toISOString(),
+    }))
+    if (rows.length > 0) {
+      await supabase.from('collections').upsert(rows)
+      const currentIds = collections.map((c) => c.id)
+      await supabase.from('collections').delete().eq('owner_id', userId).eq('kind', kind).not('id', 'in', `(${currentIds.join(',')})`)
+    } else {
+      await supabase.from('collections').delete().eq('owner_id', userId).eq('kind', kind)
+    }
+    return resolveCollectionImages(userId, normalizedCollections)
+  }
+
   const collectionsRef = collection(db, 'users', userId, collectionName(kind))
   const existing = await getDocs(collectionsRef)
   const normalizedCollections = await Promise.all(collections.map(async (item) => {
@@ -947,6 +1076,29 @@ export async function loadOrMigrateUserCollections(
 
 export async function loadUserCollections(userId: string, kind: CloudCollectionKind) {
   if (!canUseCloudData(userId)) return []
+
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase
+      .from('collections')
+      .select('*')
+      .eq('owner_id', userId)
+      .eq('kind', kind)
+    if (!error && data) {
+      const mapped: ProfileCollection[] = data.map((row: any) => ({
+        id: row.id,
+        name: row.title || 'Untitled',
+        types: [],
+        description: row.description || '',
+        customCoverUrl: row.cover_url || '',
+        entryIds: row.item_ids || [],
+        items: [],
+        isHidden: row.visibility === 'private',
+      }))
+      return resolveCollectionImages(userId, mapped)
+    }
+  }
+
+  if (!isFirebaseConfigured) return []
   const snapshot = await getDocs(collection(db, 'users', userId, collectionName(kind)))
   return resolveCollectionImages(userId, snapshot.docs.map((item) => item.data() as ProfileCollection))
 }

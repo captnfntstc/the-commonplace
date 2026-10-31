@@ -360,6 +360,10 @@ function loadLocalUserProfile(user?: AuthProfileSource | null) {
       ? { ...EMPTY_USER_PROFILE, ...JSON.parse(stored) } as UserProfileState
       : EMPTY_USER_PROFILE
     if (!user) return profile
+    const isSyntheticGhostHandle = Boolean(user.uid && profile.handle?.endsWith(`_${user.uid.toLowerCase().slice(-6)}`))
+    if (isSyntheticGhostHandle) {
+      return accountProfileForUser(user)
+    }
     return profileBelongsToAuthUser(profile, user) ? profile : accountProfileForUser(user)
   } catch {
     return user ? accountProfileForUser(user) : EMPTY_USER_PROFILE
@@ -390,7 +394,8 @@ function emptyCloudState() {
 
 function accountProfileForUser(user: AuthProfileSource) {
   const pending = pendingSignupProfileForUser(user, localStorage.getItem(PENDING_SIGNUP_PROFILE_KEY))
-  return profileFromAuthUser(user, pending?.displayName, pending?.handle, pending?.birthday)
+  const handle = pending?.handle || user.handle || undefined
+  return profileFromAuthUser(user, pending?.displayName, handle, pending?.birthday)
 }
 
 function collectionItemFromEntity(
@@ -881,6 +886,11 @@ export default function AppController() {
   useEffect(() => {
     if (!currentUser?.uid) return
     if (profileBelongsToAuthUser(userProfile, currentUser)) return
+    const isSyntheticGhostHandle = Boolean(userProfile.handle?.endsWith(`_${currentUser.uid.toLowerCase().slice(-6)}`))
+    if (userProfile.handle && !isSyntheticGhostHandle && userProfile.handle !== 'reader') {
+      setUserProfile((prev) => ({ ...prev, email: currentUser.email || prev.email }))
+      return
+    }
     const accountProfile = accountProfileForUser(currentUser)
     setUserProfile(accountProfile)
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(accountProfile))
@@ -1735,6 +1745,15 @@ export default function AppController() {
     void loadOrMigrateUserData(cloudUserId, migrationSnapshot)
       .then(async (loadedSnapshot) => {
         let snapshot = loadedSnapshot
+        if (!snapshot.profile.email && authProfile.email) {
+          snapshot = {
+            ...snapshot,
+            profile: {
+              ...snapshot.profile,
+              email: authProfile.email,
+            },
+          }
+        }
         const resetLegacyAccount = shouldResetLegacyDemoProfile(snapshot.profile, authProfile)
         if (resetLegacyAccount) {
           const cleanExistingHandle = snapshot.profile.handle.replace(/^@/, '').trim().toLowerCase()

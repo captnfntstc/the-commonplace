@@ -5,6 +5,7 @@ export interface AuthProfileSource {
   displayName?: string | null
   email?: string | null
   photoURL?: string | null
+  handle?: string | null
   metadata?: {
     creationTime?: string
   }
@@ -94,7 +95,7 @@ export function profileFromAuthUser(
   const displayName = preferredDisplayName?.trim() || user.displayName?.trim() || emailName || 'Reader'
   const [firstName = 'Reader', ...remainingName] = displayName.split(/\s+/)
   const lastName = remainingName.join(' ')
-  const requestedHandle = preferredHandle?.trim().replace(/^@/, '').toLowerCase() || ''
+  const requestedHandle = (preferredHandle || user.handle)?.trim().replace(/^@/, '').toLowerCase() || ''
 
   return {
     firstName,

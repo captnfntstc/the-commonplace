@@ -35,6 +35,7 @@ function mapSupabaseUserToAuthUser(sbUser: any, sessionToken?: string): User {
       sbUser.user_metadata?.full_name ||
       sbUser.user_metadata?.displayName ||
       null,
+    handle: sbUser.user_metadata?.handle || null,
     emailVerified: Boolean(sbUser.email_confirmed_at),
     isAnonymous: sbUser.is_anonymous || false,
     photoURL: sbUser.user_metadata?.avatar_url || null,
