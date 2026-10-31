@@ -1,12 +1,21 @@
 import React from 'react'
+import { BrandLogo } from '../BrandLogo'
 
-export const AuthHeader: React.FC = () => {
+export interface AuthHeaderProps {
+  forceMode?: 'light' | 'dark'
+  accentColor?: string
+}
+
+export const AuthHeader: React.FC<AuthHeaderProps> = ({
+  forceMode = 'dark',
+  accentColor,
+}) => {
   return (
     <header className="auth-header">
       <div className="auth-header-inner">
         <div className="auth-header-brand">
           <div className="auth-header-title-container">
-            <span className="auth-header-title">The Commonplace.</span>
+            <BrandLogo forceMode={forceMode} accentColor={accentColor} className="auth-header-wordmark-logo" />
             <div className="auth-header-title-rule" aria-hidden="true" />
           </div>
         </div>
@@ -14,4 +23,3 @@ export const AuthHeader: React.FC = () => {
     </header>
   )
 }
-

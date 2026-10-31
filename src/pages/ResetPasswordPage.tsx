@@ -6,6 +6,7 @@ import { AuthHeader } from '../components/auth/AuthHeader'
 import { PasswordInput } from '../components/auth/PasswordInput'
 import { PasswordStrengthMeter } from '../components/auth/PasswordStrengthMeter'
 import { auth } from '../services/firebase'
+import { supabase } from '../services/supabase'
 
 type ResetState = 'checking' | 'valid' | 'invalid' | 'success'
 
@@ -68,7 +69,10 @@ export function ResetPasswordPage() {
     try {
       setSubmitting(true)
       await postResetRequest('/api/auth/password-reset-links/redeem', { token, newPassword: password })
-      await signOut(auth).catch(() => {})
+      await Promise.all([
+        signOut(auth).catch(() => {}),
+        supabase.auth.signOut().catch(() => {}),
+      ])
       setStatus('success')
     } catch (requestError) {
       const message = (requestError as Error)?.message || 'Unable to update your password.'
@@ -101,15 +105,15 @@ export function ResetPasswordPage() {
           }
 
     return (
-      <div className="auth-page">
-        <AuthHeader />
+      <div className="auth-page sunrise-auth-page">
+        <AuthHeader forceMode="light" accentColor="#dc3e3e" />
         <main className="auth-main">
-          <section className="email-action-card" aria-live="polite">
+          <section className="email-action-card sunrise-reset-card" aria-live="polite">
             <content.Icon aria-hidden="true" className={`email-action-icon ${status === 'success' ? 'success' : status === 'invalid' ? 'error' : 'checking'}`} />
             <h1>{content.title}</h1>
             <p>{content.message}</p>
             {status !== 'checking' && (
-              <button type="button" className="auth-primary-btn" onClick={returnToLogin}>
+              <button type="button" className="auth-primary-btn sunrise-btn" onClick={returnToLogin}>
                 Return to log in
               </button>
             )}
@@ -120,10 +124,14 @@ export function ResetPasswordPage() {
   }
 
   return (
-    <div className="auth-page">
-      <AuthHeader />
+    <div className="auth-page sunrise-auth-page">
+      <AuthHeader forceMode="light" accentColor="#dc3e3e" />
       <main className="auth-main">
-        <section className="email-action-card reset-password-card">
+        <section className="email-action-card reset-password-card sunrise-reset-card">
+          <div className="sunrise-pill-tag" aria-hidden="true">
+            <span className="sunrise-pill-dot" />
+            <span>Sunrise Theme</span>
+          </div>
           <h1>Choose a new password.</h1>
           <p>Use at least 8 characters and choose something you do not use elsewhere.</p>
           {error && (
@@ -160,7 +168,7 @@ export function ResetPasswordPage() {
                 leadingIcon={<Lock size={16} strokeWidth={1.75} />}
               />
             </div>
-            <button type="submit" className="auth-primary-btn" disabled={submitting}>
+            <button type="submit" className="auth-primary-btn sunrise-btn" disabled={submitting}>
               {submitting ? 'Updating password...' : 'Update password'}
             </button>
           </form>

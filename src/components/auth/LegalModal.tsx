@@ -1,10 +1,10 @@
 import React from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { X, ShieldCheck, Scroll } from 'lucide-react'
+import { X, ShieldCheck, Scroll, Cookie, Scale } from 'lucide-react'
 import { useAccessibleDialog } from '../../hooks/useAccessibleDialog'
 
-export type LegalModalType = 'terms' | 'privacy' | 'age' | null
+export type LegalModalType = 'terms' | 'privacy' | 'age' | 'cookies' | 'standards' | null
 
 interface LegalModalProps {
   type: LegalModalType
@@ -15,10 +15,26 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
   const dialogRef = useAccessibleDialog<HTMLDivElement>({ open: Boolean(type), onClose })
   const isTerms = type === 'terms'
   const isAgeGuide = type === 'age'
-  const title = isTerms ? 'Terms of Service' : isAgeGuide ? 'Age & Content Guide' : 'Privacy Policy'
+  const isCookies = type === 'cookies'
+  const isStandards = type === 'standards'
+
+  const title = isTerms
+    ? 'Terms of Service'
+    : isAgeGuide
+      ? 'Age & Content Guide'
+      : isCookies
+        ? 'Cookie & Storage Policy'
+        : isStandards
+          ? 'Community Standards'
+          : 'Privacy Policy'
+
   const subtitle = isAgeGuide
     ? 'The Commonplace • Account eligibility and content awareness'
-    : 'The Commonplace • Principles of Sanctuary'
+    : isCookies
+      ? 'The Commonplace • Local storage & minimal data footprint'
+      : isStandards
+        ? 'The Commonplace • Principles of sanctuary & respectful discourse'
+        : 'The Commonplace • Principles of Sanctuary'
 
   const modalContent = (
     <AnimatePresence>
@@ -41,7 +57,15 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
             <div className="auth-legal-header">
               <div className="auth-legal-title-block">
                 <div className="auth-legal-icon">
-                  {isTerms ? <Scroll size={20} /> : <ShieldCheck size={20} />}
+                  {isTerms ? (
+                    <Scroll size={20} />
+                  ) : isCookies ? (
+                    <Cookie size={20} />
+                  ) : isStandards ? (
+                    <Scale size={20} />
+                  ) : (
+                    <ShieldCheck size={20} />
+                  )}
                 </div>
                 <div>
                   <h2 id="legal-modal-title" className="auth-legal-title">
@@ -154,6 +178,58 @@ export const LegalModal: React.FC<LegalModalProps> = ({ type, onClose }) => {
                   <h3 className="auth-legal-section-title">5. Content and safety</h3>
                   <p className="auth-legal-text">
                     You can control your profile visibility and report posts or profiles that appear unsafe or violate the Terms of Service. Reports are private and are used for safety review.
+                  </p>
+                </div>
+              ) : isCookies ? (
+                <div className="auth-legal-content">
+                  <p className="auth-legal-preamble">
+                    <em>The Commonplace</em> is built with deep reverence for digital quietude and user privacy. We do not use third-party tracking cookies, advertising beacons, or cross-site fingerprinting scripts.
+                  </p>
+
+                  <h3 className="auth-legal-section-title">1. Essential Session Storage</h3>
+                  <p className="auth-legal-text">
+                    We utilize strictly necessary browser storage to maintain your authenticated session and secure account operations. Without these essential tokens, you would be unable to access or edit your private commonplace.
+                  </p>
+
+                  <h3 className="auth-legal-section-title">2. Local Browser Preferences</h3>
+                  <p className="auth-legal-text">
+                    Your reading preferences—such as typography selection, catalog layout density, and dark appearance—are preserved directly in your local browser storage. This ensures your reading sanctuary loads instantaneously without unnecessary network queries.
+                  </p>
+
+                  <h3 className="auth-legal-section-title">3. Zero Advertising or Tracking Cookies</h3>
+                  <p className="auth-legal-text">
+                    We do not partner with ad networks or behavioral data brokers. Your reading reflections, book logs, and saved items are never tracked across other web domains or monetized for commercial advertising.
+                  </p>
+
+                  <h3 className="auth-legal-section-title">4. Managing Local Storage</h3>
+                  <p className="auth-legal-text">
+                    You can inspect or clear your browser's local storage and cookies at any time through your browser's site settings or by signing out of your account.
+                  </p>
+                </div>
+              ) : isStandards ? (
+                <div className="auth-legal-content">
+                  <p className="auth-legal-preamble">
+                    <em>The Commonplace</em> is conceived as a sanctuary for contemplation, thoughtful critique, and aesthetic discovery. We hold all members to principles of mutual respect and creative integrity.
+                  </p>
+
+                  <h3 className="auth-legal-section-title">1. Respectful Discourse</h3>
+                  <p className="auth-legal-text">
+                    We welcome rigorous literary debate, critical analysis, and differing perspectives on culture and art. Personal attacks, harassment, hateful conduct, intimidation, and targeted vitriol have no place here and are strictly prohibited.
+                  </p>
+
+                  <h3 className="auth-legal-section-title">2. Intellectual Honesty &amp; Citation</h3>
+                  <p className="auth-legal-text">
+                    When quoting, transcribing, or citing passages from authors, thinkers, and fellow readers, credit original sources with integrity. Automated scraping, plagiarism, and spamming are violations of the sanctuary.
+                  </p>
+
+                  <h3 className="auth-legal-section-title">3. Content Sensitivities &amp; Spoilers</h3>
+                  <p className="auth-legal-text">
+                    When discussing pivotal narrative developments or mature thematic elements, use respectful framing and appropriate content notices so other readers may navigate their reading journey unmarred.
+                  </p>
+
+                  <h3 className="auth-legal-section-title">4. Safety &amp; Confidential Reporting</h3>
+                  <p className="auth-legal-text">
+                    If you encounter behavior or content that compromises reader safety or breaches these covenants, please file a confidential safety report. Our moderation stewards review all flags carefully and impartially.
                   </p>
                 </div>
               ) : (

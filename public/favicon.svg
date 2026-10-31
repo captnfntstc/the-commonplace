@@ -1,5 +1,47 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#12100c"/>
-  <path d="M18 15h31v34H18a5 5 0 0 1-5-5V20a5 5 0 0 1 5-5Z" fill="#c29468"/>
-  <path d="M21 15v34M27 25h15M27 32h15M27 39h10" fill="none" stroke="#12100c" stroke-width="3" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="tcpCover" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7a4b22"/>
+      <stop offset="16%" stop-color="#c48d5e"/>
+      <stop offset="100%" stop-color="#dfae82"/>
+    </linearGradient>
+    <linearGradient id="tcpGold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff8ec"/>
+      <stop offset="50%" stop-color="#e8be89"/>
+      <stop offset="100%" stop-color="#b67c42"/>
+    </linearGradient>
+    <filter id="tcpShadow" x="-10%" y="-10%" width="125%" height="125%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#tcpShadow)">
+    <!-- Gilded Page Block Edge (Right) -->
+    <path d="M54 11 C56 11 57.5 12.5 57.5 14.5 L57.5 51.5 C57.5 53.5 56 55 54 55 Z" fill="#eddac2"/>
+    <line x1="56" y1="13.5" x2="56" y2="52.5" stroke="#be8f60" stroke-width="0.9" stroke-dasharray="1.5 2"/>
+
+    <!-- Silk Ribbon Bookmark (Crimson with Chevron Notch) -->
+    <path d="M38 3.5 L38 15 L41.5 12.8 L45 15 L45 3.5 Z" fill="#ad2e2e"/>
+
+    <!-- Hardbound Book Cover -->
+    <path d="M13 5 h41 a3 3 0 0 1 3 3 v48 a3 3 0 0 1-3 3 H13 a6 6 0 0 1-6-6 v-42 a6 6 0 0 1 6-6 Z" fill="url(#tcpCover)"/>
+
+    <!-- Spine Groove & Light Highlight -->
+    <line x1="17.2" y1="5" x2="17.2" y2="59" stroke="#503015" stroke-width="1.5"/>
+    <line x1="18.3" y1="5" x2="18.3" y2="59" stroke="rgba(255, 245, 230, 0.38)" stroke-width="0.8"/>
+
+    <!-- Classic Spine Bands / Ribs -->
+    <line x1="8" y1="15" x2="16.5" y2="15" stroke="#faebd7" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="8" y1="32" x2="16.5" y2="32" stroke="#faebd7" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="8" y1="49" x2="16.5" y2="49" stroke="#faebd7" stroke-width="1.8" stroke-linecap="round"/>
+
+    <!-- Inset Gold Fillet Frame on Front Cover -->
+    <rect x="22" y="9.5" width="31" height="45" rx="2.5" fill="none" stroke="rgba(25, 15, 8, 0.45)" stroke-width="1.1"/>
+    <rect x="23.2" y="10.7" width="28.6" height="42.6" rx="1.8" fill="none" stroke="rgba(255, 240, 220, 0.4)" stroke-width="0.75"/>
+
+    <!-- Centered 4-pointed Celestial Star ✦ Ornament -->
+    <path d="M37.5 21 C37.5 27 37.5 27 44.5 32 C37.5 37 37.5 37 37.5 43 C37.5 37 37.5 37 30.5 32 C37.5 27 37.5 27 37.5 21 Z" fill="#1a1007"/>
+    <path d="M37.5 22 C37.5 27.5 37.5 27.5 43.5 32 C37.5 36.5 37.5 36.5 37.5 42 C37.5 36.5 37.5 36.5 31.5 32 C37.5 27.5 37.5 27.5 37.5 22 Z" fill="url(#tcpGold)"/>
+    <circle cx="37.5" cy="32" r="1.2" fill="#fffdfa"/>
+  </g>
 </svg>

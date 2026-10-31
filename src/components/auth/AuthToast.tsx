@@ -1,14 +1,15 @@
 import React, { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CheckCircle2, X } from 'lucide-react'
+import { CheckCircle2, AlertCircle, X } from 'lucide-react'
 
-interface AuthToastProps {
+export interface AuthToastProps {
   message: string | null
   onClose: () => void
+  type?: 'success' | 'error' | 'info'
 }
 
-export const AuthToast: React.FC<AuthToastProps> = ({ message, onClose }) => {
+export const AuthToast: React.FC<AuthToastProps> = ({ message, onClose, type }) => {
   useEffect(() => {
     if (!message) return
     const timer = setTimeout(() => {
@@ -16,6 +17,19 @@ export const AuthToast: React.FC<AuthToastProps> = ({ message, onClose }) => {
     }, 4000)
     return () => clearTimeout(timer)
   }, [message, onClose])
+
+  const isError =
+    type === 'error' ||
+    Boolean(
+      message &&
+        (/error/i.test(message) ||
+          /no picture/i.test(message) ||
+          /failed/i.test(message) ||
+          /cannot/i.test(message) ||
+          /unable/i.test(message) ||
+          /please/i.test(message) ||
+          /invalid/i.test(message))
+    )
 
   const toastContent = (
     <AnimatePresence>
@@ -26,12 +40,12 @@ export const AuthToast: React.FC<AuthToastProps> = ({ message, onClose }) => {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -24, scale: 0.95 }}
           transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-          role="status"
+          role={isError ? 'alert' : 'status'}
           aria-live="polite"
         >
-          <div className="auth-toast-card">
+          <div className={`auth-toast-card ${isError ? 'error' : ''}`}>
             <div className="auth-toast-icon">
-              <CheckCircle2 size={18} />
+              {isError ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
             </div>
             <span className="auth-toast-text">{message}</span>
             <button

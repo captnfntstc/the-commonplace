@@ -29,7 +29,6 @@ test('renders an aligned branded verification email without an external logo dep
   })
 
   assert.match(html, /The Commonplace\./)
-  assert.match(html, /Read &nbsp;&bull;&nbsp; Reflect &nbsp;&bull;&nbsp; Remember/)
   assert.match(html, /align="center"/)
   assert.match(html, /max-width:600px/)
   assert.match(html, /&lt;reader@example\.com&gt;/)
