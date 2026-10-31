@@ -23,6 +23,7 @@ import { loadOrMigrateUserCollections, saveUserCollections } from '../../service
 import { useAccessibleDialog } from '../../hooks/useAccessibleDialog'
 import { getEntryTypeIcon } from '../../utils/mediaIcons'
 import { getGradientCoverStyle } from '../../utils/collectionCovers'
+import { searchTokensMatch } from '../../utils/text'
 
 interface CollectionPickerModalProps {
   handle: string
@@ -31,18 +32,8 @@ interface CollectionPickerModalProps {
   onClose: () => void
 }
 
-function renderShelfThumbnail(collection: ProfileCollection) {
-  if (collection.customCoverUrl && !collection.customCoverUrl.startsWith('data:image/svg+xml')) {
-    return (
-      <img
-        src={collection.customCoverUrl}
-        alt=""
-        className="collection-picker-shelf-thumb-img"
-        loading="lazy"
-        decoding="async"
-      />
-    )
-  }
+function renderCollectionCover(collection: ProfileCollection) {
+  const items = collection.items ?? []
 
   const isGradient =
     collection.coverMode === 'gradient' ||
@@ -54,32 +45,77 @@ function renderShelfThumbnail(collection: ProfileCollection) {
       ? Number(collection.coverStyle.replace('gradient-', ''))
       : 1
     const variant = (rawVariant >= 1 && rawVariant <= 4 ? rawVariant : 1) as 1 | 2 | 3 | 4
+    const isDark = variant === 1 || variant === 2
     return (
       <div
-        className={`collection-picker-shelf-thumb-grad variant-${variant}`}
-        style={getGradientCoverStyle(variant, collection.items ?? [])}
+        className={`collection-apple-cover variant-${variant} ${items.length === 0 ? 'no-items' : ''}`}
+        style={getGradientCoverStyle(variant, items)}
       >
-        <Folder size={13} className="collection-picker-shelf-grad-icon" aria-hidden="true" />
+        <span
+          className="collection-apple-cover-title"
+          style={{
+            color: items.length === 0
+              ? 'rgba(237, 229, 216, 0.45)'
+              : (isDark ? '#ffffff' : '#0e0d0b'),
+            textShadow: (items.length > 0 && isDark)
+              ? '0 2px 10px rgba(0, 0, 0, 0.55)'
+              : 'none',
+          }}
+        >
+          {collection.name.trim() || 'Untitled Shelf'}
+        </span>
       </div>
     )
   }
 
-  const firstItemWithCover = collection.items?.find((it) => Boolean(it.coverUrl))
-  if (firstItemWithCover?.coverUrl) {
+  const isCustom =
+    (collection.coverMode === 'custom' ||
+      (!collection.coverMode &&
+        collection.customCoverUrl &&
+        !collection.customCoverUrl.startsWith('data:image/svg+xml'))) &&
+    Boolean(collection.customCoverUrl)
+
+  if (isCustom && collection.customCoverUrl) {
     return (
       <img
-        src={firstItemWithCover.coverUrl}
+        src={collection.customCoverUrl}
         alt=""
-        className="collection-picker-shelf-thumb-img"
+        className="collection-preview-custom-cover"
         loading="lazy"
         decoding="async"
       />
     )
   }
 
+  if (items.length === 0) {
+    return (
+      <div className="collection-picker-grid-cover-fallback">
+        <Folder size={26} aria-hidden="true" />
+      </div>
+    )
+  }
+
   return (
-    <div className="collection-picker-shelf-thumb-fallback">
-      <Folder size={15} aria-hidden="true" />
+    <div className="collection-preview-collage-grid">
+      {Array.from({ length: 4 }, (_, index) => {
+        const entry = items[index]
+        if (!entry) {
+          return <span key={`empty-slot-${index}`} className="empty" />
+        }
+        if (entry.coverUrl) {
+          return (
+            <span key={entry.id ?? `slot-${index}`}>
+              <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
+            </span>
+          )
+        }
+        const ItemIcon = getEntryTypeIcon(entry.type)
+        return (
+          <span key={entry.id ?? `slot-${index}`}>
+            <ItemIcon size={16} aria-hidden="true" />
+          </span>
+        )
+      })}
     </div>
   )
 }
@@ -153,8 +189,7 @@ export function CollectionPickerModal({ handle, userId = null, item, onClose }: 
 
   const filteredCollections = useMemo(() => {
     if (!searchFilter.trim()) return collections
-    const q = searchFilter.toLowerCase().trim()
-    return collections.filter((col) => col.name.toLowerCase().includes(q))
+    return collections.filter((col) => searchTokensMatch(col.name, searchFilter))
   }, [collections, searchFilter])
 
   const inCollectionCount = useMemo(() => {
@@ -250,43 +285,50 @@ export function CollectionPickerModal({ handle, userId = null, item, onClose }: 
           </div>
         )}
 
-        {/* Shelves List */}
-        <div className="collection-picker-list" role="list" aria-label="Collections list">
+        {/* Shelves Grid (fits 2 per row, scrollable) */}
+        <div className="collection-picker-grid" role="list" aria-label="Collections list">
           {filteredCollections.map((collection) => {
             const added = profileCollectionHasItem(collection, item)
+            const itemCount = collection.items?.length ?? 0
             return (
               <button
                 key={collection.id}
                 type="button"
-                className={`collection-picker-shelf-row ${added ? 'is-added' : ''}`}
+                className={`collection-picker-grid-card ${added ? 'is-added' : ''}`}
                 onClick={() => (added ? setDuplicateCollectionId(collection.id) : addToCollection(collection.id))}
-                aria-label={`${collection.name}, ${collection.items?.length ?? 0} items${added ? ', already added' : ''}`}
+                aria-label={`${collection.name}, ${itemCount} ${itemCount === 1 ? 'item' : 'items'}${added ? ', already in shelf' : ''}`}
               >
-                <div className="collection-picker-shelf-thumb" aria-hidden="true">
-                  {renderShelfThumbnail(collection)}
-                </div>
-
-                <div className="collection-picker-shelf-info">
-                  <strong className="collection-picker-shelf-name" title={collection.name}>
-                    {collection.name}
-                  </strong>
-                  <span className="collection-picker-shelf-count">
-                    {collection.items?.length ?? 0} {collection.items?.length === 1 ? 'item' : 'items'}
-                  </span>
-                </div>
-
-                <div className="collection-picker-shelf-action">
-                  {added ? (
-                    <span className="collection-picker-status-pill added" title="Already added — click to add another copy">
-                      <Check size={12} strokeWidth={2.5} aria-hidden="true" />
-                      <span>In Shelf</span>
-                    </span>
-                  ) : (
-                    <span className="collection-picker-status-pill add">
-                      <Plus size={13} strokeWidth={2.5} aria-hidden="true" />
-                      <span>Add</span>
+                <div className="collection-picker-grid-cover" aria-hidden="true">
+                  {renderCollectionCover(collection)}
+                  {added && (
+                    <span className="collection-picker-grid-badge" title="Already added">
+                      <Check size={12} strokeWidth={2.8} />
                     </span>
                   )}
+                </div>
+
+                <div className="collection-picker-grid-meta">
+                  <strong className="collection-picker-grid-name" title={collection.name}>
+                    {collection.name}
+                  </strong>
+                  <div className="collection-picker-grid-footer">
+                    <span className="collection-picker-grid-count">
+                      {itemCount} {itemCount === 1 ? 'item' : 'items'}
+                    </span>
+                    <span className={`collection-picker-status-pill ${added ? 'added' : 'add'}`}>
+                      {added ? (
+                        <>
+                          <Check size={11} strokeWidth={2.5} aria-hidden="true" />
+                          <span>In Shelf</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus size={12} strokeWidth={2.5} aria-hidden="true" />
+                          <span>Add</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
                 </div>
               </button>
             )

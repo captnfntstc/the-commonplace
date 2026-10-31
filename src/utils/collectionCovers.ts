@@ -84,7 +84,7 @@ export function getGradientCoverStyle(
     }
   }
 
-  const { c1, c2, c3, cDark } = getCollectionCoverPalette(items)
+  const { c1, c2, c3, c4, cDark } = getCollectionCoverPalette(items)
 
   if (variant === 1) {
     // Dot 3: Obsidian Wave (Dark -> White Title)
@@ -92,6 +92,8 @@ export function getGradientCoverStyle(
       backgroundColor: cDark,
       backgroundImage: `
         radial-gradient(circle at 85% 18%, ${c2}66 0%, transparent 60%),
+        radial-gradient(circle at 20% 82%, ${c3}33 0%, transparent 55%),
+        radial-gradient(circle at 50% 88%, ${c4}44 0%, transparent 58%),
         linear-gradient(145deg, #0e0b08 0%, ${cDark} 35%, ${c1}88 75%, #080605 100%)
       `,
       color: '#ffffff',
@@ -105,6 +107,7 @@ export function getGradientCoverStyle(
       backgroundImage: `
         radial-gradient(circle at 18% 85%, ${c1}cc 0%, transparent 62%),
         radial-gradient(circle at 85% 18%, ${c2}aa 0%, transparent 60%),
+        radial-gradient(circle at 82% 82%, ${c4}55 0%, transparent 55%),
         radial-gradient(circle at 50% 50%, ${c3}44 0%, #0a0806 100%)
       `,
       color: '#ffffff',
@@ -117,7 +120,7 @@ export function getGradientCoverStyle(
       backgroundColor: '#fefefe',
       backgroundImage: `
         radial-gradient(circle at 15% 15%, rgba(255, 255, 255, 0.75) 0%, transparent 55%),
-        linear-gradient(135deg, ${c3} 0%, ${c1} 48%, ${c2} 100%)
+        linear-gradient(135deg, ${c3} 0%, ${c1} 34%, ${c2} 68%, ${c4} 100%)
       `,
       color: '#0e0d0b',
     }
@@ -128,7 +131,7 @@ export function getGradientCoverStyle(
     backgroundColor: '#ffffff',
     backgroundImage: `
       radial-gradient(circle at 85% 85%, rgba(255, 255, 255, 0.65) 0%, transparent 55%),
-      linear-gradient(215deg, ${c2} 0%, ${c3} 40%, ${c1} 85%, #ffffff 100%)
+      linear-gradient(215deg, ${c2} 0%, ${c3} 35%, ${c1} 70%, ${c4} 100%)
     `,
     color: '#0e0d0b',
   }
@@ -150,7 +153,7 @@ export function getGradientHeroBannerStyle(
     }
   }
 
-  const { c1, c2, c3, cDark } = getCollectionCoverPalette(items)
+  const { c1, c2, c3, c4, cDark } = getCollectionCoverPalette(items)
 
   if (variant === 1) {
     return {
@@ -158,6 +161,8 @@ export function getGradientHeroBannerStyle(
       backgroundImage: `
         radial-gradient(ellipse at 80% 40%, ${c2}50 0%, transparent 65%),
         radial-gradient(ellipse at 20% 60%, ${c1}30 0%, transparent 65%),
+        radial-gradient(ellipse at 70% 80%, ${c3}25 0%, transparent 55%),
+        radial-gradient(ellipse at 50% 88%, ${c4}30 0%, transparent 55%),
         linear-gradient(135deg, rgba(14, 11, 8, 0.95) 0%, ${cDark} 50%, rgba(10, 8, 7, 0.95) 100%)
       `,
       color: '#ffffff',
@@ -170,6 +175,7 @@ export function getGradientHeroBannerStyle(
       backgroundImage: `
         radial-gradient(ellipse at 25% 50%, ${c1}55 0%, transparent 65%),
         radial-gradient(ellipse at 75% 50%, ${c2}55 0%, transparent 65%),
+        radial-gradient(ellipse at 82% 82%, ${c4}40 0%, transparent 55%),
         radial-gradient(ellipse at 50% 50%, ${c3}26 0%, #0a0806 100%)
       `,
       color: '#ffffff',
@@ -181,7 +187,7 @@ export function getGradientHeroBannerStyle(
       backgroundColor: '#fefefe',
       backgroundImage: `
         radial-gradient(ellipse at 20% 35%, rgba(255, 255, 255, 0.6) 0%, transparent 60%),
-        linear-gradient(135deg, ${c3}cc 0%, ${c1}cc 50%, ${c2}cc 100%)
+        linear-gradient(135deg, ${c3}cc 0%, ${c1}cc 34%, ${c2}cc 68%, ${c4}cc 100%)
       `,
       color: '#0e0d0b',
     }
@@ -191,7 +197,7 @@ export function getGradientHeroBannerStyle(
     backgroundColor: '#ffffff',
     backgroundImage: `
       radial-gradient(ellipse at 80% 65%, rgba(255, 255, 255, 0.5) 0%, transparent 60%),
-      linear-gradient(215deg, ${c2}cc 0%, ${c3}cc 50%, ${c1}cc 100%)
+      linear-gradient(215deg, ${c2}cc 0%, ${c3}cc 35%, ${c1}cc 70%, ${c4}cc 100%)
     `,
     color: '#0e0d0b',
   }
@@ -241,12 +247,12 @@ export function generateCollectionGradientSvg(
     return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
   }
 
-  const { c1, c2, c3, cDark } = getCollectionCoverPalette(items)
+  const { c1, c2, c3, c4, cDark } = getCollectionCoverPalette(items)
 
-  let defs = ''
-  let rects = ''
-  let textColor = '#ffffff'
-  let textFilter = 'filter="url(#shadow)"'
+  let defs: string
+  let rects: string
+  let textColor: string
+  let textFilter: string
 
   if (variant === 1) {
     // Dark 1: Obsidian Wave -> White Title
@@ -260,10 +266,20 @@ export function generateCollectionGradientSvg(
       <radialGradient id="glow" cx="85%" cy="18%" r="60%">
         <stop offset="0%" stop-color="${c2}" stop-opacity="0.4" />
         <stop offset="100%" stop-color="${c2}" stop-opacity="0" />
+      </radialGradient>
+      <radialGradient id="glow2" cx="50%" cy="88%" r="58%">
+        <stop offset="0%" stop-color="${c4}" stop-opacity="0.27" />
+        <stop offset="100%" stop-color="${c4}" stop-opacity="0" />
+      </radialGradient>
+      <radialGradient id="glow3" cx="20%" cy="82%" r="55%">
+        <stop offset="0%" stop-color="${c3}" stop-opacity="0.2" />
+        <stop offset="100%" stop-color="${c3}" stop-opacity="0" />
       </radialGradient>`
     rects = `
       <rect width="500" height="500" fill="url(#bg)" />
-      <rect width="500" height="500" fill="url(#glow)" />`
+      <rect width="500" height="500" fill="url(#glow)" />
+      <rect width="500" height="500" fill="url(#glow2)" />
+      <rect width="500" height="500" fill="url(#glow3)" />`
     textColor = '#ffffff'
     textFilter = 'filter="url(#shadow)"'
   } else if (variant === 2) {
@@ -280,12 +296,17 @@ export function generateCollectionGradientSvg(
       <radialGradient id="g3" cx="50%" cy="50%" r="65%">
         <stop offset="0%" stop-color="${c3}" stop-opacity="0.27" />
         <stop offset="100%" stop-color="#0a0806" />
+      </radialGradient>
+      <radialGradient id="g4" cx="82%" cy="82%" r="55%">
+        <stop offset="0%" stop-color="${c4}" stop-opacity="0.33" />
+        <stop offset="100%" stop-color="${c4}" stop-opacity="0" />
       </radialGradient>`
     rects = `
       <rect width="500" height="500" fill="#0a0806" />
       <rect width="500" height="500" fill="url(#g3)" />
       <rect width="500" height="500" fill="url(#g1)" />
-      <rect width="500" height="500" fill="url(#g2)" />`
+      <rect width="500" height="500" fill="url(#g2)" />
+      <rect width="500" height="500" fill="url(#g4)" />`
     textColor = '#ffffff'
     textFilter = 'filter="url(#shadow)"'
   } else if (variant === 3) {
@@ -293,8 +314,9 @@ export function generateCollectionGradientSvg(
     defs = `
       <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
         <stop offset="0%" stop-color="${c3}" />
-        <stop offset="48%" stop-color="${c1}" />
-        <stop offset="100%" stop-color="${c2}" />
+        <stop offset="34%" stop-color="${c1}" />
+        <stop offset="68%" stop-color="${c2}" />
+        <stop offset="100%" stop-color="${c4}" />
       </linearGradient>
       <radialGradient id="glow" cx="15%" cy="15%" r="55%">
         <stop offset="0%" stop-color="#ffffff" stop-opacity="0.75" />
@@ -310,9 +332,9 @@ export function generateCollectionGradientSvg(
     defs = `
       <linearGradient id="bg" x1="100%" y1="100%" x2="0%" y2="0%">
         <stop offset="0%" stop-color="${c2}" />
-        <stop offset="40%" stop-color="${c3}" />
-        <stop offset="85%" stop-color="${c1}" />
-        <stop offset="100%" stop-color="#ffffff" />
+        <stop offset="35%" stop-color="${c3}" />
+        <stop offset="70%" stop-color="${c1}" />
+        <stop offset="100%" stop-color="${c4}" />
       </linearGradient>
       <radialGradient id="glow" cx="85%" cy="85%" r="55%">
         <stop offset="0%" stop-color="#ffffff" stop-opacity="0.65" />

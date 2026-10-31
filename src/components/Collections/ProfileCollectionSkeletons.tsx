@@ -1,5 +1,3 @@
-type CatalogSkeletonMode = 'created' | 'saved'
-
 export function CollectionShelfSkeleton({ count = 4 }: { count?: number }) {
   return (
     <div className="profile-collections-row profile-collections-skeleton-row" role="status" aria-label="Loading collections">
@@ -16,44 +14,6 @@ export function CollectionShelfSkeleton({ count = 4 }: { count?: number }) {
               <span className="skeleton-box collection-skeleton-creator" />
               <span className="skeleton-box collection-skeleton-count" />
             </span>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-export function ProfileCatalogSkeleton({
-  count = 8,
-  mode,
-}: {
-  count?: number
-  mode: CatalogSkeletonMode
-}) {
-  return (
-    <div
-      className={`profile-catalog-skeleton-grid is-${mode}`}
-      role="status"
-      aria-label={`Loading ${mode} catalog`}
-    >
-      {Array.from({ length: count }, (_, index) => (
-        <div className="entry-card profile-catalog-entry-skeleton" key={index} aria-hidden="true">
-          <div className="profile-entry-skeleton-topline">
-            <span className="skeleton-box skeleton-avatar" />
-            <span className="skeleton-box profile-entry-skeleton-author" />
-            <span className="skeleton-box profile-entry-skeleton-date" />
-          </div>
-          <div className="profile-entry-skeleton-body">
-            <span className="skeleton-box profile-entry-skeleton-art" />
-            <span className="profile-entry-skeleton-copy">
-              <span className="skeleton-box profile-entry-skeleton-title" />
-              <span className="skeleton-box profile-entry-skeleton-creator" />
-              <span className="skeleton-box profile-entry-skeleton-meta" />
-            </span>
-          </div>
-          <div className="profile-entry-skeleton-reflection">
-            <span className="skeleton-box" />
-            <span className="skeleton-box short" />
           </div>
         </div>
       ))}
@@ -103,30 +63,3 @@ export function CollectionDetailHeroSkeleton() {
   )
 }
 
-export function CollectionMediaSkeleton({ count = 8 }: { count?: number }) {
-  return (
-    <div className="collection-media-skeleton-wrapper" role="status" aria-label="Loading collection media">
-      <div className="profile-collection-media-skeleton-grid">
-        {Array.from({ length: count }, (_, index) => {
-          const isSquare = index % 3 !== 0
-          return (
-            <div
-              className={`profile-collection-media-skeleton ${isSquare ? 'is-square' : 'is-poster'}`}
-              key={index}
-              aria-hidden="true"
-            >
-              <div className="profile-media-skeleton-art-wrap">
-                <span className="skeleton-box profile-media-skeleton-art" />
-                <span className="skeleton-box profile-media-skeleton-type-pill" />
-              </div>
-              <div className="profile-media-skeleton-copy">
-                <span className="skeleton-box profile-media-skeleton-title" />
-                <span className="skeleton-box profile-media-skeleton-creator" />
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}

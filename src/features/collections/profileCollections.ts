@@ -13,6 +13,7 @@ export type ProfileCollectionItem = {
   coverUrl?: string
   year?: string
   genre?: string
+  explicit?: boolean
 }
 
 export type ProfileCollection = {
@@ -190,6 +191,7 @@ export function profileCollectionItemFromEntry(entry: Entry): ProfileCollectionI
     coverUrl: entry.coverUrl,
     year: entry.year,
     genre: entry.genre,
+    explicit: entry.explicit,
   }
 }
 
@@ -205,6 +207,7 @@ export function profileCollectionItemFromMetadata(result: MetadataResult): Profi
     coverUrl: result.coverUrl,
     year: result.year,
     genre: result.genre,
+    explicit: result.explicit,
   }
 }
 
@@ -248,9 +251,12 @@ export function entriesForProfileCollection(entries: Entry[], collection?: Profi
     return collection.items.map((item) => {
       const catalogEntry = item.entryId ? entriesById.get(item.entryId) : undefined
       if (catalogEntry) {
-        return item.id === `entry:${catalogEntry.id}`
-          ? catalogEntry
-          : { ...catalogEntry, id: item.id }
+        const isExplicit = item.explicit ?? catalogEntry.explicit ?? (/explicit/i.test(item.title) || /explicit/i.test(catalogEntry.title))
+        return {
+          ...catalogEntry,
+          id: item.id === `entry:${catalogEntry.id}` ? catalogEntry.id : item.id,
+          explicit: Boolean(isExplicit),
+        }
       }
       return {
         id: item.id,
@@ -268,6 +274,7 @@ export function entriesForProfileCollection(entries: Entry[], collection?: Profi
         createdAt: '1970-01-01T00:00:00.000Z',
         updatedAt: '1970-01-01T00:00:00.000Z',
         coverTone: getDefaultCoverTone(item.type),
+        explicit: Boolean(item.explicit ?? (/explicit/i.test(item.title))),
       } satisfies Entry
     })
   }

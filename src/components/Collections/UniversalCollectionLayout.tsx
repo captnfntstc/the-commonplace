@@ -6,7 +6,6 @@ import {
   Trash2,
   Bookmark,
   Layers,
-  Sparkles,
   Search,
   ExternalLink,
   BookOpen,
@@ -30,12 +29,17 @@ import {
   ChevronLeft,
   ChevronRight,
   Upload,
+  ArrowDownAZ,
+  ArrowUpZA,
+  Shuffle,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { Entry, EntryType } from '../../features/entries/model'
-import { useDevSettings, type CollectionLayoutDesign } from '../DeveloperTools/devSettings'
 import { getGradientHeroBannerStyle } from '../../utils/collectionCovers'
+import { searchTokensMatch } from '../../utils/text'
 import { CollectionCommentsSection } from './CollectionCommentsSection'
+import { ShareMenuDialog, type ShareTargetInfo } from '../Share/ShareMenuDialog'
+import { showToast } from '../../utils/toast'
 import type { AlternativeCollectionDetailProps } from './AlternativeCollectionDetail'
 import './AlternativeCollection.css'
 
@@ -84,7 +88,6 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   currentUserHandle,
   isOwnedByCurrentUser,
   isSaved,
-  isTcpAdminUser,
   isEditingInline,
   collectionName,
   setCollectionName,
@@ -94,9 +97,6 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   onCancelInlineEdit,
   onBack,
   onOpenMedia,
-  onSelectEntry: _onSelectEntry,
-  onOpenCreator: _onOpenCreator,
-  onOpenAlbum,
   onOpenUserProfile,
   onAddMedia,
   onStartInlineEdit,
@@ -116,21 +116,93 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   setCollectionGradientVariant,
   onCoverUpload,
   onToggleHideFromProfile,
+  onToast,
 }) => {
-  const { settings, updateSetting } = useDevSettings()
-  const devSettings = settings
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [activeCardMenuId, setActiveCardMenuId] = useState<string | null>(null)
 
-  // Format filter (can be 'all' or specific type, or combined)
-  const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('all')
+  const handleNotify = (message: string, type: 'success' | 'error' | 'info' = 'error') => {
+    if (onToast) {
+      onToast(message, type)
+    }
+    showToast(message, type === 'error' ? 'error' : 'success')
+  }
+
+  // Multi-select format filter: empty array means "All Items"
+  const [selectedTypes, setSelectedTypes] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [spotlightItemId, setSpotlightItemId] = useState<string | null>(items[0]?.id ?? null)
+
+  // Reordering & sorting state for edit mode
+  const [orderedItems, setOrderedItems] = useState<Entry[]>(items)
+  const initialOrderRef = useRef<Entry[]>(items)
+  const [activeSort, setActiveSort] = useState<'az-asc' | 'az-desc' | 'random' | null>(null)
+  const [draggedId, setDraggedId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const prevEditingRef = useRef(isEditingInline)
+  const prevItemsRef = useRef(items)
+
+  useEffect(() => {
+    const isEnteringEdit = isEditingInline && !prevEditingRef.current
+    const itemsChanged = prevItemsRef.current !== items
+    prevEditingRef.current = isEditingInline
+    prevItemsRef.current = items
+
+    if (isEnteringEdit) {
+      setOrderedItems(items)
+      initialOrderRef.current = items
+      setActiveSort(null)
+      setDraggedId(null)
+      setDragOverId(null)
+    } else if (!isEditingInline) {
+      setOrderedItems(items)
+      initialOrderRef.current = items
+      setActiveSort(null)
+    } else if (itemsChanged) {
+      const currentIds = new Set(items.map((it) => it.id))
+      setOrderedItems((prev) => {
+        const remaining = prev.filter((it) => currentIds.has(it.id))
+        const existingIds = new Set(remaining.map((it) => it.id))
+        const added = items.filter((it) => !existingIds.has(it.id))
+        return [...remaining, ...added]
+      })
+      initialOrderRef.current = initialOrderRef.current.filter((it) => currentIds.has(it.id))
+    }
+  }, [isEditingInline, items])
+
+  const handleSort = (type: 'az-asc' | 'az-desc' | 'random') => {
+    if (activeSort === type) {
+      // Re-clicking the active sort returns to the original, non sorted layout
+      setActiveSort(null)
+      setOrderedItems([...initialOrderRef.current])
+      return
+    }
+
+    setActiveSort(type)
+    if (type === 'az-asc') {
+      const sorted = [...orderedItems].sort((a, b) =>
+        a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true })
+      )
+      setOrderedItems(sorted)
+    } else if (type === 'az-desc') {
+      const sorted = [...orderedItems].sort((a, b) =>
+        b.title.localeCompare(a.title, undefined, { sensitivity: 'base', numeric: true })
+      )
+      setOrderedItems(sorted)
+    } else if (type === 'random') {
+      const shuffled = [...orderedItems]
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+      }
+      setOrderedItems(shuffled)
+    }
+  }
 
   // Triple dots popover menu
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const [copiedLink, setCopiedLink] = useState(false)
+  const [shareTarget, setShareTarget] = useState<ShareTargetInfo | null>(null)
 
   // Comments disabled state persisted in localStorage
   const [commentsDisabled, setCommentsDisabled] = useState<boolean>(() => {
@@ -164,31 +236,24 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
     setCommentsDisabled(next)
     try {
       localStorage.setItem(`tcp.collection_comments_disabled.${collection.id}`, String(next))
-    } catch {}
-    setMenuOpen(false)
-  }
-
-  const handleShareCollection = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href)
-      setCopiedLink(true)
-      setTimeout(() => setCopiedLink(false), 2000)
-    } catch (err) {
-      console.error('Failed to copy link', err)
+    } catch {
+      /* Storage can be unavailable. */
     }
     setMenuOpen(false)
   }
 
-  const handleSwitchLayout = (layout: CollectionLayoutDesign) => {
-    updateSetting('collectionLayout', layout)
+  const handleShareCollection = () => {
+    setMenuOpen(false)
+    setShareTarget({
+      title: collection.name,
+      url: window.location.href,
+      text: collection.description || `Curated collection by ${creatorDisplay}`,
+      typeLabel: 'Collection',
+    })
   }
 
   const handleOpenEntry = (entry: Entry) => {
-    if (entry.type === 'album' && onOpenAlbum) {
-      onOpenAlbum(entry)
-    } else {
-      onOpenMedia?.(entry)
-    }
+    onOpenMedia?.(entry)
   }
 
   const navigate = useNavigate()
@@ -203,23 +268,41 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
     }
   }
 
+  // Type counts
+  const typeCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    items.forEach((item) => {
+      counts[item.type] = (counts[item.type] || 0) + 1
+    })
+    return counts
+  }, [items])
+
+  const uniqueTypes = useMemo(() => Object.keys(typeCounts), [typeCounts])
+
+  const handleToggleType = (type: string) => {
+    if (type === 'all') {
+      setSelectedTypes([])
+      return
+    }
+    setSelectedTypes((prev) =>
+      prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type],
+    )
+  }
+
   // Filtered items
   const displayedItems = useMemo(() => {
-    let result = [...items]
-    if (selectedTypeFilter !== 'all') {
-      result = result.filter((item) => item.type === selectedTypeFilter)
+    let result = [...orderedItems]
+    if (selectedTypes.length > 0) {
+      result = result.filter((item) => selectedTypes.includes(item.type))
     }
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim()
-      result = result.filter(
-        (item) =>
-          item.title.toLowerCase().includes(q) ||
-          item.creator.toLowerCase().includes(q) ||
-          (item.year && String(item.year).includes(q)),
-      )
+      result = result.filter((item) => {
+        const itemText = [item.title, item.creator, item.year ? String(item.year) : ''].filter(Boolean).join(' ')
+        return searchTokensMatch(itemText, searchQuery)
+      })
     }
     return result
-  }, [items, selectedTypeFilter, searchQuery])
+  }, [orderedItems, selectedTypes, searchQuery])
 
   // Responsive column count: 4 on desktop, 2 on <= 720px, 1 on <= 480px
   const [columnCount, setColumnCount] = useState(4)
@@ -245,24 +328,9 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
 
   // Active spotlight item
   const spotlightItem = useMemo(() => {
-    if (!spotlightItemId) return displayedItems[0] ?? items[0] ?? null
-    return items.find((item) => item.id === spotlightItemId) ?? displayedItems[0] ?? items[0] ?? null
-  }, [items, displayedItems, spotlightItemId])
-
-  // Media type breakdown for stats & combined filter widget
-  const typeBreakdown = useMemo(() => {
-    const counts: Record<string, number> = {}
-    items.forEach((item) => {
-      counts[item.type] = (counts[item.type] || 0) + 1
-    })
-
-    const total = items.length || 1
-    return Object.entries(counts).map(([type, count]) => {
-      const { label, color } = getTypeMeta(type)
-      const pct = Math.round((count / total) * 100)
-      return { type, label, count, pct, color }
-    })
-  }, [items])
+    if (!spotlightItemId) return displayedItems[0] ?? orderedItems[0] ?? null
+    return orderedItems.find((item) => item.id === spotlightItemId) ?? displayedItems[0] ?? orderedItems[0] ?? null
+  }, [orderedItems, displayedItems, spotlightItemId])
 
   // Layout 2 gradient hero matches Layout 1: fills container with gradient preview when gradient mode is chosen
   const isContainerGradient = useMemo(() => {
@@ -275,8 +343,6 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
       Boolean(collection.customCoverUrl?.startsWith('data:image/svg+xml'))
     )
   }, [isEditingInline, collectionCoverMode, collection.coverMode, collection.coverStyle, collection.customCoverUrl])
-
-  const showCoverBox = isEditingInline || !isContainerGradient || devSettings.showCoverOnGradient
 
   const currentGradientVariant = useMemo(() => {
     const rawVariant = (isEditingInline && collectionGradientVariant)
@@ -293,6 +359,7 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   }, [isContainerGradient, currentGradientVariant, items])
 
   const isGradientLight = isContainerGradient && (currentGradientVariant === 3 || currentGradientVariant === 4)
+  const showCoverColumn = !isContainerGradient || isEditingInline
 
   const creatorDisplay = creatorName?.trim() ? creatorName : creatorHandle
 
@@ -307,9 +374,6 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   const applyCoverStyleKey = (key: typeof COVER_STYLE_KEYS[number]) => {
     if (key === 'photo') {
       setCollectionCoverMode?.('custom')
-      if (!collectionCustomCover) {
-        photoInputRef.current?.click()
-      }
     } else if (key === 'auto') {
       setCollectionCoverMode?.('auto')
     } else if (key === 'g1') {
@@ -342,23 +406,36 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   }
 
   const handleCoverFileUpload = (file?: File) => {
-    if (!file || !file.type.startsWith('image/')) return
-    if (onCoverUpload) {
-      onCoverUpload(file)
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      handleNotify('Please select a valid image file.', 'error')
+      return
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setCollectionCustomCover?.(reader.result)
-        setCollectionCoverMode?.('custom')
+    try {
+      if (onCoverUpload) {
+        onCoverUpload(file)
       }
+      const reader = new FileReader()
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setCollectionCustomCover?.(reader.result)
+          setCollectionCoverMode?.('custom')
+        } else {
+          handleNotify('An error has occurred.', 'error')
+        }
+      }
+      reader.onerror = () => {
+        handleNotify('An error has occurred.', 'error')
+      }
+      reader.readAsDataURL(file)
+    } catch {
+      handleNotify('An error has occurred.', 'error')
     }
-    reader.readAsDataURL(file)
   }
 
   return (
-    <div className="universal-collection-root">
-      {/* ── Top Bar: Back Button & Dev Switcher (No red brand text!) ── */}
+    <div className={`universal-collection-root ${isEditingInline ? 'is-editing' : ''}`}>
+      {/* ── Top Bar: Back Button & Collection Menu ── */}
       <div className="tcp-alt-top-bar">
         <button
           type="button"
@@ -370,127 +447,6 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
           <span>Back to Collections</span>
         </button>
 
-        <div className="tcp-alt-top-bar-actions">
-          {/* 3-Way Seamless Switcher for @tcpadmin */}
-          {isTcpAdminUser && (
-            <div className="tcp-admin-layout-switcher" title="Seamlessly toggle collection designs (@tcpadmin)">
-              <span className="tcp-switcher-label">
-                <Sparkles size={12} aria-hidden="true" />
-                <span>Dev Layout:</span>
-              </span>
-              <div className="tcp-switcher-pill-group">
-                <button
-                  type="button"
-                  className={`tcp-switcher-pill ${settings.collectionLayout === 'classic' ? 'is-active' : ''}`}
-                  onClick={() => handleSwitchLayout('classic')}
-                >
-                  Classic
-                </button>
-                <button
-                  type="button"
-                  className={`tcp-switcher-pill ${settings.collectionLayout === 'hollis' ? 'is-active' : ''}`}
-                  onClick={() => handleSwitchLayout('hollis')}
-                >
-                  Layout 1 (Hollis)
-                </button>
-                <button
-                  type="button"
-                  className={`tcp-switcher-pill ${settings.collectionLayout === 'universal' ? 'is-active' : ''}`}
-                  onClick={() => handleSwitchLayout('universal')}
-                >
-                  Layout 2 (Universal)
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Triple Dots Popover Menu: Accessible outside the container in top bar */}
-          {!isEditingInline && (
-            <div className="tcp-alt-menu-wrap" ref={menuRef}>
-              <button
-                type="button"
-                className="universal-btn icon-only tcp-alt-top-menu-btn"
-                onClick={() => setMenuOpen((prev) => !prev)}
-                aria-label="More collection options"
-                title="More options"
-              >
-                <MoreHorizontal size={18} aria-hidden="true" />
-              </button>
-
-              {menuOpen && (
-                <div className="tcp-alt-dropdown-popover" role="menu">
-                  <button
-                    type="button"
-                    className="tcp-alt-dropdown-item"
-                    onClick={handleShareCollection}
-                    role="menuitem"
-                  >
-                    <Share2 size={14} aria-hidden="true" />
-                    <span>{copiedLink ? 'Link Copied!' : 'Share Collection'}</span>
-                  </button>
-
-                  {isOwnedByCurrentUser && (
-                    <>
-                      <button
-                        type="button"
-                        className="tcp-alt-dropdown-item"
-                        onClick={handleToggleCommentsDisabled}
-                        role="menuitem"
-                      >
-                        {commentsDisabled ? (
-                          <>
-                            <MessageSquare size={14} aria-hidden="true" />
-                            <span>Enable Comments</span>
-                          </>
-                        ) : (
-                          <>
-                            <MessageSquareOff size={14} aria-hidden="true" />
-                            <span>Disable Comments</span>
-                          </>
-                        )}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="tcp-alt-dropdown-item"
-                        onClick={() => {
-                          setMenuOpen(false)
-                          onToggleHideFromProfile?.()
-                        }}
-                        role="menuitem"
-                      >
-                        {collection.isHidden ? (
-                          <>
-                            <Eye size={14} aria-hidden="true" />
-                            <span>Show on Profile</span>
-                          </>
-                        ) : (
-                          <>
-                            <EyeOff size={14} aria-hidden="true" />
-                            <span>Hide from Profile</span>
-                          </>
-                        )}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="tcp-alt-dropdown-item danger"
-                        onClick={() => {
-                          setMenuOpen(false)
-                          onDeleteCollection?.()
-                        }}
-                        role="menuitem"
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                        <span>Delete Collection</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </div>
 
       {/* ── Universal Hero Banner (Website color palette, no red outline!) ── */}
@@ -498,8 +454,8 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
         className={`universal-hero ${isContainerGradient ? 'is-gradient-bg' : ''} ${isGradientLight ? 'is-gradient-light' : ''}`}
         style={gradientHeroStyle}
       >
-        {/* Square Cover Artwork Column: Vertically centered, with cover selector when editing */}
-        {showCoverBox && (
+        {/* Square Cover Artwork Column: hidden for gradients unless editing so users can change their cover */}
+        {showCoverColumn && (
           <div className="universal-hero-cover-column">
             <div className="collection-preview-cover-stage">
               {isEditingInline && (
@@ -575,21 +531,35 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
             {isEditingInline && (
               <div className="collection-cover-controls">
                 <div className="collection-cover-dots" role="tablist" aria-label="Cover appearance styles">
-                  <button
-                    type="button"
-                    className={`collection-cover-dot photo-dot ${collectionCoverMode === 'custom' ? 'active' : ''}`}
-                    onClick={() => {
-                      photoInputRef.current?.click()
-                    }}
-                    title={
-                      collectionCustomCover
-                        ? 'Change custom cover photo'
-                        : 'Upload custom cover photo'
-                    }
-                    aria-label="Upload custom cover photo"
-                  >
-                    <Upload aria-hidden="true" size={13} />
-                  </button>
+                  {(() => {
+                    const hasUploadedPhoto = Boolean(collectionCustomCover) && !collectionCustomCover.startsWith('data:image/svg+xml')
+                    return (
+                      <button
+                        type="button"
+                        className={`collection-cover-dot photo-dot ${collectionCoverMode === 'custom' ? 'active' : ''} ${hasUploadedPhoto ? 'has-uploaded' : 'is-empty-placeholder'}`}
+                        onClick={() => {
+                          if (collectionCoverMode === 'custom' || !hasUploadedPhoto) {
+                            photoInputRef.current?.click()
+                          } else {
+                            setCollectionCoverMode?.('custom')
+                          }
+                        }}
+                        title={hasUploadedPhoto ? 'Click to upload photo' : 'Click to add photo'}
+                        aria-label={hasUploadedPhoto ? 'Click to upload photo' : 'Click to add photo'}
+                      >
+                        {hasUploadedPhoto ? (
+                          <span className="photo-dot-thumb-wrap">
+                            <img src={collectionCustomCover} alt="" className="photo-dot-thumb" draggable={false} />
+                            <span className="photo-dot-hover-icon" aria-hidden="true">
+                              <Upload size={10} />
+                            </span>
+                          </span>
+                        ) : (
+                          <Upload aria-hidden="true" size={13} />
+                        )}
+                      </button>
+                    )
+                  })()}
 
                   <button
                     type="button"
@@ -678,8 +648,21 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                   <button
                     type="button"
                     className="universal-btn primary"
-                    onClick={onSaveInlineEdit}
-                    disabled={!collectionName.trim() || (collectionCoverMode === 'custom' && !collectionCustomCover)}
+                    onClick={() => {
+                      if (!collectionName.trim()) {
+                        handleNotify('Please enter a collection title.', 'error')
+                        return
+                      }
+                      if (collectionCoverMode === 'custom' && !collectionCustomCover) {
+                        handleNotify('No pictures added', 'error')
+                        return
+                      }
+                      try {
+                        onSaveInlineEdit(orderedItems.map((item) => item.id))
+                      } catch {
+                        handleNotify('An error has occurred.', 'error')
+                      }
+                    }}
                   >
                     <Check size={14} aria-hidden="true" />
                     <span>Done Editing</span>
@@ -710,29 +693,151 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                 <span>{isSaved ? 'Saved in Collection' : 'Save Collection'}</span>
               </button>
             )}
+
+            {!isEditingInline && (
+              <div className="tcp-alt-menu-wrap" ref={menuRef}>
+                <button
+                  type="button"
+                  className="universal-btn icon-only tcp-alt-top-menu-btn"
+                  onClick={() => setMenuOpen((prev) => !prev)}
+                  aria-label="More collection options"
+                  title="More options"
+                >
+                  <MoreHorizontal size={18} aria-hidden="true" />
+                </button>
+
+                {menuOpen && (
+                  <div className="tcp-alt-dropdown-popover" role="menu">
+                    <button
+                      type="button"
+                      className="tcp-alt-dropdown-item"
+                      onClick={handleShareCollection}
+                      role="menuitem"
+                    >
+                      <Share2 size={14} aria-hidden="true" />
+                      <span>Share Collection</span>
+                    </button>
+
+                    {isOwnedByCurrentUser && (
+                      <>
+                        <button
+                          type="button"
+                          className="tcp-alt-dropdown-item"
+                          onClick={handleToggleCommentsDisabled}
+                          role="menuitem"
+                        >
+                          {commentsDisabled ? (
+                            <>
+                              <MessageSquare size={14} aria-hidden="true" />
+                              <span>Enable Comments</span>
+                            </>
+                          ) : (
+                            <>
+                              <MessageSquareOff size={14} aria-hidden="true" />
+                              <span>Disable Comments</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="tcp-alt-dropdown-item"
+                          onClick={() => {
+                            setMenuOpen(false)
+                            onToggleHideFromProfile?.()
+                          }}
+                          role="menuitem"
+                        >
+                          {collection.isHidden ? (
+                            <>
+                              <Eye size={14} aria-hidden="true" />
+                              <span>Show on Profile</span>
+                            </>
+                          ) : (
+                            <>
+                              <EyeOff size={14} aria-hidden="true" />
+                              <span>Hide from Profile</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="tcp-alt-dropdown-item danger"
+                          onClick={() => {
+                            setMenuOpen(false)
+                            onDeleteCollection?.()
+                          }}
+                          role="menuitem"
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                          <span>Delete Collection</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </section>
 
-      {/* ── Universal Body: Masonry Grid (Left/Center) + Right Insights Sidebar ── */}
+      {/* ── Universal Body: Left Insights Sidebar + Masonry Grid ── */}
       <div className="universal-layout-body">
-        {/* Left / Center: Collection Masonry Grid */}
+        {/* Main Collection Masonry Grid */}
         <main className="universal-main-pane">
           {/* Main Pane Toolbar: Item Counter moved next to Search In Collection */}
           <div className="universal-pane-header">
             <div className="universal-items-counter-tag">
               <strong>{displayedItems.length}</strong> {displayedItems.length === 1 ? 'item' : 'items'}
-              {selectedTypeFilter !== 'all' && (
+              {selectedTypes.length > 0 && (
                 <button
                   type="button"
                   className="universal-clear-filter-btn"
-                  onClick={() => setSelectedTypeFilter('all')}
-                  title="Clear format filter"
+                  onClick={() => setSelectedTypes([])}
+                  title="Clear filters"
                 >
-                  (Filtered by {getTypeMeta(selectedTypeFilter).label} — Show all)
+                  (Filtered by {selectedTypes.map((type) => getTypeMeta(type).label).join(', ')} — Show all)
                 </button>
               )}
             </div>
+
+            {isEditingInline && (
+              <div className="universal-edit-sort-bar" role="toolbar" aria-label="Sort collection items">
+                <span className="universal-edit-sort-title">Sort:</span>
+                <button
+                  type="button"
+                  className={`universal-edit-sort-btn ${activeSort === 'az-asc' ? 'is-active' : ''}`}
+                  onClick={() => handleSort('az-asc')}
+                  title={activeSort === 'az-asc' ? 'Click to reset to original order' : 'Sort A to Z'}
+                  aria-pressed={activeSort === 'az-asc'}
+                >
+                  <ArrowDownAZ size={13} aria-hidden="true" />
+                  <span>A–Z</span>
+                </button>
+                <button
+                  type="button"
+                  className={`universal-edit-sort-btn ${activeSort === 'az-desc' ? 'is-active' : ''}`}
+                  onClick={() => handleSort('az-desc')}
+                  title={activeSort === 'az-desc' ? 'Click to reset to original order' : 'Sort Z to A'}
+                  aria-pressed={activeSort === 'az-desc'}
+                >
+                  <ArrowUpZA size={13} aria-hidden="true" />
+                  <span>Z–A</span>
+                </button>
+                <button
+                  type="button"
+                  className={`universal-edit-sort-btn ${activeSort === 'random' ? 'is-active' : ''}`}
+                  onClick={() => handleSort('random')}
+                  title={activeSort === 'random' ? 'Click to reset to original order' : 'Randomize items'}
+                  aria-pressed={activeSort === 'random'}
+                >
+                  <Shuffle size={13} aria-hidden="true" />
+                  <span>Random</span>
+                </button>
+              </div>
+            )}
 
             <div className="universal-search-box">
               <Search size={14} aria-hidden="true" />
@@ -767,9 +872,51 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                     return (
                       <article
                         key={entry.id}
-                        className={`universal-media-entity ${isSpotlighted ? 'is-spotlighted' : ''} ${isEditingInline && isSpotlighted ? 'is-featured-edit' : ''}`}
+                        className={`universal-media-entity ${isSpotlighted ? 'is-spotlighted' : ''} ${isEditingInline && isSpotlighted ? 'is-featured-edit' : ''} ${isEditingInline ? 'is-editing-mode' : ''} ${draggedId === entry.id ? 'is-dragging' : ''} ${dragOverId === entry.id && draggedId !== entry.id ? 'is-drag-over' : ''}`}
                         data-id={entry.id}
+                        draggable={isEditingInline}
+                        onDragStart={(e) => {
+                          if (!isEditingInline) return
+                          e.dataTransfer.setData('text/plain', entry.id)
+                          e.dataTransfer.effectAllowed = 'move'
+                          setDraggedId(entry.id)
+                        }}
+                        onDragOver={(e) => {
+                          if (!isEditingInline) return
+                          e.preventDefault()
+                          e.dataTransfer.dropEffect = 'move'
+                          if (dragOverId !== entry.id) {
+                            setDragOverId(entry.id)
+                          }
+                        }}
+                        onDragLeave={(e) => {
+                          if (dragOverId === entry.id && !e.currentTarget.contains(e.relatedTarget as Node)) {
+                            setDragOverId(null)
+                          }
+                        }}
+                        onDrop={(e) => {
+                          if (!isEditingInline) return
+                          e.preventDefault()
+                          if (draggedId && draggedId !== entry.id) {
+                            const fromIndex = orderedItems.findIndex((it) => it.id === draggedId)
+                            const toIndex = orderedItems.findIndex((it) => it.id === entry.id)
+                            if (fromIndex !== -1 && toIndex !== -1) {
+                              const next = [...orderedItems]
+                              const [moved] = next.splice(fromIndex, 1)
+                              next.splice(toIndex, 0, moved)
+                              setOrderedItems(next)
+                              setActiveSort(null)
+                            }
+                          }
+                          setDraggedId(null)
+                          setDragOverId(null)
+                        }}
+                        onDragEnd={() => {
+                          setDraggedId(null)
+                          setDragOverId(null)
+                        }}
                         onClick={() => {
+                          if (isEditingInline) return
                           setSpotlightItemId(entry.id)
                           handleOpenEntry(entry)
                         }}
@@ -779,7 +926,7 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                           {/* Media Artwork (No container box!) */}
                           <div className={`universal-entity-art ${isSquareArtwork ? 'is-square' : 'is-poster'}`}>
                             {entry.coverUrl ? (
-                              <img src={entry.coverUrl} alt={entry.title} className="universal-entity-img" loading="lazy" />
+                              <img src={entry.coverUrl} alt={entry.title} className="universal-entity-img" loading="lazy" draggable={false} />
                             ) : (
                               <div className="universal-entity-fallback">{renderTypeIcon(entry.type, 30)}</div>
                             )}
@@ -852,7 +999,8 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                         {/* Media Copy */}
                         <div className="universal-entity-copy">
                           <strong className="universal-entity-title" title={entry.title}>
-                            {entry.title}
+                            <span>{entry.title}</span>
+                            {entry.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
                           </strong>
                           <small className="universal-entity-meta">
                             {entry.creator}
@@ -868,7 +1016,7 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
           )}
         </main>
 
-        {/* Right Sidebar: Curator at Top, Combined Filter/Media Mix, Spotlight, Comments */}
+        {/* Left Sidebar: Curator, Spotlight, Media Format Filter, Comments */}
         <aside className="universal-sidebar" aria-label="Universal Collection Insights">
           {/* 1. Curator Profile Card (Moved to the very top!) */}
           <div className="universal-side-widget curator-widget">
@@ -925,7 +1073,10 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                 </div>
                 <div className="universal-spotlight-copy">
                   <span className="spotlight-badge">Featured Item</span>
-                  <strong className="spotlight-title">{spotlightItem.title}</strong>
+                  <strong className="spotlight-title">
+                    <span>{spotlightItem.title}</span>
+                    {spotlightItem.explicit && <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>}
+                  </strong>
                   <p className="spotlight-artist">{spotlightItem.creator}</p>
                 </div>
               </div>
@@ -941,63 +1092,60 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
             </div>
           )}
 
-          {/* 3. Combined Format Filter & Media Mix Breakdown */}
-          <div className="universal-side-widget">
-            <div className="universal-widget-split">
-              <h4 className="universal-widget-title">Media Filter &amp; Mix</h4>
+          {/* 3. Multi-select Media Format Filters */}
+          <div className="universal-filter-group">
+            <span className="universal-filter-group-title">Media Format</span>
+            <div className="universal-pill-wrap" role="toolbar" aria-label="Filter items by format">
               <button
                 type="button"
-                className={`universal-filter-pill-reset ${selectedTypeFilter === 'all' ? 'active' : ''}`}
-                onClick={() => setSelectedTypeFilter('all')}
+                className={`universal-filter-pill ${selectedTypes.length === 0 ? 'is-active' : ''}`}
+                onClick={() => handleToggleType('all')}
               >
-                All ({items.length})
+                <span>All Formats</span>
+                <span className="pill-count">{items.length}</span>
               </button>
-            </div>
-
-            {/* Distribution Bar */}
-            <div className="universal-distribution-bar" role="progressbar" aria-label="Media distribution">
-              {typeBreakdown.map((seg) => (
-                <div
-                  key={seg.type}
-                  className="universal-bar-seg"
-                  style={{ width: `${seg.pct}%`, background: seg.color }}
-                  title={`${seg.label}: ${seg.count} (${seg.pct}%)`}
-                />
-              ))}
-            </div>
-
-            {/* Interactive Format Filter List */}
-            <div className="universal-breakdown-legend">
-              {typeBreakdown.map((seg) => {
-                const isActive = selectedTypeFilter === seg.type
+              {uniqueTypes.map((type) => {
+                const count = typeCounts[type] || 0
+                const isSelected = selectedTypes.includes(type)
+                const { label } = getTypeMeta(type)
                 return (
                   <button
-                    key={seg.type}
+                    key={type}
                     type="button"
-                    className={`breakdown-legend-btn ${isActive ? 'is-selected' : ''}`}
-                    onClick={() => setSelectedTypeFilter(isActive ? 'all' : seg.type)}
-                    title={`Filter by ${seg.label}`}
+                    className={`universal-filter-pill ${isSelected ? 'is-active' : ''}`}
+                    onClick={() => handleToggleType(type)}
+                    title={isSelected ? `Deselect ${label}` : `Filter by ${label}`}
                   >
-                    <span className="legend-dot" style={{ background: seg.color }} />
-                    <span className="legend-label">{seg.label}</span>
-                    <strong className="legend-count">{seg.count}</strong>
-                    <span className="legend-pct">{seg.pct}%</span>
+                    <span className="universal-pill-label">
+                      {renderTypeIcon(type as EntryType, 12)}
+                      <span>{label}</span>
+                    </span>
+                    <span className="pill-count">{count}</span>
                   </button>
                 )
               })}
             </div>
           </div>
 
-          {/* 4. Comments Section in Right Panel */}
+          {/* 4. Comments Section in Left Panel */}
           <CollectionCommentsSection
             collectionId={collection.id}
             collectionName={collection.name}
             currentUserHandle={currentUserHandle || 'reader'}
             commentsDisabled={commentsDisabled}
             isCollectionOwner={isOwnedByCurrentUser}
+            creatorHandle={creatorHandle || (collection as any).creatorHandle || ''}
           />
         </aside>
       </div>
+
+      {/* Share Dialog */}
+      <ShareMenuDialog
+        isOpen={Boolean(shareTarget)}
+        onClose={() => setShareTarget(null)}
+        target={shareTarget}
+        onToast={(msg) => handleNotify(msg, 'info')}
+      />
     </div>
   )
 }

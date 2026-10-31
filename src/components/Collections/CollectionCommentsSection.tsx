@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   MessageSquare,
   MessageSquareOff,
@@ -6,13 +7,17 @@ import {
   Heart,
   Trash2,
   CornerUpLeft,
+  CornerDownRight,
   Eye,
   EyeOff,
   Flag,
   MoreHorizontal,
-  Share2,
+  Edit3,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { ReportDialog } from '../Reports/ReportDialog'
+import { showToast as showAppToast } from '../../utils/toast'
 
 export interface CollectionReply {
   id: string
@@ -44,6 +49,7 @@ interface CollectionCommentsSectionProps {
   currentUserHandle: string
   commentsDisabled: boolean
   isCollectionOwner?: boolean
+  creatorHandle?: string
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -121,16 +127,44 @@ function saveStoredComments(collectionId: string, comments: CollectionComment[])
 
 export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps> = ({
   collectionId,
+  collectionName: _collectionName,
   currentUserHandle,
   commentsDisabled,
   isCollectionOwner = false,
+  creatorHandle = '',
 }) => {
   const [comments, setComments] = useState<CollectionComment[]>(() => loadStoredComments(collectionId))
   const [inputText, setInputText] = useState('')
   const [replyingToId, setReplyingToId] = useState<string | null>(null)
   const [replyText, setReplyText] = useState('')
-  const [toastMessage, setToastMessage] = useState<string | null>(null)
-  const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
+  const [expandedReplyCommentIds, setExpandedReplyCommentIds] = useState<Set<string>>(new Set())
+  const [activeMenu, setActiveMenu] = useState<{
+    id: string
+    type: 'comment' | 'reply'
+    commentId: string
+    replyId?: string
+    rect: DOMRect
+  } | null>(null)
+
+  // Textarea refs for resetting heights
+  const commentTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const replyTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Section collapse state
+  const [isSectionCollapsed, setIsSectionCollapsed] = useState(false)
+
+  // Show more / less state for long comments
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+
+  // Inline editing state
+  const [editingTarget, setEditingTarget] = useState<{
+    id: string
+    type: 'comment' | 'reply'
+    parentCommentId?: string
+  } | null>(null)
+  const [editingText, setEditingText] = useState('')
+
+  // Report Dialog state
   const [reportTarget, setReportTarget] = useState<{
     targetType: 'comment' | 'reply'
     targetId: string
@@ -152,28 +186,167 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
   }, [collectionId])
 
   useEffect(() => {
-    if (!activeMenuId) return
-    const handleOutsideClick = () => setActiveMenuId(null)
+    if (!activeMenu) return
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target?.closest('.comment-dropdown-menu.is-portaled')) return
+      setActiveMenu(null)
+    }
+    const handleScrollOrResize = () => {
+      setActiveMenu(null)
+    }
     window.addEventListener('click', handleOutsideClick)
-    return () => window.removeEventListener('click', handleOutsideClick)
-  }, [activeMenuId])
+    window.addEventListener('scroll', handleScrollOrResize, true)
+    window.addEventListener('resize', handleScrollOrResize)
+    return () => {
+      window.removeEventListener('click', handleOutsideClick)
+      window.removeEventListener('scroll', handleScrollOrResize, true)
+      window.removeEventListener('resize', handleScrollOrResize)
+    }
+  }, [activeMenu])
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg)
-    setTimeout(() => setToastMessage(null), 3000)
+  // Reset textarea heights when content is cleared
+  useEffect(() => {
+    if (!inputText && commentTextareaRef.current) {
+      commentTextareaRef.current.style.height = 'auto'
+    }
+  }, [inputText])
+
+  useEffect(() => {
+    if (!replyText && replyTextareaRef.current) {
+      replyTextareaRef.current.style.height = 'auto'
+    }
+  }, [replyText])
+
+  // Prompt confirmation on refresh/navigation when user has typed text in comments/replies
+  useEffect(() => {
+    const hasUnsavedContent = Boolean(
+      inputText.trim() ||
+      replyText.trim() ||
+      editingText.trim()
+    )
+    if (!hasUnsavedContent) return
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = 'You have an unsaved comment. If you leave or refresh, your text will disappear.'
+      return e.returnValue
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [inputText, replyText, editingText])
+
+  const showToast = (msg: string, kind?: 'success' | 'error') => {
+    showAppToast(msg, kind)
   }
 
-  const handleShareComment = async (type: 'comment' | 'reply', id: string) => {
-    const shareUrl = `${window.location.origin}${window.location.pathname}#${type}-${id}`
+  const toggleRepliesExpanded = (commentId: string) => {
+    setExpandedReplyCommentIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(commentId)) next.delete(commentId)
+      else next.add(commentId)
+      return next
+    })
+  }
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const target = e.target
+    target.style.height = 'auto'
+    target.style.height = `${Math.min(target.scrollHeight, 180)}px`
+  }
+
+  const toggleMenu = (
+    type: 'comment' | 'reply',
+    commentId: string,
+    replyId: string | undefined,
+    e: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    e.stopPropagation()
+    const key = replyId ? `reply-${replyId}` : `comment-${commentId}`
+    if (activeMenu?.id === key) {
+      setActiveMenu(null)
+      return
+    }
+    const rect = e.currentTarget.getBoundingClientRect()
+    setActiveMenu({
+      id: key,
+      type,
+      commentId,
+      replyId,
+      rect,
+    })
+  }
+
+  const getPortalMenuStyle = (rect: DOMRect): React.CSSProperties => {
+    const menuEstimatedHeight = 160
+    const spaceBelow = window.innerHeight - rect.bottom
+    const openUpward = spaceBelow < menuEstimatedHeight && rect.top > menuEstimatedHeight
+
+    // Align right edge of menu with right edge of the button
+    const right = Math.max(12, window.innerWidth - rect.right)
+
+    return {
+      position: 'fixed',
+      zIndex: 99999,
+      right: `${right}px`,
+      top: openUpward ? 'auto' : `${Math.round(rect.bottom + 4)}px`,
+      bottom: openUpward ? `${Math.round(window.innerHeight - rect.top + 4)}px` : 'auto',
+    }
+  }
+
+  const startEditing = (type: 'comment' | 'reply', id: string, currentText: string, parentCommentId?: string) => {
+    setEditingTarget({ id, type, parentCommentId })
+    setEditingText(currentText)
+    setActiveMenu(null)
+  }
+
+  const cancelEditing = () => {
+    setEditingTarget(null)
+    setEditingText('')
+  }
+
+  const saveEditing = () => {
+    if (!editingTarget) return
+    const trimmed = editingText.trim()
+    if (!trimmed) {
+      showToast('Comment cannot be empty.')
+      return
+    }
+
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl)
-        showToast('Comment link copied to clipboard!')
-      } else {
-        showToast('Comment link ready.')
+      if (editingTarget.type === 'comment') {
+        const updated = comments.map((c) =>
+          c.id === editingTarget.id ? { ...c, text: trimmed } : c
+        )
+        setComments(updated)
+        saveStoredComments(collectionId, updated)
+      } else if (editingTarget.type === 'reply' && editingTarget.parentCommentId) {
+        const updated = comments.map((c) => {
+          if (c.id === editingTarget.parentCommentId) {
+            const updatedReplies = (c.replies || []).map((r) =>
+              r.id === editingTarget.id ? { ...r, text: trimmed } : r
+            )
+            return { ...c, replies: updatedReplies }
+          }
+          return c
+        })
+        setComments(updated)
+        saveStoredComments(collectionId, updated)
       }
+      cancelEditing()
+      showToast('Comment updated.')
     } catch {
-      showToast('Comment link ready.')
+      showToast('An error has occurred.')
     }
   }
 
@@ -182,52 +355,67 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
     const trimmed = inputText.trim()
     if (!trimmed) return
 
-    const newComment: CollectionComment = {
-      id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      collectionId,
-      authorName: currentUserHandle || 'Reader',
-      authorHandle: currentUserHandle || 'reader',
-      text: trimmed,
-      createdAt: Date.now(),
-      likesCount: 0,
-      isLiked: false,
-      replies: [],
-    }
+    try {
+      const newComment: CollectionComment = {
+        id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        collectionId,
+        authorName: currentUserHandle || 'Reader',
+        authorHandle: currentUserHandle || 'reader',
+        text: trimmed,
+        createdAt: Date.now(),
+        likesCount: 0,
+        isLiked: false,
+        replies: [],
+      }
 
-    const updated = [newComment, ...comments]
-    setComments(updated)
-    saveStoredComments(collectionId, updated)
-    setInputText('')
+      const updated = [newComment, ...comments]
+      setComments(updated)
+      saveStoredComments(collectionId, updated)
+      setInputText('')
+      if (commentTextareaRef.current) {
+        commentTextareaRef.current.style.height = 'auto'
+      }
+    } catch {
+      showToast('An error has occurred.')
+    }
   }
 
   const handleAddReply = (commentId: string) => {
     const trimmed = replyText.trim()
     if (!trimmed) return
 
-    const newReply: CollectionReply = {
-      id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      authorName: currentUserHandle || 'Reader',
-      authorHandle: currentUserHandle || 'reader',
-      text: trimmed,
-      createdAt: Date.now(),
-      likesCount: 0,
-      isLiked: false,
-    }
-
-    const updated = comments.map((c) => {
-      if (c.id === commentId) {
-        return {
-          ...c,
-          replies: [...(c.replies || []), newReply],
-        }
+    try {
+      const newReply: CollectionReply = {
+        id: `r-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        authorName: currentUserHandle || 'Reader',
+        authorHandle: currentUserHandle || 'reader',
+        text: trimmed,
+        createdAt: Date.now(),
+        likesCount: 0,
+        isLiked: false,
       }
-      return c
-    })
 
-    setComments(updated)
-    saveStoredComments(collectionId, updated)
-    setReplyText('')
-    setReplyingToId(null)
+      const updated = comments.map((c) => {
+        if (c.id === commentId) {
+          return {
+            ...c,
+            replies: [...(c.replies || []), newReply],
+          }
+        }
+        return c
+      })
+
+      setComments(updated)
+      saveStoredComments(collectionId, updated)
+      setReplyText('')
+      setReplyingToId(null)
+      setExpandedReplyCommentIds((prev) => new Set(prev).add(commentId))
+      if (replyTextareaRef.current) {
+        replyTextareaRef.current.style.height = 'auto'
+      }
+    } catch {
+      showToast('An error has occurred.')
+    }
   }
 
   const handleToggleCommentLike = (commentId: string) => {
@@ -328,7 +516,9 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
       next.add(id)
       try {
         localStorage.setItem(getReportedKey(collectionId), JSON.stringify([...next]))
-      } catch {}
+      } catch {
+        /* Storage can be unavailable */
+      }
       return next
     })
     try {
@@ -343,7 +533,9 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
         reportedBy: currentUserHandle || 'anonymous',
       })
       localStorage.setItem(storageKey, JSON.stringify(existing))
-    } catch {}
+    } catch {
+      /* Storage can be unavailable */
+    }
     setReportTarget(null)
     showToast('Report submitted. Thank you for keeping our community safe.')
   }
@@ -366,38 +558,218 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
     0,
   )
 
+  const renderPortaledMenu = () => {
+    if (!activeMenu || typeof document === 'undefined') return null
+
+    if (activeMenu.type === 'comment') {
+      const comment = comments.find((c) => c.id === activeMenu.commentId)
+      if (!comment) return null
+
+      const isAuthor =
+        comment.authorHandle.replace(/^@/, '').toLowerCase() === normalizedUserHandle
+      const canDelete = isAuthor || isCollectionOwner
+      const canHide = isCollectionOwner
+      const canReport = !isAuthor
+
+      return createPortal(
+        <div
+          className="comment-dropdown-menu is-portaled"
+          style={getPortalMenuStyle(activeMenu.rect)}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {isAuthor && (
+            <button
+              type="button"
+              className="comment-dropdown-item"
+              onClick={() => startEditing('comment', comment.id, comment.text)}
+              role="menuitem"
+            >
+              <Edit3 size={13} aria-hidden="true" />
+              <span>Edit comment</span>
+            </button>
+          )}
+
+          {canHide && (
+            <button
+              type="button"
+              className="comment-dropdown-item"
+              onClick={() => {
+                setActiveMenu(null)
+                handleToggleHideComment(comment.id)
+              }}
+              role="menuitem"
+            >
+              {comment.isHidden ? <Eye size={13} aria-hidden="true" /> : <EyeOff size={13} aria-hidden="true" />}
+              <span>{comment.isHidden ? 'Unhide from visitors' : 'Hide from visitors'}</span>
+            </button>
+          )}
+
+          {canReport && (
+            <button
+              type="button"
+              className="comment-dropdown-item"
+              onClick={() => {
+                setActiveMenu(null)
+                openReportDialog('comment', comment.id, `comment by @${comment.authorHandle.replace(/^@/, '')}`)
+              }}
+              role="menuitem"
+            >
+              <Flag size={13} aria-hidden="true" />
+              <span>Report comment</span>
+            </button>
+          )}
+
+          {canDelete && (
+            <button
+              type="button"
+              className="comment-dropdown-item danger"
+              onClick={() => {
+                setActiveMenu(null)
+                handleDeleteComment(comment.id)
+              }}
+              role="menuitem"
+            >
+              <Trash2 size={13} aria-hidden="true" />
+              <span>Delete comment</span>
+            </button>
+          )}
+        </div>,
+        document.body
+      )
+    }
+
+    if (activeMenu.type === 'reply') {
+      const parentComment = comments.find((c) => c.id === activeMenu.commentId)
+      const reply = parentComment?.replies?.find((r) => r.id === activeMenu.replyId)
+      if (!parentComment || !reply) return null
+
+      const isReplyAuthor =
+        reply.authorHandle.replace(/^@/, '').toLowerCase() === normalizedUserHandle
+      const canDeleteR = isReplyAuthor || isCollectionOwner
+      const canHideR = isCollectionOwner
+      const canReportR = !isReplyAuthor
+
+      return createPortal(
+        <div
+          className="comment-dropdown-menu is-portaled"
+          style={getPortalMenuStyle(activeMenu.rect)}
+          role="menu"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {isReplyAuthor && (
+            <button
+              type="button"
+              className="comment-dropdown-item"
+              onClick={() => startEditing('reply', reply.id, reply.text, parentComment.id)}
+              role="menuitem"
+            >
+              <Edit3 size={12} aria-hidden="true" />
+              <span>Edit reply</span>
+            </button>
+          )}
+
+          {canHideR && (
+            <button
+              type="button"
+              className="comment-dropdown-item"
+              onClick={() => {
+                setActiveMenu(null)
+                handleToggleHideReply(parentComment.id, reply.id)
+              }}
+              role="menuitem"
+            >
+              {reply.isHidden ? <Eye size={12} aria-hidden="true" /> : <EyeOff size={12} aria-hidden="true" />}
+              <span>{reply.isHidden ? 'Unhide from visitors' : 'Hide from visitors'}</span>
+            </button>
+          )}
+
+          {canReportR && (
+            <button
+              type="button"
+              className="comment-dropdown-item"
+              onClick={() => {
+                setActiveMenu(null)
+                openReportDialog('reply', reply.id, `reply by @${reply.authorHandle.replace(/^@/, '')}`)
+              }}
+              role="menuitem"
+            >
+              <Flag size={12} aria-hidden="true" />
+              <span>Report reply</span>
+            </button>
+          )}
+
+          {canDeleteR && (
+            <button
+              type="button"
+              className="comment-dropdown-item danger"
+              onClick={() => {
+                setActiveMenu(null)
+                handleDeleteReply(parentComment.id, reply.id)
+              }}
+              role="menuitem"
+            >
+              <Trash2 size={12} aria-hidden="true" />
+              <span>Delete reply</span>
+            </button>
+          )}
+        </div>,
+        document.body
+      )
+    }
+
+    return null
+  }
+
   return (
     <div className="collection-comments-panel-widget">
-      <div className="comments-widget-header">
+      {/* Header with Collapse toggle */}
+      <div
+        className="comments-widget-header"
+        onClick={() => setIsSectionCollapsed((prev) => !prev)}
+        role="button"
+        tabIndex={0}
+        style={{ cursor: 'pointer' }}
+        title={isSectionCollapsed ? 'Expand comments' : 'Collapse comments'}
+      >
         <div className="comments-header-title">
           <MessageSquare size={14} aria-hidden="true" />
           <span>Comments</span>
         </div>
-        <span className="comments-count-pill">{totalInteractionsCount}</span>
-      </div>
-
-      {toastMessage && (
-        <div className="collection-comments-toast" role="status">
-          <Flag size={12} aria-hidden="true" />
-          <span>{toastMessage}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span className="comments-count-pill">{totalInteractionsCount}</span>
+          <button
+            type="button"
+            className="comments-collapse-toggle-btn"
+            onClick={(e) => {
+              e.stopPropagation()
+              setIsSectionCollapsed((prev) => !prev)
+            }}
+            aria-label={isSectionCollapsed ? 'Expand comments' : 'Collapse comments'}
+          >
+            {isSectionCollapsed ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronUp size={14} aria-hidden="true" />}
+          </button>
         </div>
-      )}
+      </div>
 
       {commentsDisabled ? (
         <div className="comments-disabled-box">
           <MessageSquareOff size={18} aria-hidden="true" />
           <p>Comments are disabled for this collection.</p>
         </div>
-      ) : (
+      ) : !isSectionCollapsed && (
         <>
           <form className="comments-composer-form" onSubmit={handleAddComment}>
             <div className="comments-input-wrap">
               <textarea
+                ref={commentTextareaRef}
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
+                onChange={(e) => {
+                  setInputText(e.target.value)
+                  handleTextareaInput(e)
+                }}
                 placeholder="Add a comment on this collection..."
                 rows={2}
-                maxLength={500}
                 aria-label="Add a comment"
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -422,11 +794,26 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
               <p className="comments-empty-text">No comments yet. Be the first to share your thoughts!</p>
             ) : (
               visibleComments.map((comment) => {
-                const isAuthor =
-                  comment.authorHandle.replace(/^@/, '').toLowerCase() === normalizedUserHandle
-                const canDelete = isAuthor || isCollectionOwner
-                const canHide = isCollectionOwner
-                const canReport = !isAuthor
+                const isExpanded = expandedIds.has(comment.id)
+                const isLongComment = comment.text.length > 240
+                const isEditingThisComment = editingTarget?.type === 'comment' && editingTarget?.id === comment.id
+
+                const replies = comment.replies || []
+                const hasReplies = replies.length > 0
+                const cleanCreator = (creatorHandle || '').replace(/^@/, '').trim().toLowerCase()
+                const isRepliesExpanded = expandedReplyCommentIds.has(comment.id)
+
+                // Find creator's first direct reply
+                const creatorReply = cleanCreator
+                  ? replies.find((r) => r.authorHandle.replace(/^@/, '').trim().toLowerCase() === cleanCreator)
+                  : undefined
+
+                // Visible replies: if expanded, show all; if collapsed, only creator's first reply (if any)
+                const visibleReplies = isRepliesExpanded
+                  ? replies
+                  : creatorReply
+                    ? [creatorReply]
+                    : []
 
                 return (
                   <article
@@ -438,127 +825,116 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
                         {comment.authorName.charAt(0).toUpperCase()}
                       </span>
                       <div className="comment-author-meta">
-                        <strong className="comment-author-name">{comment.authorName}</strong>
+                        <div className="comment-author-title-row">
+                          <strong className="comment-author-name">{comment.authorName}</strong>
+                          {cleanCreator && comment.authorHandle.replace(/^@/, '').trim().toLowerCase() === cleanCreator && (
+                            <span className="comment-creator-badge" title="Collection Curator">Curator</span>
+                          )}
+                          {comment.isHidden && (
+                            <span className="comment-hidden-badge" title="Hidden from public by curator">
+                              Hidden
+                            </span>
+                          )}
+                        </div>
                         <span className="comment-author-handle">@{comment.authorHandle.replace(/^@/, '')}</span>
-                        {comment.isHidden && (
-                          <span className="comment-hidden-badge" title="Hidden from public by curator">
-                            Hidden
-                          </span>
-                        )}
                       </div>
                       <time className="comment-time">{formatRelativeTime(comment.createdAt)}</time>
                     </div>
 
-                    <p className="comment-body-text">{comment.text}</p>
-
-                      <div className="comment-footer-actions">
-                        <button
-                          type="button"
-                          className={`comment-action-pill ${comment.isLiked ? 'liked' : ''}`}
-                          onClick={() => handleToggleCommentLike(comment.id)}
-                          aria-label={comment.isLiked ? 'Unlike comment' : 'Like comment'}
-                          title={comment.isLiked ? 'Unlike' : 'Like'}
-                        >
-                          <Heart size={12} fill={comment.isLiked ? 'currentColor' : 'none'} aria-hidden="true" />
-                          <span>{comment.likesCount || 0}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          className="comment-action-pill"
-                          onClick={() => {
-                            if (replyingToId === comment.id) {
-                              setReplyingToId(null)
-                              setReplyText('')
-                            } else {
-                              setReplyingToId(comment.id)
-                              setReplyText('')
-                            }
+                    {isEditingThisComment ? (
+                      <div className="comment-inline-edit-box">
+                        <textarea
+                          className="comment-inline-edit-textarea"
+                          value={editingText}
+                          onChange={(e) => {
+                            setEditingText(e.target.value)
+                            handleTextareaInput(e)
                           }}
-                          aria-label="Reply to comment"
-                          title="Reply"
-                        >
-                          <CornerUpLeft size={12} aria-hidden="true" />
-                          <span>Reply</span>
-                        </button>
-
-                        <div className="comment-ellipsis-wrap">
+                          autoFocus
+                          aria-label="Edit comment"
+                        />
+                        <div className="comment-inline-edit-actions">
                           <button
                             type="button"
-                            className="comment-action-pill comment-ellipsis-btn"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setActiveMenuId((prev) => (prev === `comment-${comment.id}` ? null : `comment-${comment.id}`))
-                            }}
-                            aria-label="More options"
-                            title="More options"
+                            className="comment-inline-edit-cancel"
+                            onClick={cancelEditing}
                           >
-                            <MoreHorizontal size={13} aria-hidden="true" />
+                            Cancel
                           </button>
-
-                          {activeMenuId === `comment-${comment.id}` && (
-                            <div className="comment-dropdown-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="comment-dropdown-item"
-                                onClick={() => {
-                                  setActiveMenuId(null)
-                                  void handleShareComment('comment', comment.id)
-                                }}
-                                role="menuitem"
-                              >
-                                <Share2 size={13} aria-hidden="true" />
-                                <span>Share comment</span>
-                              </button>
-
-                              {canHide && (
-                                <button
-                                  type="button"
-                                  className="comment-dropdown-item"
-                                  onClick={() => {
-                                    setActiveMenuId(null)
-                                    handleToggleHideComment(comment.id)
-                                  }}
-                                  role="menuitem"
-                                >
-                                  {comment.isHidden ? <Eye size={13} aria-hidden="true" /> : <EyeOff size={13} aria-hidden="true" />}
-                                  <span>{comment.isHidden ? 'Unhide from visitors' : 'Hide from visitors'}</span>
-                                </button>
-                              )}
-
-                              {canReport && (
-                                <button
-                                  type="button"
-                                  className="comment-dropdown-item"
-                                  onClick={() => {
-                                    setActiveMenuId(null)
-                                    openReportDialog('comment', comment.id, `comment by @${comment.authorHandle.replace(/^@/, '')}`)
-                                  }}
-                                  role="menuitem"
-                                >
-                                  <Flag size={13} aria-hidden="true" />
-                                  <span>Report comment</span>
-                                </button>
-                              )}
-
-                              {canDelete && (
-                                <button
-                                  type="button"
-                                  className="comment-dropdown-item danger"
-                                  onClick={() => {
-                                    setActiveMenuId(null)
-                                    handleDeleteComment(comment.id)
-                                  }}
-                                  role="menuitem"
-                                >
-                                  <Trash2 size={13} aria-hidden="true" />
-                                  <span>Delete comment</span>
-                                </button>
-                              )}
-                            </div>
-                          )}
+                          <button
+                            type="button"
+                            className="comment-inline-edit-save"
+                            disabled={!editingText.trim()}
+                            onClick={saveEditing}
+                          >
+                            Save
+                          </button>
                         </div>
                       </div>
+                    ) : (
+                      <>
+                        <p className="comment-body-text">
+                          {isLongComment && !isExpanded
+                            ? `${comment.text.slice(0, 240)}...`
+                            : comment.text}
+                        </p>
+
+                        {isLongComment && (
+                          <button
+                            type="button"
+                            className="comment-toggle-expand-btn"
+                            onClick={() => toggleExpand(comment.id)}
+                          >
+                            {isExpanded ? 'Show less' : 'Show more'}
+                          </button>
+                        )}
+                      </>
+                    )}
+
+                    <div className="comment-footer-actions">
+                      <button
+                        type="button"
+                        className={`comment-action-pill ${comment.isLiked ? 'liked' : ''}`}
+                        onClick={() => handleToggleCommentLike(comment.id)}
+                        aria-label={comment.isLiked ? 'Unlike comment' : 'Like comment'}
+                        title={comment.isLiked ? 'Unlike' : 'Like'}
+                      >
+                        <Heart size={12} fill={comment.isLiked ? 'currentColor' : 'none'} aria-hidden="true" />
+                        <span>{comment.likesCount || 0}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="comment-action-pill"
+                        onClick={() => {
+                          if (replyingToId === comment.id) {
+                            setReplyingToId(null)
+                            setReplyText('')
+                          } else {
+                            setReplyingToId(comment.id)
+                            setReplyText('')
+                            setExpandedReplyCommentIds((prev) => new Set(prev).add(comment.id))
+                          }
+                        }}
+                        aria-label="Reply to comment"
+                        title="Reply"
+                      >
+                        <CornerUpLeft size={12} aria-hidden="true" />
+                        <span>Reply</span>
+                      </button>
+
+                      <div className="comment-ellipsis-wrap">
+                        <button
+                          type="button"
+                          className="comment-action-pill comment-ellipsis-btn"
+                          onClick={(e) => toggleMenu('comment', comment.id, undefined, e)}
+                          aria-label="More options"
+                          title="More options"
+                        >
+                          <MoreHorizontal size={13} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
 
                     {/* Inline Reply Composer */}
                     {replyingToId === comment.id && (
@@ -570,11 +946,14 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
                         }}
                       >
                         <textarea
+                          ref={replyTextareaRef}
                           value={replyText}
-                          onChange={(e) => setReplyText(e.target.value)}
+                          onChange={(e) => {
+                            setReplyText(e.target.value)
+                            handleTextareaInput(e)
+                          }}
                           placeholder={`Reply to @${comment.authorHandle.replace(/^@/, '')}...`}
                           rows={2}
-                          maxLength={300}
                           autoFocus
                           aria-label="Reply text"
                           onKeyDown={(e) => {
@@ -606,15 +985,54 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
                       </form>
                     )}
 
+                    {/* Replies Toggle Controls */}
+                    {!isRepliesExpanded && creatorReply && replies.length > 1 && (
+                      <button
+                        type="button"
+                        className="comment-replies-toggle-btn"
+                        onClick={() => toggleRepliesExpanded(comment.id)}
+                        aria-expanded={false}
+                      >
+                        <CornerDownRight size={11} aria-hidden="true" />
+                        <span>
+                          View {replies.length - 1} other {replies.length - 1 === 1 ? 'reply' : 'replies'}
+                        </span>
+                      </button>
+                    )}
+
+                    {!isRepliesExpanded && !creatorReply && hasReplies && (
+                      <button
+                        type="button"
+                        className="comment-replies-toggle-btn"
+                        onClick={() => toggleRepliesExpanded(comment.id)}
+                        aria-expanded={false}
+                      >
+                        <CornerDownRight size={11} aria-hidden="true" />
+                        <span>
+                          View {replies.length} {replies.length === 1 ? 'reply' : 'replies'}
+                        </span>
+                      </button>
+                    )}
+
+                    {isRepliesExpanded && hasReplies && (
+                      <button
+                        type="button"
+                        className="comment-replies-toggle-btn"
+                        onClick={() => toggleRepliesExpanded(comment.id)}
+                        aria-expanded={true}
+                      >
+                        <ChevronUp size={11} aria-hidden="true" />
+                        <span>Hide replies</span>
+                      </button>
+                    )}
+
                     {/* Replies Thread */}
-                    {comment.replies && comment.replies.length > 0 && (
+                    {visibleReplies.length > 0 && (
                       <div className="comment-replies-list">
-                        {comment.replies.map((reply) => {
-                          const isReplyAuthor =
-                            reply.authorHandle.replace(/^@/, '').toLowerCase() === normalizedUserHandle
-                          const canDeleteR = isReplyAuthor || isCollectionOwner
-                          const canHideR = isCollectionOwner
-                          const canReportR = !isReplyAuthor
+                        {visibleReplies.map((reply) => {
+                          const isReplyExpanded = expandedIds.has(reply.id)
+                          const isLongReply = reply.text.length > 240
+                          const isEditingThisReply = editingTarget?.type === 'reply' && editingTarget?.id === reply.id
 
                           return (
                             <div
@@ -626,108 +1044,96 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
                                   {reply.authorName.charAt(0).toUpperCase()}
                                 </span>
                                 <div className="comment-author-meta">
-                                  <strong className="comment-author-name">{reply.authorName}</strong>
+                                  <div className="comment-author-title-row">
+                                    <strong className="comment-author-name">{reply.authorName}</strong>
+                                    {cleanCreator && reply.authorHandle.replace(/^@/, '').trim().toLowerCase() === cleanCreator && (
+                                      <span className="comment-creator-badge" title="Collection Curator">Curator</span>
+                                    )}
+                                    {reply.isHidden && (
+                                      <span className="comment-hidden-badge" title="Hidden from public by curator">
+                                        Hidden
+                                      </span>
+                                    )}
+                                  </div>
                                   <span className="comment-author-handle">@{reply.authorHandle.replace(/^@/, '')}</span>
-                                  {reply.isHidden && (
-                                    <span className="comment-hidden-badge" title="Hidden from public by curator">
-                                      Hidden
-                                    </span>
-                                  )}
                                 </div>
                                 <time className="comment-time">{formatRelativeTime(reply.createdAt)}</time>
                               </div>
 
-                              <p className="comment-body-text">{reply.text}</p>
-
-                                <div className="comment-footer-actions">
-                                  <button
-                                    type="button"
-                                    className={`comment-action-pill ${reply.isLiked ? 'liked' : ''}`}
-                                    onClick={() => handleToggleReplyLike(comment.id, reply.id)}
-                                    aria-label={reply.isLiked ? 'Unlike reply' : 'Like reply'}
-                                    title={reply.isLiked ? 'Unlike' : 'Like'}
-                                  >
-                                    <Heart size={11} fill={reply.isLiked ? 'currentColor' : 'none'} aria-hidden="true" />
-                                    <span>{reply.likesCount || 0}</span>
-                                  </button>
-
-                                  <div className="comment-ellipsis-wrap">
+                              {isEditingThisReply ? (
+                                <div className="comment-inline-edit-box">
+                                  <textarea
+                                    className="comment-inline-edit-textarea"
+                                    value={editingText}
+                                    onChange={(e) => {
+                                      setEditingText(e.target.value)
+                                      handleTextareaInput(e)
+                                    }}
+                                    autoFocus
+                                    aria-label="Edit reply"
+                                  />
+                                  <div className="comment-inline-edit-actions">
                                     <button
                                       type="button"
-                                      className="comment-action-pill comment-ellipsis-btn"
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        setActiveMenuId((prev) => (prev === `reply-${reply.id}` ? null : `reply-${reply.id}`))
-                                      }}
-                                      aria-label="More options"
-                                      title="More options"
+                                      className="comment-inline-edit-cancel"
+                                      onClick={cancelEditing}
                                     >
-                                      <MoreHorizontal size={12} aria-hidden="true" />
+                                      Cancel
                                     </button>
-
-                                    {activeMenuId === `reply-${reply.id}` && (
-                                      <div className="comment-dropdown-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                                        <button
-                                          type="button"
-                                          className="comment-dropdown-item"
-                                          onClick={() => {
-                                            setActiveMenuId(null)
-                                            void handleShareComment('reply', reply.id)
-                                          }}
-                                          role="menuitem"
-                                        >
-                                          <Share2 size={12} aria-hidden="true" />
-                                          <span>Share reply</span>
-                                        </button>
-
-                                        {canHideR && (
-                                          <button
-                                            type="button"
-                                            className="comment-dropdown-item"
-                                            onClick={() => {
-                                              setActiveMenuId(null)
-                                              handleToggleHideReply(comment.id, reply.id)
-                                            }}
-                                            role="menuitem"
-                                          >
-                                            {reply.isHidden ? <Eye size={12} aria-hidden="true" /> : <EyeOff size={12} aria-hidden="true" />}
-                                            <span>{reply.isHidden ? 'Unhide from visitors' : 'Hide from visitors'}</span>
-                                          </button>
-                                        )}
-
-                                        {canReportR && (
-                                          <button
-                                            type="button"
-                                            className="comment-dropdown-item"
-                                            onClick={() => {
-                                              setActiveMenuId(null)
-                                              openReportDialog('reply', reply.id, `reply by @${reply.authorHandle.replace(/^@/, '')}`)
-                                            }}
-                                            role="menuitem"
-                                          >
-                                            <Flag size={12} aria-hidden="true" />
-                                            <span>Report reply</span>
-                                          </button>
-                                        )}
-
-                                        {canDeleteR && (
-                                          <button
-                                            type="button"
-                                            className="comment-dropdown-item danger"
-                                            onClick={() => {
-                                              setActiveMenuId(null)
-                                              handleDeleteReply(comment.id, reply.id)
-                                            }}
-                                            role="menuitem"
-                                          >
-                                            <Trash2 size={12} aria-hidden="true" />
-                                            <span>Delete reply</span>
-                                          </button>
-                                        )}
-                                      </div>
-                                    )}
+                                    <button
+                                      type="button"
+                                      className="comment-inline-edit-save"
+                                      disabled={!editingText.trim()}
+                                      onClick={saveEditing}
+                                    >
+                                      Save
+                                    </button>
                                   </div>
                                 </div>
+                              ) : (
+                                <>
+                                  <p className="comment-body-text">
+                                    {isLongReply && !isReplyExpanded
+                                      ? `${reply.text.slice(0, 240)}...`
+                                      : reply.text}
+                                  </p>
+
+                                  {isLongReply && (
+                                    <button
+                                      type="button"
+                                      className="comment-toggle-expand-btn"
+                                      onClick={() => toggleExpand(reply.id)}
+                                    >
+                                      {isReplyExpanded ? 'Show less' : 'Show more'}
+                                    </button>
+                                  )}
+                                </>
+                              )}
+
+                              <div className="comment-footer-actions">
+                                <button
+                                  type="button"
+                                  className={`comment-action-pill ${reply.isLiked ? 'liked' : ''}`}
+                                  onClick={() => handleToggleReplyLike(comment.id, reply.id)}
+                                  aria-label={reply.isLiked ? 'Unlike reply' : 'Like reply'}
+                                  title={reply.isLiked ? 'Unlike' : 'Like'}
+                                >
+                                  <Heart size={11} fill={reply.isLiked ? 'currentColor' : 'none'} aria-hidden="true" />
+                                  <span>{reply.likesCount || 0}</span>
+                                </button>
+
+                                <div className="comment-ellipsis-wrap">
+                                  <button
+                                    type="button"
+                                    className="comment-action-pill comment-ellipsis-btn"
+                                    onClick={(e) => toggleMenu('reply', comment.id, reply.id, e)}
+                                    aria-label="More options"
+                                    title="More options"
+                                  >
+                                    <MoreHorizontal size={12} aria-hidden="true" />
+                                  </button>
+                                </div>
+                              </div>
                             </div>
                           )
                         })}
@@ -741,15 +1147,17 @@ export const CollectionCommentsSection: React.FC<CollectionCommentsSectionProps>
         </>
       )}
 
-      {reportTarget && (
-        <ReportDialog
-          open={Boolean(reportTarget)}
-          targetType={reportTarget.targetType}
-          targetLabel={reportTarget.targetLabel}
-          onClose={() => setReportTarget(null)}
-          onSubmit={handleReportSubmit}
-        />
-      )}
+      {/* Report dialog modal: asks why the comment is being reported */}
+      <ReportDialog
+        open={Boolean(reportTarget)}
+        targetType={reportTarget?.targetType === 'reply' ? 'comment' : 'comment'}
+        targetLabel={reportTarget?.targetLabel || 'comment'}
+        onClose={() => setReportTarget(null)}
+        onSubmit={handleReportSubmit}
+      />
+
+      {/* Portaled Ellipsis Menu: renders directly into document.body outside any container */}
+      {renderPortaledMenu()}
     </div>
   )
 }

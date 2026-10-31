@@ -1,8 +1,6 @@
 import React from 'react'
 import type { ProfileCollection as Collection } from '../../features/collections/profileCollections'
 import type { Entry } from '../../features/entries/model'
-import { useDevSettings } from '../DeveloperTools/devSettings'
-import { HollisCollectionLayout } from './HollisCollectionLayout'
 import { UniversalCollectionLayout } from './UniversalCollectionLayout'
 
 export interface AlternativeCollectionDetailProps {
@@ -13,19 +11,17 @@ export interface AlternativeCollectionDetailProps {
   currentUserHandle: string
   isOwnedByCurrentUser: boolean
   isSaved: boolean
-  isTcpAdminUser: boolean
   isEditingInline: boolean
   collectionName: string
   setCollectionName: (name: string) => void
   collectionDescription: string
   setCollectionDescription: (desc: string) => void
-  onSaveInlineEdit: () => void
+  onSaveInlineEdit: (reorderedItemIds?: string[]) => void
   onCancelInlineEdit: () => void
   onBack: () => void
   onOpenMedia?: (entry: Entry) => void
   onSelectEntry?: (entry: Entry) => void
   onOpenCreator?: (entry: Entry, creator: string) => void
-  onOpenAlbum?: (entry: Entry) => void
   onOpenUserProfile?: (handle: string) => void
   onAddMedia?: () => void
   onStartInlineEdit?: () => void
@@ -45,16 +41,11 @@ export interface AlternativeCollectionDetailProps {
   setCollectionGradientVariant?: (variant: 1 | 2 | 3 | 4) => void
   onCoverUpload?: (file?: File) => void
   onToggleHideFromProfile?: () => void
+  onToast?: (message: string, type?: 'success' | 'error' | 'info') => void
 }
 
 export const AlternativeCollectionDetail: React.FC<AlternativeCollectionDetailProps> = (props) => {
-  const { settings } = useDevSettings()
-
-  if (settings.collectionLayout === 'universal') {
-    return <UniversalCollectionLayout {...props} />
-  }
-
-  return <HollisCollectionLayout {...props} />
+  return <UniversalCollectionLayout {...props} />
 }
 
 export default AlternativeCollectionDetail
