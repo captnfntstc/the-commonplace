@@ -15,11 +15,13 @@ service cloud.firestore {
     }
 
     function isAccountDeactivated(userId) {
-      let profile = get(/databases/$(database)/documents/users/$(userId)).data;
-      return profile.accountStatus == 'deactivated'
-        && (!('reactivatesAt' in profile)
-          || profile.reactivatesAt == null
-          || request.time < profile.reactivatesAt);
+      let userDoc = /databases/$(database)/documents/users/$(userId);
+      return exists(userDoc)
+        && ('accountStatus' in get(userDoc).data)
+        && get(userDoc).data.accountStatus == 'deactivated'
+        && (!('reactivatesAt' in get(userDoc).data)
+          || get(userDoc).data.reactivatesAt == null
+          || request.time < get(userDoc).data.reactivatesAt);
     }
 
     function isMutualFollow(userId) {
@@ -29,9 +31,12 @@ service cloud.firestore {
     }
 
     function canReadProfileContent(userId) {
+      let userDoc = /databases/$(database)/documents/users/$(userId);
       return isOwner(userId)
+        || (!exists(userDoc))
         || (!isAccountDeactivated(userId)
-          && (get(/databases/$(database)/documents/users/$(userId)).data.isPrivate != true
+          && (!('isPrivate' in get(userDoc).data)
+            || get(userDoc).data.isPrivate != true
             || isMutualFollow(userId)));
     }
 
@@ -161,14 +166,19 @@ service cloud.firestore {
 
     match /follows/{followId} {
       allow read: if signedIn();
-      allow create: if signedIn()
+      allow create, update: if signedIn()
         && request.resource.data.followerId == request.auth.uid
         && followId == request.auth.uid + '_' + request.resource.data.followingId
-        && !isAccountDeactivated(request.resource.data.followingId)
-        && (get(/databases/$(database)/documents/users/$(request.resource.data.followingId)).data.isPrivate != true
-          || get(/databases/$(database)/documents/follow-requests/$(followId)).data.status == 'accepted');
-      allow delete: if signedIn() && resource.data.followerId == request.auth.uid;
-      allow update: if false;
+        && (!isAccountDeactivated(request.resource.data.followingId))
+        && (!exists(/databases/$(database)/documents/users/$(request.resource.data.followingId))
+          || !('isPrivate' in get(/databases/$(database)/documents/users/$(request.resource.data.followingId)).data)
+          || get(/databases/$(database)/documents/users/$(request.resource.data.followingId)).data.isPrivate != true
+          || (exists(/databases/$(database)/documents/follow-requests/$(followId))
+            && get(/databases/$(database)/documents/follow-requests/$(followId)).data.status == 'accepted'));
+      allow delete: if signedIn()
+        && (resource == null
+          || resource.data.followerId == request.auth.uid
+          || followId.matches('^' + request.auth.uid + '_.*'));
     }
 
     match /follow-requests/{requestId} {

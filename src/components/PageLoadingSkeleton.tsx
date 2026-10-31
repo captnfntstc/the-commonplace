@@ -67,30 +67,81 @@ function ProfileLoadingSkeleton() {
   )
 }
 
-export function EntityLoadingSkeleton({ showHeader = true }: { showHeader?: boolean }) {
+export function EntityLoadingSkeleton({
+  showHeader = true,
+  showLocalNavigation = false,
+}: {
+  showHeader?: boolean
+  showLocalNavigation?: boolean
+}) {
   return (
     <>
       {showHeader && <GlobalHeaderSkeleton />}
-      <main className="universal-media-profile-page route-entity-skeleton" aria-hidden="true">
-        <section className="media-hero-section">
-          <div className="skeleton-box route-entity-artwork" />
-          <div className="route-entity-copy">
-            <span className="skeleton-box is-category" />
-            <span className="skeleton-box is-title" />
-            <span className="skeleton-box is-description" />
-            <span className="skeleton-box is-description is-short" />
-            <div className="route-entity-chips">
-              {Array.from({ length: 4 }, (_, index) => <span className="skeleton-box" key={index} />)}
+      <main className="universal-media-profile-page is-spotlight-profile route-entity-skeleton" aria-hidden="true">
+        {showLocalNavigation && (
+          <>
+            <div className="media-profile-topbar">
+              <span className="skeleton-box route-entity-back-btn" />
+              <div className="media-profile-topbar-actions">
+                <span className="skeleton-box route-entity-topbar-badge" />
+              </div>
             </div>
-            <span className="skeleton-box is-rating" />
+            <div className="editorial-divider" />
+          </>
+        )}
+        <section className="media-hero-section">
+          <div className="media-container-category-badge skeleton-box" />
+
+          {/* Left Column in DOM (art grid-area, appears on the right in Spotlight desktop layout) */}
+          <div className="media-hero-left">
+            <div className="media-artwork-container is-square-artwork skeleton-box route-entity-artwork" />
+          </div>
+
+          {/* Right Column in DOM (copy grid-area, appears on the left in Spotlight desktop layout) */}
+          <div className="media-hero-right">
+            <div className="media-hero-text-block">
+              <div className="media-hero-meta-header">
+                <span className="skeleton-box route-entity-eyebrow" />
+                <div className="media-title-row">
+                  <span className="skeleton-box route-entity-title" />
+                </div>
+              </div>
+
+              <div className="media-chips-row">
+                <span className="skeleton-box route-entity-chip" />
+                <span className="skeleton-box route-entity-chip" />
+                <span className="skeleton-box route-entity-chip" />
+                <span className="skeleton-box route-entity-chip" />
+              </div>
+
+              <div className="media-hero-body-block">
+                <span className="skeleton-box route-entity-desc-line" />
+                <span className="skeleton-box route-entity-desc-line route-entity-desc-line--short" />
+                <div className="media-hero-actions">
+                  <span className="skeleton-box route-entity-action-btn" />
+                  <span className="skeleton-box route-entity-action-btn" />
+                  <span className="skeleton-box route-entity-action-icon" />
+                </div>
+              </div>
+            </div>
           </div>
         </section>
-        <div className="route-entity-tabs">
-          {Array.from({ length: 4 }, (_, index) => <span className="skeleton-box" key={index} />)}
-        </div>
-        <section className="route-entity-content">
-          <span className="skeleton-box is-heading" />
-          <span className="skeleton-box is-panel" />
+
+        <section className="media-tabs-container">
+          <div className="media-tabs-wrapper">
+            <div className="media-tabs-row route-entity-tabs">
+              <span className="skeleton-box route-entity-tab is-active" />
+              <span className="skeleton-box route-entity-tab" />
+              <span className="skeleton-box route-entity-tab" />
+              <span className="skeleton-box route-entity-tab" />
+            </div>
+            <div className="media-tab-content-area">
+              <div className="route-entity-content">
+                <span className="skeleton-box is-heading" />
+                <span className="skeleton-box is-panel" />
+              </div>
+            </div>
+          </div>
         </section>
       </main>
     </>

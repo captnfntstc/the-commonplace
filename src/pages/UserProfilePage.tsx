@@ -7,24 +7,27 @@ import {
   Search,
   X,
   BookOpen,
-  Calendar,
   Star,
   Edit3,
   Layers,
   Bookmark,
-  Users,
+  FolderPlus,
   Lock,
   UserCheck,
   UserPlus,
+  Users,
+  Calendar,
   FolderHeart,
   Plus,
   Trash2,
   Check,
+  MoreHorizontal,
+  Share2,
+  Eye,
+  EyeOff,
   Sparkles,
   ImagePlus,
-  Minus,
   Flag,
-  ImageIcon,
   LayoutGrid,
   ChevronLeft,
   ChevronRight,
@@ -38,14 +41,13 @@ import { searchMetadata, type MetadataResult } from '../metadata'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 import { handleTabListKeyDown } from '../utils/keyboard'
+import { routeSegment } from '../features/entities/routing'
 import {
   CollectionDetailHeroSkeleton,
-  CollectionMediaSkeleton,
   CollectionShelfSkeleton,
 } from '../components/Collections/ProfileCollectionSkeletons'
 import { CardSkeletonGrid } from '../components/CommonplaceCard/CardSkeleton'
 import { AlternativeCollectionDetail } from '../components/Collections/AlternativeCollectionDetail'
-import { useDevSettings, isTcpAdmin } from '../components/DeveloperTools/devSettings'
 import type { UserProfileState } from '../types/userProfile'
 import { getEntryTypeIcon } from '../utils/mediaIcons'
 import {
@@ -55,7 +57,6 @@ import {
   entriesForProfileCollection,
   loadProfileCollections,
   loadSavedProfileCollections,
-  profileCollectionItemFromEntry,
   profileCollectionItemIdentity,
   profileCollectionItemFromMetadata,
   saveProfileCollections,
@@ -64,8 +65,9 @@ import {
   type ProfileCollection,
   type ProfileCollectionItem,
 } from '../features/collections/profileCollections'
+import { getCollectionSuggestions } from '../features/collections/collectionSuggestions'
 import { AvatarCropperDialog, CoverCropperDialog } from '../components/Settings/AvatarUploader'
-import { AuthToast } from '../components/auth/AuthToast'
+import { showToast } from '../utils/toast'
 import { ReportDialog } from '../components/Reports/ReportDialog'
 import {
   loadOrMigrateUserCollections,
@@ -76,24 +78,24 @@ import {
   type PostEngagement,
 } from '../services/cloudData'
 import { hasDistinctProfileDisplayName } from '../features/profiles/accountProfile'
-
 // ─── Catalog mode ────────────────────────────────────────────────────────────
 type CatalogMode = 'reviewed' | 'shelf' | 'collections' | 'saved-collections'
 type CollectionCatalogMode = Extract<CatalogMode, 'collections' | 'saved-collections'>
 type CollectionComposerMode = 'create' | 'edit' | 'add'
 
-function memberSinceLabel(createdAt?: string) {
-  if (!createdAt) return 'Member'
+function memberSinceShortLabel(createdAt?: string) {
+  if (!createdAt) return ''
   const date = new Date(createdAt)
-  if (Number.isNaN(date.getTime())) return 'Member'
-  return `Member since ${new Intl.DateTimeFormat('en', {
-    month: 'long',
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('en', {
+    month: 'short',
     year: 'numeric',
-  }).format(date)}`
+  }).format(date)
 }
 
 interface UserProfilePageProps {
   onBack: () => void
+  onHome?: () => void
   showLocalNavigation?: boolean
   entries: CardEntry[]
   popularDemandEntries?: CardEntry[]
@@ -136,6 +138,7 @@ interface UserProfilePageProps {
 
 export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onBack,
+  onHome,
   showLocalNavigation = true,
   entries,
   savedCatalogEntries = entries,
@@ -186,7 +189,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [inlineAvatarCropImage, setInlineAvatarCropImage] = useState('')
   const [inlineCoverCropImage, setInlineCoverCropImage] = useState('')
   const [inlineMediaError, setInlineMediaError] = useState('')
-  const [profileMediaToast, setProfileMediaToast] = useState<string | null>(null)
+  const setProfileMediaToast = (msg: string | null) => {
+    if (msg) showToast(msg)
+  }
   const [profileReportOpen, setProfileReportOpen] = useState(false)
 
   const handleInlineAvatarFile = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -253,9 +258,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     ? `${userProfile.firstName} ${userProfile.lastName}`.trim()
     : userProfile.firstName
   const currentUserHandle = (currentUserProfile?.handle || userProfile.handle).replace(/^@/, '')
-  const { settings: devSettings, updateSetting: updateDevSetting } = useDevSettings()
-  const isTcpAdminUser = isTcpAdmin(currentUserHandle)
-  const isAlternativeCollectionActive = isTcpAdminUser && (devSettings.collectionLayout === 'hollis' || devSettings.collectionLayout === 'universal')
   const [profileCollections, setProfileCollections] = useState<ProfileCollection[]>(() =>
     collectionsCreatedByProfile(loadProfileCollections(userProfile.handle), userProfile.handle),
   )
@@ -263,9 +265,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     loadSavedProfileCollections(currentUserHandle),
   )
   const [localSelectedCollectionId, setSelectedCollectionId] = useState<string | null>(initialCollectionId)
-  const [collectionCategoryFilter, setCollectionCategoryFilter] = useState('all')
-  const [collectionExpandedCardId, setCollectionExpandedCardId] = useState('')
-  const [isCollectionSwitching, setIsCollectionSwitching] = useState(false)
   const [collectionComposerOpen, setCollectionComposerOpen] = useState(false)
   const [collectionComposerMode, setCollectionComposerMode] = useState<CollectionComposerMode>('create')
   const [collectionEditingId, setCollectionEditingId] = useState<string | null>(null)
@@ -302,6 +301,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [collectionInlineEditing, setCollectionInlineEditing] = useState(false)
   const [collectionInlineRemovalTarget, setCollectionInlineRemovalTarget] = useState<CardEntry | null>(null)
   const [collectionDeleteTarget, setCollectionDeleteTarget] = useState<ProfileCollection | null>(null)
+  const [collectionCardMenuId, setCollectionCardMenuId] = useState<string | null>(null)
+  const [collectionCardMenuCopiedId, setCollectionCardMenuCopiedId] = useState<string | null>(null)
+  const collectionCardMenuRef = useRef<HTMLDivElement>(null)
   const [profileContentLoading, setProfileContentLoading] = useState(true)
   const profileLoadingTimerRef = useRef<number | null>(null)
   const visitedTabsRef = useRef<Set<CatalogMode>>(new Set(['reviewed']))
@@ -446,6 +448,61 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     open: Boolean(activeFollowModal),
     onClose: () => setActiveFollowModal(null),
   })
+
+  // ── Inline Profile Editing State ───────────────────────────────────────────
+  const [isInlineProfileEditing, setIsInlineProfileEditing] = useState(false)
+  const [editFirstName, setEditFirstName] = useState(userProfile.firstName || '')
+  const [editLastName, setEditLastName] = useState(userProfile.lastName || '')
+  const [editBio, setEditBio] = useState(userProfile.bio || '')
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [editProfileError, setEditProfileError] = useState<string | null>(null)
+  const isInlineProfileEditActive = isInlineProfileEditing
+
+  const persistProfileChanges = async () => {
+    if (!onUpdateProfile) return false
+    setIsSavingProfile(true)
+    setEditProfileError(null)
+    try {
+      const trimmedFirst = editFirstName.trim() || userProfile.firstName || 'Reader'
+      const trimmedLast = editLastName.trim()
+      await onUpdateProfile({
+        ...userProfile,
+        firstName: trimmedFirst,
+        lastName: trimmedLast,
+        showFullName: Boolean(trimmedLast) || userProfile.showFullName,
+        bio: editBio.trim(),
+      })
+      setProfileMediaToast('Profile updated successfully.')
+      return true
+    } catch (err) {
+      console.error('Unable to update profile info', err)
+      setEditProfileError('Could not save profile changes. Please try again.')
+      return false
+    } finally {
+      setIsSavingProfile(false)
+    }
+  }
+
+  const handleStartInlineProfileEdit = () => {
+    setEditFirstName(userProfile.firstName || '')
+    setEditLastName(userProfile.lastName || '')
+    setEditBio(userProfile.bio || '')
+    setEditProfileError(null)
+    setIsInlineProfileEditing(true)
+  }
+
+  const handleCancelInlineProfileEdit = () => {
+    setIsInlineProfileEditing(false)
+    setEditProfileError(null)
+    setEditFirstName(userProfile.firstName || '')
+    setEditLastName(userProfile.lastName || '')
+    setEditBio(userProfile.bio || '')
+  }
+
+  const handleSaveInlineProfile = async () => {
+    const saved = await persistProfileChanges()
+    if (saved) setIsInlineProfileEditing(false)
+  }
   const [followSearch, setFollowSearch] = useState('')
   const [profileFollowLists, setProfileFollowLists] = useState<{
     followers: PublicAccountIdentity[]
@@ -458,7 +515,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   }, [cloudUserId, userProfile.handle])
 
   const profileGridRef = useRef<HTMLElement>(null)
-  const collectionGridRef = useRef<HTMLElement>(null)
   const selectedCollectionId = onOpenCollectionPage ? initialCollectionId : localSelectedCollectionId
   const catalogMode: CatalogMode = selectedCollectionId
     ? collectionReturnMode
@@ -552,6 +608,17 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     }
   }, [])
 
+  useEffect(() => {
+    if (!collectionCardMenuId) return
+    const handleClickOutside = (event: MouseEvent) => {
+      if (collectionCardMenuRef.current && !collectionCardMenuRef.current.contains(event.target as Node)) {
+        setCollectionCardMenuId(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [collectionCardMenuId])
+
   const startProfileContentLoading = (duration = 280) => {
     if (profileLoadingTimerRef.current !== null) window.clearTimeout(profileLoadingTimerRef.current)
     setSuppressCatalogMotion(true)
@@ -564,6 +631,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       ? (entries.reduce((acc, curr) => acc + curr.rating, 0) / entries.length).toFixed(1)
       : '0.0'
 
+  const catalogsCount = entries.length
+  const collectionsCount = profileCollections.length
+  const savedCatalogCount = useMemo(
+    () => savedCatalogEntries.filter((e) => catalogSavedEntryIds.includes(e.id)).length,
+    [savedCatalogEntries, catalogSavedEntryIds],
+  )
+  const savedCollectionsCount = viewerSavedProfileCollections.length
+
   // ── Category change handlers ────────────────────────────────────────────────
   const handleCategoryChange = (id: string) => {
     if (id === activeFilter) return
@@ -574,9 +649,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     } else if (catalogMode === 'shelf') {
       setIsShelfSwitching(true)
       setShelfCategoryFilter(id)
-    } else if (selectedCollection) {
-      setIsCollectionSwitching(true)
-      setCollectionCategoryFilter(id)
     } else {
       setCatalogMode('reviewed')
       setIsFilterSwitching(true)
@@ -632,78 +704,23 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     return [...result].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
   }, [savedCatalogEntries, catalogSavedEntryIds, shelfSearchQuery, shelfCategoryFilter])
 
-  const filteredCollectionEntries = useMemo(() => {
-    let result = selectedCollectionEntries
-    if (collectionCategoryFilter !== 'all') {
-      result = result.filter((entry) => entry.type === collectionCategoryFilter)
-    }
-    return result
-  }, [selectedCollectionEntries, collectionCategoryFilter])
-
   const collectionComposerItems = useMemo(() => {
     const query = collectionItemSearch.trim().toLowerCase()
     if (!query) {
-      if (collectionItemTypeFilter === 'all') {
-        return collectionSelectedItems
-      }
-      return collectionSelectedItems.filter((item) => item.type === collectionItemTypeFilter)
+      return getCollectionSuggestions(collectionSelectedItems, collectionItemTypeFilter)
     }
 
-    const localItems = [...entries].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    ).map(profileCollectionItemFromEntry).filter(
-      (item) => collectionItemTypeFilter === 'all' || item.type === collectionItemTypeFilter,
-    )
-    const matchingLocalItems = localItems.filter((item) => {
-      return (
-        item.title.toLowerCase().includes(query) ||
-        item.creator.toLowerCase().includes(query) ||
-        item.provider.toLowerCase().includes(query) ||
-        item.type.toLowerCase().includes(query) ||
-        (item.genre?.toLowerCase().includes(query) ?? false)
-      )
-    })
     const remoteItems = collectionRemoteResults
       .map(profileCollectionItemFromMetadata)
       .filter((item) => collectionItemTypeFilter === 'all' || item.type === collectionItemTypeFilter)
     const seen = new Set<string>()
-    return [...matchingLocalItems, ...remoteItems].filter((item) => {
+    return remoteItems.filter((item) => {
       const identity = profileCollectionItemIdentity(item)
       if (seen.has(identity)) return false
       seen.add(identity)
       return true
     })
-  }, [collectionItemSearch, collectionItemTypeFilter, collectionSelectedItems, collectionRemoteResults, entries])
-
-  const collectionLibraryItems = useMemo(() => {
-    if (collectionComposerMode !== 'add') return []
-    const query = collectionItemSearch.trim().toLowerCase()
-    const allUserEntries = [...entries, ...(savedCatalogEntries || [])]
-    const localItems = allUserEntries
-      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-      .map(profileCollectionItemFromEntry)
-      .filter((item) => collectionItemTypeFilter === 'all' || item.type === collectionItemTypeFilter)
-
-    const seen = new Set<string>()
-    const uniqueLocal = localItems.filter((item) => {
-      const identity = profileCollectionItemIdentity(item)
-      if (seen.has(identity)) return false
-      seen.add(identity)
-      return true
-    })
-
-    if (!query) return uniqueLocal
-
-    return uniqueLocal.filter((item) => {
-      return (
-        item.title.toLowerCase().includes(query) ||
-        item.creator.toLowerCase().includes(query) ||
-        item.provider.toLowerCase().includes(query) ||
-        item.type.toLowerCase().includes(query) ||
-        (item.genre?.toLowerCase().includes(query) ?? false)
-      )
-    })
-  }, [collectionComposerMode, entries, savedCatalogEntries, collectionItemSearch, collectionItemTypeFilter])
+  }, [collectionItemSearch, collectionItemTypeFilter, collectionSelectedItems, collectionRemoteResults])
 
   const collectionDiscoverItems = useMemo(() => {
     if (collectionComposerMode !== 'add') return []
@@ -722,26 +739,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const collectionAddItems = useMemo(() => {
     const query = collectionItemSearch.trim().toLowerCase()
     if (!query) {
-      return collectionLibraryItems
+      return getCollectionSuggestions(selectedCollection?.items || [], collectionItemTypeFilter)
     }
-    const seen = new Set<string>()
-    const combined: ProfileCollectionItem[] = []
-    for (const item of collectionLibraryItems) {
-      const id = profileCollectionItemIdentity(item)
-      if (!seen.has(id)) {
-        seen.add(id)
-        combined.push(item)
-      }
-    }
-    for (const item of collectionDiscoverItems) {
-      const id = profileCollectionItemIdentity(item)
-      if (!seen.has(id)) {
-        seen.add(id)
-        combined.push(item)
-      }
-    }
-    return combined
-  }, [collectionItemSearch, collectionLibraryItems, collectionDiscoverItems])
+    return collectionDiscoverItems
+  }, [collectionItemSearch, selectedCollection?.items, collectionItemTypeFilter, collectionDiscoverItems])
 
   useEffect(() => {
     const query = collectionItemSearch.trim()
@@ -776,22 +777,22 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     ? filteredProfileEntries
     : catalogMode === 'shelf'
       ? filteredShelfEntries
-      : filteredCollectionEntries
+      : []
   const activeExpandedCardId = catalogMode === 'reviewed'
     ? expandedCardId
     : catalogMode === 'shelf'
       ? shelfExpandedCardId
-      : collectionExpandedCardId
+      : ''
   const activeIsFilterSwitching = catalogMode === 'reviewed'
     ? isFilterSwitching
     : catalogMode === 'shelf'
       ? isShelfSwitching
-      : isCollectionSwitching
+      : false
   const activeFilter = catalogMode === 'reviewed'
     ? profileCategoryFilter
     : catalogMode === 'shelf'
       ? shelfCategoryFilter
-      : collectionCategoryFilter
+      : 'all'
 
   // ── Masonry layout ─────────────────────────────────────────────────────────
   const activeMasonryLayout = useMasonryLayout(
@@ -800,13 +801,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     activeExpandedCardId,
     `${catalogMode}-${activeFilter}-${activeSearchQuery}-${activeEntries.map((entry) => entry.id).join('|')}`,
     1280,
-  )
-  const collectionMasonryLayout = useMasonryLayout(
-    collectionGridRef,
-    isCollectionDetail ? activeEntries.length : 0,
-    '',
-    `${selectedCollectionId}-${collectionCategoryFilter}-${activeEntries.map((entry) => entry.id).join('|')}`,
-    1080,
   )
   // Keep the measured grid hidden until its coordinates are committed. Motion
   // is enabled two frames after reveal so cards never animate outward from 0,0.
@@ -818,7 +812,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     firstFrame = window.requestAnimationFrame(() => {
       setIsFilterSwitching(false)
       setIsShelfSwitching(false)
-      setIsCollectionSwitching(false)
       secondFrame = window.requestAnimationFrame(() => setSuppressCatalogMotion(false))
     })
 
@@ -830,8 +823,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   const showCatalogSkeleton = (catalogMode === 'reviewed' || catalogMode === 'shelf')
     && profileContentLoading
-  const showCollectionMediaSkeleton = isCollectionDetail
-    && (profileContentLoading || (activeEntries.length > 0 && (isCollectionSwitching || !collectionMasonryLayout)))
 
   // ── Bookmark toggle ─────────────────────────────────────────────────────────
   const handleCatalogModeChange = (mode: CatalogMode) => {
@@ -929,14 +920,28 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     if (collectionPhotoInputRef.current) {
       collectionPhotoInputRef.current.value = ''
     }
-    if (!file || !file.type.startsWith('image/')) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') return
-      setCollectionCustomCover(reader.result)
-      setCollectionCoverMode('custom')
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setProfileMediaToast('Please select a valid image file.')
+      return
     }
-    reader.readAsDataURL(file)
+    try {
+      const reader = new FileReader()
+      reader.onload = () => {
+        if (typeof reader.result !== 'string') {
+          setProfileMediaToast('An error has occurred.')
+          return
+        }
+        setCollectionCustomCover(reader.result)
+        setCollectionCoverMode('custom')
+      }
+      reader.onerror = () => {
+        setProfileMediaToast('An error has occurred.')
+      }
+      reader.readAsDataURL(file)
+    } catch {
+      setProfileMediaToast('An error has occurred.')
+    }
   }
 
   const COVER_STYLE_KEYS = ['photo', 'auto', 'g1', 'g2', 'g3', 'g4'] as const
@@ -982,37 +987,49 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   }
 
   const handleSaveCollection = () => {
-    if (!collectionName.trim()) return
-    const editedCollection = collectionEditingId
-      ? profileCollections.find((collection) => collection.id === collectionEditingId)
-      : undefined
-    const savedItems = collectionComposerMode === 'add'
-      ? [...collectionSelectedItems, ...(editedCollection?.items ?? [])]
-      : uniqueProfileCollectionItems(collectionSelectedItems)
-    const selectedTypes = [...new Set(savedItems.map((item) => item.type))]
-    const collectionDetails = {
-      creatorName: editedCollection?.creatorName || profileDisplayName,
-      creatorHandle: editedCollection?.creatorHandle || userProfile.handle.replace(/^@/, ''),
-      description: collectionDescription.trim(),
-      entryIds: savedItems.flatMap((item) => item.entryId ? [item.entryId] : []),
-      items: savedItems,
-      coverMode: collectionCoverMode,
-      coverStyle: collectionCoverMode === 'gradient' ? `gradient-${collectionGradientVariant}` : undefined,
-      customCoverUrl: collectionCoverMode === 'custom'
-        ? collectionCustomCover
-        : collectionCoverMode === 'gradient'
-          ? generateCollectionGradientSvg(collectionName.trim() || 'Untitled Collection', collectionGradientVariant, savedItems)
-          : '',
+    try {
+      if (!collectionName.trim()) {
+        setProfileMediaToast('Please enter a collection name.')
+        return
+      }
+      if (collectionCoverMode === 'custom' && !collectionCustomCover) {
+        setProfileMediaToast('No pictures added')
+        return
+      }
+      const editedCollection = collectionEditingId
+        ? profileCollections.find((collection) => collection.id === collectionEditingId)
+        : undefined
+      const savedItems = collectionComposerMode === 'add'
+        ? [...collectionSelectedItems, ...(editedCollection?.items ?? [])]
+        : uniqueProfileCollectionItems(collectionSelectedItems)
+      const selectedTypes = [...new Set(savedItems.map((item) => item.type))]
+      const collectionDetails = {
+        creatorName: editedCollection?.creatorName || profileDisplayName,
+        creatorHandle: editedCollection?.creatorHandle || userProfile.handle.replace(/^@/, ''),
+        description: collectionDescription.trim(),
+        entryIds: savedItems.flatMap((item) => item.entryId ? [item.entryId] : []),
+        items: savedItems,
+        coverMode: collectionCoverMode,
+        coverStyle: collectionCoverMode === 'gradient' ? `gradient-${collectionGradientVariant}` : undefined,
+        customCoverUrl: collectionCoverMode === 'custom'
+          ? collectionCustomCover
+          : collectionCoverMode === 'gradient'
+            ? generateCollectionGradientSvg(collectionName.trim() || 'Untitled Collection', collectionGradientVariant, savedItems)
+            : '',
+      }
+      const nextCollections = collectionEditingId
+        ? profileCollections.map((collection) => collection.id === collectionEditingId
+          ? { ...collection, name: collectionName.trim(), types: selectedTypes, ...collectionDetails }
+          : collection)
+        : [createProfileCollection(collectionName, selectedTypes, collectionDetails), ...profileCollections]
+      setProfileCollections(nextCollections)
+      persistCreatedCollections(nextCollections)
+      collectionInitialSnapshotRef.current = null
+      setCollectionComposerOpen(false)
+      setProfileMediaToast(collectionEditingId ? 'Collection updated.' : 'Collection created.')
+    } catch {
+      setProfileMediaToast('An error has occurred.')
     }
-    const nextCollections = collectionEditingId
-      ? profileCollections.map((collection) => collection.id === collectionEditingId
-        ? { ...collection, name: collectionName.trim(), types: selectedTypes, ...collectionDetails }
-        : collection)
-      : [createProfileCollection(collectionName, selectedTypes, collectionDetails), ...profileCollections]
-    setProfileCollections(nextCollections)
-    persistCreatedCollections(nextCollections)
-    collectionInitialSnapshotRef.current = null
-    setCollectionComposerOpen(false)
   }
 
   const confirmRemoveCollectionItem = () => {
@@ -1025,7 +1042,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     if (!selectedCollection) return
     const initialName = selectedCollection.name
     const initialDesc = selectedCollection.description ?? ''
-    const mode = selectedCollection.coverMode || 'auto'
+    const mode = selectedCollection.coverMode
+      || (selectedCollection.customCoverUrl ? 'custom' : selectedCollection.coverStyle?.startsWith('gradient-') ? 'gradient' : 'auto')
     const initialCover = selectedCollection.customCoverUrl ?? ''
     const rawVariant = selectedCollection.coverStyle?.startsWith('gradient-')
       ? Number(selectedCollection.coverStyle.replace('gradient-', ''))
@@ -1084,59 +1102,144 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     setCollectionInlineRemovalTarget(null)
   }
 
-  const saveInlineCollectionEdit = () => {
-    if (!selectedCollection || !collectionName.trim()) return
-    if (collectionCoverMode === 'custom' && !collectionCustomCover) return
-    const nextCollections = profileCollections.map((collection) => collection.id === selectedCollection.id
-      ? {
-          ...collection,
-          name: collectionName.trim(),
-          description: collectionDescription.trim(),
-          coverMode: collectionCoverMode,
-          coverStyle: collectionCoverMode === 'gradient' ? `gradient-${collectionGradientVariant}` : undefined,
-          customCoverUrl: collectionCoverMode === 'custom'
-            ? collectionCustomCover
-            : collectionCoverMode === 'gradient'
-              ? generateCollectionGradientSvg(collectionName.trim() || 'Untitled Collection', collectionGradientVariant, selectedCollection.items || [])
-              : '',
+  const saveInlineCollectionEdit = (reorderedItemIds?: string[]) => {
+    try {
+      if (!selectedCollection) return
+      if (!collectionName.trim()) {
+        setProfileMediaToast('Please enter a collection name.')
+        return
+      }
+      if (collectionCoverMode === 'custom' && !collectionCustomCover) {
+        setProfileMediaToast('No pictures added')
+        return
+      }
+      let updatedItems = selectedCollection.items || []
+      if (reorderedItemIds && reorderedItemIds.length > 0) {
+        const itemMap = new Map(updatedItems.map((item) => [item.id, item]))
+        const entryIdMap = new Map(updatedItems.filter((i) => i.entryId).map((item) => [item.entryId!, item]))
+        const reordered: ProfileCollectionItem[] = []
+        const usedIds = new Set<string>()
+        for (const id of reorderedItemIds) {
+          const item =
+            itemMap.get(id) ||
+            entryIdMap.get(id) ||
+            updatedItems.find((i) => i.id === `entry:${id}` || `entry:${i.id}` === id)
+          if (item && !usedIds.has(item.id)) {
+            reordered.push(item)
+            usedIds.add(item.id)
+          }
         }
-      : collection)
+        for (const item of updatedItems) {
+          if (!usedIds.has(item.id)) {
+            reordered.push(item)
+          }
+        }
+        updatedItems = reordered
+      }
+      let updatedEntryIds = selectedCollection.entryIds
+      if (reorderedItemIds && reorderedItemIds.length > 0 && updatedEntryIds) {
+        const reorderedIds: string[] = []
+        const usedEntryIds = new Set<string>()
+        for (const id of reorderedItemIds) {
+          if (updatedEntryIds.includes(id) && !usedEntryIds.has(id)) {
+            reorderedIds.push(id)
+            usedEntryIds.add(id)
+          }
+        }
+        for (const id of updatedEntryIds) {
+          if (!usedEntryIds.has(id)) {
+            reorderedIds.push(id)
+          }
+        }
+        updatedEntryIds = reorderedIds
+      }
+      const nextCollections = profileCollections.map((collection) => collection.id === selectedCollection.id
+        ? {
+            ...collection,
+            items: updatedItems,
+            entryIds: updatedEntryIds,
+            name: collectionName.trim(),
+            description: collectionDescription.trim(),
+            coverMode: collectionCoverMode,
+            coverStyle: collectionCoverMode === 'gradient' ? `gradient-${collectionGradientVariant}` : undefined,
+            customCoverUrl: collectionCoverMode === 'custom'
+              ? collectionCustomCover
+              : collectionCoverMode === 'gradient'
+                ? generateCollectionGradientSvg(collectionName.trim() || 'Untitled Collection', collectionGradientVariant, updatedItems)
+                : '',
+          }
+        : collection)
+      setProfileCollections(nextCollections)
+      persistCreatedCollections(nextCollections)
+      setCollectionInlineEditing(false)
+      setProfileMediaToast('Collection updated.')
+    } catch {
+      setProfileMediaToast('An error has occurred.')
+    }
+  }
+
+  const setCollectionVisibility = (collection: ProfileCollection, isHidden: boolean) => {
+    const nextCollections = profileCollections.map((item) =>
+      item.id === collection.id ? { ...item, isHidden } : item
+    )
     setProfileCollections(nextCollections)
     persistCreatedCollections(nextCollections)
-    setCollectionInlineEditing(false)
   }
 
   const handleToggleHideCollection = () => {
     if (!selectedCollection) return
-    const nextHidden = !selectedCollection.isHidden
-    const nextCollections = profileCollections.map((collection) =>
-      collection.id === selectedCollection.id ? { ...collection, isHidden: nextHidden } : collection
-    )
-    setProfileCollections(nextCollections)
-    persistCreatedCollections(nextCollections)
+    try {
+      setCollectionVisibility(selectedCollection, !selectedCollection.isHidden)
+      setProfileMediaToast(selectedCollection.isHidden ? 'Collection is now visible on profile.' : 'Collection hidden from profile.')
+    } catch {
+      setProfileMediaToast('An error has occurred.')
+    }
+  }
+
+  const handleShareCollectionCard = async (collection: ProfileCollection) => {
+    const url = `${window.location.origin}/users/${routeSegment(userProfile.handle)}/collections/${routeSegment(collection.id)}`
+    try {
+      await navigator.clipboard.writeText(url)
+      setCollectionCardMenuCopiedId(collection.id)
+      window.setTimeout(() => {
+        setCollectionCardMenuCopiedId((current) => current === collection.id ? null : current)
+      }, 1800)
+    } catch (error) {
+      console.error('Unable to copy collection link.', error)
+    }
+  }
+
+  const handleToggleCollectionVisibilityFromCard = (collection: ProfileCollection) => {
+    setCollectionVisibility(collection, !collection.isHidden)
+    setCollectionCardMenuId(null)
   }
 
   const confirmInlineCollectionRemoval = () => {
     if (!selectedCollection || !collectionInlineRemovalTarget) return
-    const targetId = collectionInlineRemovalTarget.id
-    const remainingItems = selectedCollection.items?.filter(
-      (item) => item.id !== targetId && item.entryId !== targetId,
-    )
-    const remainingEntryIds = selectedCollection.entryIds?.filter((id) => id !== targetId)
-    const updatedCollection: ProfileCollection = {
-      ...selectedCollection,
-      items: remainingItems,
-      entryIds: remainingEntryIds,
-      types: remainingItems
-        ? [...new Set(remainingItems.map((item) => item.type))]
-        : selectedCollection.types,
+    try {
+      const targetId = collectionInlineRemovalTarget.id
+      const remainingItems = selectedCollection.items?.filter(
+        (item) => item.id !== targetId && item.entryId !== targetId,
+      )
+      const remainingEntryIds = selectedCollection.entryIds?.filter((id) => id !== targetId)
+      const updatedCollection: ProfileCollection = {
+        ...selectedCollection,
+        items: remainingItems,
+        entryIds: remainingEntryIds,
+        types: remainingItems
+          ? [...new Set(remainingItems.map((item) => item.type))]
+          : selectedCollection.types,
+      }
+      const nextCollections = profileCollections.map((collection) =>
+        collection.id === selectedCollection.id ? updatedCollection : collection,
+      )
+      setProfileCollections(nextCollections)
+      persistCreatedCollections(nextCollections)
+      setCollectionInlineRemovalTarget(null)
+      setProfileMediaToast('Item removed from collection.')
+    } catch {
+      setProfileMediaToast('An error has occurred.')
     }
-    const nextCollections = profileCollections.map((collection) =>
-      collection.id === selectedCollection.id ? updatedCollection : collection,
-    )
-    setProfileCollections(nextCollections)
-    persistCreatedCollections(nextCollections)
-    setCollectionInlineRemovalTarget(null)
   }
 
   const handleDeleteCollection = (collection: ProfileCollection) => {
@@ -1145,16 +1248,21 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   const confirmDeleteCollection = () => {
     if (!collectionDeleteTarget) return
-    const collection = collectionDeleteTarget
-    const nextCollections = profileCollections.filter((item) => item.id !== collection.id)
-    setProfileCollections(nextCollections)
-    persistCreatedCollections(nextCollections)
-    setCollectionDeleteTarget(null)
-    if (selectedCollectionId === collection.id) {
-      setSelectedCollectionId(null)
-      setCatalogMode('collections')
-      setCollectionReturnMode('collections')
-      onCloseCollectionPage?.()
+    try {
+      const collection = collectionDeleteTarget
+      const nextCollections = profileCollections.filter((item) => item.id !== collection.id)
+      setProfileCollections(nextCollections)
+      persistCreatedCollections(nextCollections)
+      setCollectionDeleteTarget(null)
+      if (selectedCollectionId === collection.id) {
+        setSelectedCollectionId(null)
+        setCatalogMode('collections')
+        setCollectionReturnMode('collections')
+        onCloseCollectionPage?.()
+      }
+      setProfileMediaToast('Collection deleted.')
+    } catch {
+      setProfileMediaToast('An error has occurred.')
     }
   }
 
@@ -1181,9 +1289,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     setCollectionReturnMode(returnMode)
     setCatalogMode(returnMode)
     setSelectedCollectionId(collection.id)
-    setCollectionCategoryFilter('all')
-    setCollectionExpandedCardId('')
-    setIsCollectionSwitching(false)
     setCollectionInlineEditing(false)
     onOpenCollectionPage?.(collection.id)
   }
@@ -1193,9 +1298,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     setCollectionReturnMode(returnMode)
     setCatalogMode(returnMode)
     setSelectedCollectionId(null)
-    setCollectionCategoryFilter('all')
-    setCollectionExpandedCardId('')
-    setIsCollectionSwitching(false)
     setCollectionInlineEditing(false)
     onCloseCollectionPage?.()
   }
@@ -1214,6 +1316,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const displayName = profileDisplayName
   const handleFormatted = `@${userProfile.handle.replace(/^@/, '')}`
   const showDisplayName = hasDistinctProfileDisplayName(displayName, userProfile.handle)
+  const memberSinceValue = memberSinceShortLabel(userProfile.createdAt)
 
   if (!isOwnProfile && userProfile.accountStatus === 'deactivated') {
     return (
@@ -1328,7 +1431,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   return (
     <motion.div
-      className={`page-wrapper profile-page-wrapper ${selectedCollection ? 'is-collection-page' : ''}`}
+      className={`page-wrapper profile-page-wrapper ${selectedCollection ? 'is-collection-page' : ''} ${!selectedCollection ? 'is-minimal-profile' : ''} ${!selectedCollection && isInlineProfileEditing ? 'is-inline-profile-editing' : ''}`}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.22, ease: 'easeOut' }}
@@ -1349,14 +1452,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           <>
         {/* Banner Hero */}
         <div
-          className={`profile-page-banner ${isOwnProfile && onUpdateProfile ? 'is-inline-editable' : ''}`}
+          className={`profile-page-banner ${isOwnProfile && onUpdateProfile ? 'is-inline-editable' : ''} ${userProfile.coverUrl ? 'has-custom-cover' : 'is-default-cover'}`}
           style={{
             backgroundImage: userProfile.coverUrl
-              ? `linear-gradient(135deg, rgba(200, 162, 106, 0.2), rgba(15, 13, 10, 0.6)), url('${userProfile.coverUrl}')`
+              ? `linear-gradient(135deg, rgba(var(--accent-rgb), 0.18), rgba(0, 0, 0, 0.52)), url('${userProfile.coverUrl}')`
               : undefined,
           }}
         >
-          {isOwnProfile && onUpdateProfile && (
+          {isOwnProfile && onUpdateProfile && isInlineProfileEditing && (
             <>
               <input
                 ref={inlineCoverInputRef}
@@ -1391,7 +1494,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             ) : (
               <User aria-hidden="true" />
             )}
-            {isOwnProfile && onUpdateProfile && (
+            {isOwnProfile && onUpdateProfile && isInlineProfileEditing && (
               <button
                 type="button"
                 className="profile-inline-avatar-edit"
@@ -1491,45 +1594,165 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
         {/* Identity Details */}
         <div className="profile-page-header">
-          <div className="profile-page-names">
-            {showDisplayName && <h1 className="profile-page-name">{displayName}</h1>}
-            <span className="profile-page-handle">{handleFormatted}</span>
+          <div className="profile-header-main-row">
+            <div className="profile-page-names">
+              {isInlineProfileEditActive ? (
+                <div className="profile-inline-name-row">
+                  <input
+                    type="text"
+                    className="profile-inline-name-input"
+                    value={editFirstName}
+                    onChange={(e) => setEditFirstName(e.target.value)}
+                    placeholder="First name"
+                    aria-label="First name"
+                    disabled={isSavingProfile}
+                    autoFocus
+                  />
+                  <input
+                    type="text"
+                    className="profile-inline-name-input"
+                    value={editLastName}
+                    onChange={(e) => setEditLastName(e.target.value)}
+                    placeholder="Last name"
+                    aria-label="Last name"
+                    disabled={isSavingProfile}
+                  />
+                </div>
+              ) : showDisplayName ? (
+                <h1 className="profile-page-name">{displayName}</h1>
+              ) : (
+                <h1 className="profile-page-name">{handleFormatted}</h1>
+              )}
+              {isInlineProfileEditActive ? (
+                <>
+                  <span className="profile-inline-handle-hint">{handleFormatted}</span>
+                  <p className="profile-inline-username-note">
+                    You can change your username in the settings.
+                  </p>
+                </>
+              ) : showDisplayName && (
+                <div className="profile-handle-row">
+                  <span className="profile-page-handle">{handleFormatted}</span>
+                </div>
+              )}
+            </div>
+
+            {isOwnProfile && onUpdateProfile && !isInlineProfileEditActive && (
+              <button
+                type="button"
+                className="profile-edit-name-desc-btn"
+                onClick={handleStartInlineProfileEdit}
+                title="Edit profile name and description"
+              >
+                <Edit3 size={13} aria-hidden="true" />
+                <span>Edit name & bio</span>
+              </button>
+            )}
           </div>
 
-          {userProfile.bio && (
+          {isInlineProfileEditActive ? (
+            <div className="profile-inline-bio-group">
+              <label className="profile-inline-label" htmlFor="profile-inline-bio">Bio / Description</label>
+              <textarea
+                id="profile-inline-bio"
+                className="profile-inline-bio-input"
+                value={editBio}
+                onChange={(e) => setEditBio(e.target.value)}
+                maxLength={300}
+                rows={4}
+                placeholder="Tell your story, your tastes in literature, cinema, music, or reflections..."
+                disabled={isSavingProfile}
+              />
+              <div className="profile-inline-bio-meta">
+                {editProfileError ? (
+                  <span className="profile-inline-error" role="alert">{editProfileError}</span>
+                ) : <span />}
+                <span className="profile-inline-char-count">{editBio.length}/300</span>
+              </div>
+              <div className="profile-inline-edit-actions">
+                <button
+                  type="button"
+                  className="profile-inline-save-btn"
+                  onClick={handleSaveInlineProfile}
+                  disabled={isSavingProfile || !editFirstName.trim()}
+                >
+                  <Check size={14} aria-hidden="true" />
+                  <span>{isSavingProfile ? 'Saving...' : 'Done Editing'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="profile-inline-cancel-btn"
+                  onClick={handleCancelInlineProfileEdit}
+                  disabled={isSavingProfile}
+                >
+                  <span>Discard</span>
+                </button>
+              </div>
+            </div>
+          ) : userProfile.bio ? (
             <p className="profile-page-bio">{userProfile.bio}</p>
-          )}
-
-          {/* Inline Pill Container Badges */}
-          <div className="profile-pill-container">
-            <span className="profile-pill-badge">
-              <Calendar aria-hidden="true" />
-              <span>{memberSinceLabel(userProfile.createdAt)}</span>
-            </span>
-            <span className="profile-pill-badge rating">
-              <Star aria-hidden="true" />
-              <span>{avgRating} Avg Rating</span>
-            </span>
-
-            {/* Followers & Following Badges */}
+          ) : isOwnProfile && onUpdateProfile ? (
             <button
               type="button"
-              className="profile-pill-badge"
-              style={{ cursor: 'pointer' }}
-              onClick={() => { setActiveFollowModal('followers'); setFollowSearch('') }}
+              className="profile-empty-bio-prompt"
+              onClick={handleStartInlineProfileEdit}
             >
-              <Users aria-hidden="true" />
-              <span>{dynamicFollowersList.length} Followers</span>
+              <Plus size={13} aria-hidden="true" />
+              <span>Add a bio to your profile...</span>
             </button>
-            <button
-              type="button"
-              className="profile-pill-badge"
-              style={{ cursor: 'pointer' }}
-              onClick={() => { setActiveFollowModal('following'); setFollowSearch('') }}
-            >
-              <Users aria-hidden="true" />
-              <span>{dynamicFollowingList.length} Following</span>
-            </button>
+          ) : null}
+
+          {/* Redesigned Metrics & Social Placement */}
+          <div className="profile-metrics-row">
+            <div className="profile-curator-score" title="Curator Average Rating">
+              <span className="score-val">{avgRating}</span>
+              <div className="stat-label-wrap">
+                <Star size={12} className="star-gold" fill="#f5c518" color="#f5c518" aria-hidden="true" />
+                <span className="score-lbl">Avg Rating</span>
+              </div>
+            </div>
+
+            <span className="profile-metrics-separator" aria-hidden="true">·</span>
+
+            <div className="profile-social-counters">
+              <button
+                type="button"
+                className="profile-social-stat-btn"
+                onClick={() => { setActiveFollowModal('followers'); setFollowSearch('') }}
+                aria-label={`${dynamicFollowersList.length} Followers`}
+              >
+                <strong className="stat-count">{dynamicFollowersList.length}</strong>
+                <div className="stat-label-wrap">
+                  <Users size={12} className="stat-sub-icon" aria-hidden="true" />
+                  <span className="stat-label">Followers</span>
+                </div>
+              </button>
+
+              <span className="profile-metrics-separator" aria-hidden="true">·</span>
+
+              <button
+                type="button"
+                className="profile-social-stat-btn"
+                onClick={() => { setActiveFollowModal('following'); setFollowSearch('') }}
+                aria-label={`${dynamicFollowingList.length} Following`}
+              >
+                <strong className="stat-count">{dynamicFollowingList.length}</strong>
+                <div className="stat-label-wrap">
+                  <UserCheck size={12} className="stat-sub-icon" aria-hidden="true" />
+                  <span className="stat-label">Following</span>
+                </div>
+              </button>
+            </div>
+
+            {memberSinceValue && (
+              <div className="profile-minimal-joined-stat">
+                <span className="profile-minimal-stat-value">{memberSinceValue}</span>
+                <div className="stat-label-wrap">
+                  <Calendar size={12} className="stat-sub-icon" aria-hidden="true" />
+                  <span className="profile-minimal-stat-label">Member since</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1587,10 +1810,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     className={`profile-catalog-tab ${catalogMode === 'reviewed' ? 'active' : ''}`}
                     onClick={() => handleCatalogModeChange('reviewed')}
                   >
+                    <BookOpen size={14} aria-hidden="true" />
                     <span>Catalogs</span>
+                    <span className="profile-tab-count" aria-hidden="true">{catalogsCount}</span>
                     {catalogMode === 'reviewed' && (
                       <motion.span
-                        className="profile-catalog-tab-underline"
+                        className="profile-catalog-tab-active-indicator"
                         layoutId={`profile-catalog-tab-${userProfile.handle}`}
                         transition={{
                           type: 'spring',
@@ -1610,10 +1835,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     className={`profile-catalog-tab ${catalogMode === 'collections' ? 'active' : ''}`}
                     onClick={() => handleCatalogModeChange('collections')}
                   >
+                    <FolderHeart size={14} aria-hidden="true" />
                     <span>Collections</span>
+                    <span className="profile-tab-count" aria-hidden="true">{collectionsCount}</span>
                     {catalogMode === 'collections' && (
                       <motion.span
-                        className="profile-catalog-tab-underline"
+                        className="profile-catalog-tab-active-indicator"
                         layoutId={`profile-catalog-tab-${userProfile.handle}`}
                         transition={{
                           type: 'spring',
@@ -1634,6 +1861,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       className={`profile-catalog-tab ${catalogMode === 'shelf' ? 'active' : ''}`}
                       onClick={() => handleCatalogModeChange('shelf')}
                     >
+                      <Bookmark size={14} aria-hidden="true" />
                       <span>Saved Catalog</span>
                       {isOwnProfile && userProfile.showSavedActivity !== true && (
                         <span
@@ -1641,14 +1869,20 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           aria-label="Saved catalog is private"
                           title="Only you can see your saved catalog"
                         >
-                          <Lock aria-hidden="true" />
+                          <Lock size={12} aria-hidden="true" />
                         </span>
                       )}
+                      <span className="profile-tab-count" aria-hidden="true">{savedCatalogCount}</span>
                       {catalogMode === 'shelf' && (
                         <motion.span
-                          className="profile-catalog-tab-underline"
+                          className="profile-catalog-tab-active-indicator"
                           layoutId={`profile-catalog-tab-${userProfile.handle}`}
-                          transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+                          transition={{
+                            type: 'spring',
+                            stiffness: 480,
+                            damping: 34,
+                            mass: 0.6,
+                          }}
                         />
                       )}
                     </button>
@@ -1663,6 +1897,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       className={`profile-catalog-tab ${catalogMode === 'saved-collections' ? 'active' : ''}`}
                       onClick={() => handleCatalogModeChange('saved-collections')}
                     >
+                      <FolderPlus size={14} aria-hidden="true" />
                       <span>Saved Collections</span>
                       {isOwnProfile && userProfile.showSavedActivity !== true && (
                         <span
@@ -1670,14 +1905,20 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           aria-label="Saved collections are private"
                           title="Only you can see your saved collections"
                         >
-                          <Lock aria-hidden="true" />
+                          <Lock size={12} aria-hidden="true" />
                         </span>
                       )}
+                      <span className="profile-tab-count" aria-hidden="true">{savedCollectionsCount}</span>
                       {catalogMode === 'saved-collections' && (
                         <motion.span
-                          className="profile-catalog-tab-underline"
+                          className="profile-catalog-tab-active-indicator"
                           layoutId={`profile-catalog-tab-${userProfile.handle}`}
-                          transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+                          transition={{
+                            type: 'spring',
+                            stiffness: 480,
+                            damping: 34,
+                            mass: 0.6,
+                          }}
                         />
                       )}
                     </button>
@@ -1686,7 +1927,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               </div>
             )}
 
-            {isAlternativeCollectionActive && selectedCollection ? (
+            {selectedCollection ? (
               <AlternativeCollectionDetail
                 collection={selectedCollection}
                 items={selectedCollectionEntries}
@@ -1695,7 +1936,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 currentUserHandle={currentUserHandle}
                 isOwnedByCurrentUser={selectedCollectionIsOwnedByCurrentUser}
                 isSaved={selectedCollectionIsSaved}
-                isTcpAdminUser={isTcpAdminUser}
                 isEditingInline={collectionInlineEditing}
                 collectionName={collectionName}
                 setCollectionName={setCollectionName}
@@ -1707,7 +1947,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 onOpenMedia={onOpenMediaProfile}
                 onSelectEntry={onSelectEntry}
                 onOpenCreator={onOpenEntryCreator}
-                onOpenAlbum={onOpenEntryAlbum}
                 onOpenUserProfile={onSelectUserProfile}
                 onAddMedia={() => openCollectionComposer(selectedCollection, 'add')}
                 onStartInlineEdit={startInlineCollectionEdit}
@@ -1728,6 +1967,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 setCollectionGradientVariant={setCollectionGradientVariant}
                 onCoverUpload={handleCollectionCoverUpload}
                 onToggleHideFromProfile={handleToggleHideCollection}
+                onToast={(msg) => setProfileMediaToast(msg)}
                 renderCoverArtwork={() => renderCollectionCoverArtwork({
                   name: collectionInlineEditing ? collectionName : selectedCollection.name,
                   coverMode: collectionInlineEditing ? collectionCoverMode : selectedCollection.coverMode,
@@ -1766,194 +2006,11 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                   </div>
                 ) : (
                   <div
-                    key={selectedCollection ? `header-${selectedCollection.id}` : 'header-collections'}
+                    key="header-collections"
                     className="catalog-header-title-group"
                   >
-                    {isCollectionDetail && (!selectedCollection || profileContentLoading) ? (
+                    {isCollectionDetail ? (
                       <CollectionDetailHeroSkeleton />
-                    ) : selectedCollection ? (
-                      <div className="collection-detail-heading">
-                        <div className="collection-detail-nav">
-                          <button
-                            type="button"
-                            className="collection-back-btn"
-                            onClick={handleBackToCollections}
-                            aria-label="Back to collections"
-                            title="Back to collections"
-                          >
-                            <ArrowLeft aria-hidden="true" />
-                            <span className="collection-back-btn-text">Back to Collections</span>
-                          </button>
-                          {isTcpAdminUser && (
-                            <div className="tcp-admin-layout-switcher" title="Seamlessly toggle between collection layouts (@tcpadmin)">
-                              <span className="tcp-switcher-label">
-                                <Sparkles size={12} aria-hidden="true" />
-                                <span>Dev Layout:</span>
-                              </span>
-                              <div className="tcp-switcher-pill-group">
-                                <button
-                                  type="button"
-                                  className={`tcp-switcher-pill ${devSettings.collectionLayout === 'classic' ? 'is-active' : ''}`}
-                                  onClick={() => updateDevSetting('collectionLayout', 'classic')}
-                                >
-                                  Classic
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`tcp-switcher-pill ${devSettings.collectionLayout === 'hollis' ? 'is-active' : ''}`}
-                                  onClick={() => updateDevSetting('collectionLayout', 'hollis')}
-                                >
-                                  Layout 1 (Hollis)
-                                </button>
-                                <button
-                                  type="button"
-                                  className={`tcp-switcher-pill ${devSettings.collectionLayout === 'universal' ? 'is-active' : ''}`}
-                                  onClick={() => updateDevSetting('collectionLayout', 'universal')}
-                                >
-                                  Layout 2 (Universal)
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="collection-detail-hero">
-                          <div className="collection-detail-hero-glow" aria-hidden="true" />
-                          <div className="collection-detail-hero-cover" aria-hidden="true">
-                            {renderCollectionCoverArtwork({
-                              name: selectedCollection.name,
-                              coverMode: selectedCollection.coverMode,
-                              coverStyle: selectedCollection.coverStyle,
-                              customCoverUrl: selectedCollection.customCoverUrl,
-                              items: selectedCollectionEntries,
-                            })}
-                          </div>
-
-                          <div className="collection-detail-hero-body">
-                            <div className="collection-detail-copy">
-                              {collectionInlineEditing ? (
-                                <>
-                                  <div className="collection-inline-title-row">
-                                    <input
-                                      className="collection-inline-title-input"
-                                      value={collectionName}
-                                      onChange={(event) => setCollectionName(event.target.value)}
-                                      maxLength={50}
-                                      aria-label="Collection title"
-                                      autoFocus
-                                    />
-                                  </div>
-                                  <textarea
-                                    className="collection-inline-description-input"
-                                    value={collectionDescription}
-                                    onChange={(event) => setCollectionDescription(event.target.value)}
-                                    maxLength={200}
-                                    rows={3}
-                                    aria-label="Collection description"
-                                    placeholder="Add a description"
-                                  />
-                                </>
-                              ) : (
-                                <>
-                                  <div className="collection-detail-eyebrow">
-                                    <span className="collection-detail-badge">Curated Collection</span>
-                                    <span className="collection-detail-curator">Created by {selectedCollectionCreatorName}</span>
-                                  </div>
-                                  <h2 className="profile-catalog-title collection-detail-title">{selectedCollection.name}</h2>
-                                  <div className="collection-detail-meta">
-                                    <span className="collection-meta-pill count">
-                                      <Layers size={13} aria-hidden="true" />
-                                      <span>{filteredCollectionEntries.length} {filteredCollectionEntries.length === 1 ? 'item' : 'items'}</span>
-                                    </span>
-                                    {[...new Set(selectedCollectionEntries.map((entry) => getTypeMeta(entry.type).label))].map((typeLabel) => (
-                                      <span key={typeLabel} className="collection-meta-pill type">
-                                        {typeLabel}
-                                      </span>
-                                    ))}
-                                  </div>
-                                  {Boolean(selectedCollection.description?.trim()) && (
-                                    <p className="collection-detail-description">
-                                      {selectedCollection.description}
-                                    </p>
-                                  )}
-                                </>
-                              )}
-                            </div>
-
-                            {selectedCollectionIsOwnedByCurrentUser ? (
-                              <div className="collection-detail-hero-actions">
-                                {collectionInlineEditing ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      className="collection-hero-btn is-primary is-done"
-                                      onClick={saveInlineCollectionEdit}
-                                      disabled={!collectionName.trim()}
-                                      aria-label="Finish editing"
-                                      title="Finish editing"
-                                    >
-                                      <Check aria-hidden="true" />
-                                      <span>Done</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="collection-hero-btn is-secondary"
-                                      onClick={cancelInlineCollectionEdit}
-                                      aria-label="Cancel editing"
-                                      title="Cancel editing"
-                                    >
-                                      <span>Cancel</span>
-                                    </button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <button
-                                      type="button"
-                                      className="collection-hero-btn is-primary"
-                                      onClick={() => openCollectionComposer(selectedCollection, 'add')}
-                                      aria-label="Add media"
-                                      title="Add media"
-                                    >
-                                      <Plus aria-hidden="true" />
-                                      <span>Add Media</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="collection-hero-btn is-secondary"
-                                      onClick={startInlineCollectionEdit}
-                                      aria-label="Edit collection details"
-                                      title="Edit collection details"
-                                    >
-                                      <Edit3 aria-hidden="true" />
-                                      <span>Edit</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="collection-hero-btn is-danger"
-                                      onClick={() => handleDeleteCollection(selectedCollection)}
-                                      aria-label={`Delete ${selectedCollection.name}`}
-                                      title="Delete collection"
-                                    >
-                                      <Trash2 aria-hidden="true" />
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="collection-detail-hero-actions">
-                                <button
-                                  type="button"
-                                  className={`collection-save-action ${selectedCollectionIsSaved ? 'is-saved' : ''}`}
-                                  onClick={() => toggleSaveCollection(selectedCollection)}
-                                >
-                                  <Bookmark fill={selectedCollectionIsSaved ? 'currentColor' : 'none'} aria-hidden="true" />
-                                  <span>{selectedCollectionIsSaved ? 'Saved' : 'Save collection'}</span>
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
                     ) : (
                       <>
                         <h2 className="profile-catalog-title">
@@ -1972,47 +2029,11 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 )}
 
               <div className="profile-catalog-actions">
-                {isOwnProfile && catalogMode === 'collections' && !selectedCollection && (
+                {isOwnProfile && catalogMode === 'collections' && (
                   <button type="button" className="profile-collection-create-btn" onClick={() => openCollectionComposer()}>
                     <Plus aria-hidden="true" />
                     <span>New Collection</span>
                   </button>
-                )}
-                {selectedCollectionIsOwnedByCurrentUser && isCollectionDetail && selectedCollection && (
-                  collectionInlineEditing ? (
-                    <>
-                      <button type="button" className="profile-collection-create-btn" onClick={cancelInlineCollectionEdit}>Cancel</button>
-                      <button
-                        type="button"
-                        className="profile-collection-create-btn collection-inline-save"
-                        onClick={saveInlineCollectionEdit}
-                        disabled={!collectionName.trim()}
-                      >
-                        <Check aria-hidden="true" />
-                        <span>Save</span>
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        className="profile-collection-create-btn profile-collection-edit-btn"
-                        onClick={startInlineCollectionEdit}
-                      >
-                        <Edit3 aria-hidden="true" />
-                        <span>Edit</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="profile-collection-create-btn profile-collection-add-btn"
-                        onClick={() => openCollectionComposer(selectedCollection, 'add')}
-                        aria-label="Add items"
-                        title="Add items"
-                      >
-                        <Plus aria-hidden="true" />
-                      </button>
-                    </>
-                  )
                 )}
               </div>
             </div>
@@ -2097,15 +2118,80 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           </span>
                         </button>
                         {isCollectionOwner && catalogMode === 'collections' ? (
-                          <button
-                            type="button"
-                            className="profile-collection-delete-btn"
-                            onClick={() => handleDeleteCollection(collection)}
-                            aria-label={`Delete ${collection.name}`}
-                            title="Delete collection"
+                          <div
+                            className={`profile-collection-menu-wrap ${collectionCardMenuId === collection.id ? 'is-open' : ''}`}
+                            ref={collectionCardMenuId === collection.id ? collectionCardMenuRef : undefined}
                           >
-                            <Trash2 aria-hidden="true" />
-                          </button>
+                            <button
+                              type="button"
+                              className="profile-collection-menu-btn"
+                              onClick={() => {
+                                setCollectionCardMenuId((current) => current === collection.id ? null : collection.id)
+                                setCollectionCardMenuCopiedId(null)
+                              }}
+                              aria-label={`More options for ${collection.name}`}
+                              aria-haspopup="menu"
+                              aria-expanded={collectionCardMenuId === collection.id}
+                              title="More options"
+                            >
+                              <MoreHorizontal aria-hidden="true" />
+                            </button>
+
+                            {collectionCardMenuId === collection.id && (
+                              <div className="profile-collection-menu" role="menu">
+                                <button
+                                  type="button"
+                                  className="profile-collection-menu-item"
+                                  onClick={() => void handleShareCollectionCard(collection)}
+                                  role="menuitem"
+                                >
+                                  {collectionCardMenuCopiedId === collection.id ? (
+                                    <>
+                                      <Check aria-hidden="true" />
+                                      <span>Link Copied!</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Share2 aria-hidden="true" />
+                                      <span>Share Collection</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="profile-collection-menu-item"
+                                  onClick={() => handleToggleCollectionVisibilityFromCard(collection)}
+                                  role="menuitem"
+                                >
+                                  {collection.isHidden ? (
+                                    <>
+                                      <Eye aria-hidden="true" />
+                                      <span>Show on Profile</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <EyeOff aria-hidden="true" />
+                                      <span>Hide from Profile</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="profile-collection-menu-item danger"
+                                  onClick={() => {
+                                    setCollectionCardMenuId(null)
+                                    handleDeleteCollection(collection)
+                                  }}
+                                  role="menuitem"
+                                >
+                                  <Trash2 aria-hidden="true" />
+                                  <span>Delete Collection</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         ) : !isCollectionOwner ? (
                           <button
                             type="button"
@@ -2122,22 +2208,18 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                   })}
 
                   {visibleCollections.length === 0 && (
-                    <div className="profile-collection-card profile-collections-empty-card" role="status">
-                      <div className="profile-collection-card-main">
-                        <span className="profile-collection-preview" aria-hidden="true">
-                          <span className="profile-collection-preview-empty">
-                            {isSavedCollectionsMode ? <Bookmark /> : <FolderHeart />}
-                          </span>
+                    <div className="profile-collections-empty" role="status">
+                      <span className="profile-collections-empty-icon" aria-hidden="true">
+                        {isSavedCollectionsMode ? <Bookmark size={18} /> : <FolderHeart size={18} />}
+                      </span>
+                      <span className="profile-collections-empty-copy">
+                        <strong>{isSavedCollectionsMode ? 'No saved collections' : 'Nothing gathered yet'}</strong>
+                        <span>
+                          {isSavedCollectionsMode
+                            ? 'Save a collection from another profile to find it here.'
+                            : 'Start a collection of things worth returning to.'}
                         </span>
-                        <span className="profile-collection-card-copy">
-                          <strong>{isSavedCollectionsMode ? 'No saved collections' : 'Nothing gathered yet'}</strong>
-                          <span>
-                            {isSavedCollectionsMode
-                              ? 'Save a collection from another profile to find it here.'
-                              : 'Start a collection of things worth returning to.'}
-                          </span>
-                        </span>
-                      </div>
+                      </span>
                     </div>
                   )}
                 </div>
@@ -2148,17 +2230,13 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             <div
               key={catalogMode}
               className="profile-catalog-content"
-              aria-busy={showCatalogSkeleton || showCollectionMediaSkeleton || activeIsFilterSwitching}
+              aria-busy={showCatalogSkeleton || activeIsFilterSwitching}
             >
               {showCatalogSkeleton && (
                 <CardSkeletonGrid
                   count={8}
                   label={`Loading ${catalogMode === 'shelf' ? 'saved' : 'created'} catalog entries`}
                 />
-              )}
-
-              {showCollectionMediaSkeleton && (
-                <CollectionMediaSkeleton count={activeEntries.length > 0 ? Math.min(8, Math.max(4, activeEntries.length)) : 8} />
               )}
 
               {/* Empty states */}
@@ -2188,111 +2266,16 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       type="button"
                       className="shelf-empty-cta"
                       onClick={() => {
-                        setIsFilterSwitching(true)
-                        setIsShelfSwitching(true)
-                        setCatalogMode('reviewed')
+                        if (onHome) {
+                          onHome()
+                        } else {
+                          window.location.href = '/'
+                        }
                       }}
                     >
-                      Explore Catalog
+                      Explore Catalogs
                     </button>
                   )}
-                </div>
-              )}
-
-              {!profileContentLoading && activeEntries.length === 0 && isCollectionDetail && selectedCollection && !isAlternativeCollectionActive && (
-                <div className="profile-empty collection-empty">
-                  <FolderHeart size={32} opacity={0.5} aria-hidden="true" />
-                  <h3>No matching media yet</h3>
-                  <p>
-                    {collectionCategoryFilter !== 'all'
-                      ? 'No media in this collection matches your current search or filter.'
-                      : 'This collection is ready for the films, books, music, shows, and games you want to keep together.'}
-                  </p>
-                </div>
-              )}
-
-              {isCollectionDetail && selectedCollection && activeEntries.length > 0 && !isAlternativeCollectionActive && (
-                <div
-                  className="collection-media-shelf-container"
-                  style={{
-                    position: showCollectionMediaSkeleton ? 'absolute' : 'relative',
-                    inset: showCollectionMediaSkeleton ? 0 : undefined,
-                    width: '100%',
-                    visibility: showCollectionMediaSkeleton ? 'hidden' : 'visible',
-                    opacity: showCollectionMediaSkeleton ? 0 : 1,
-                    pointerEvents: showCollectionMediaSkeleton ? 'none' : undefined,
-                  }}
-                >
-                  <section
-                    className="profile-collection-media-list"
-                    aria-label={`${selectedCollection.name} media`}
-                    aria-hidden={showCollectionMediaSkeleton}
-                    ref={collectionGridRef}
-                    style={{
-                      position: 'relative',
-                      width: '100%',
-                      height: collectionMasonryLayout?.height ?? 'auto',
-                      minHeight: 240,
-                    }}
-                  >
-                    {activeEntries.map((entry, index) => {
-                      const { Icon, label } = getTypeMeta(entry.type)
-                      const isSquareArtwork = entry.type === 'album' || entry.type === 'song'
-                      const pos = collectionMasonryLayout?.positions.get(entry.id)
-                      const typeSingular = label.replace(/s$/, '')
-                      return (
-                        <article
-                          className={`profile-collection-media-item masonry-item ${isSquareArtwork ? 'is-square-artwork' : 'is-poster-artwork'}`}
-                          key={entry.id}
-                          data-id={entry.id}
-                          aria-posinset={index + 1}
-                          aria-setsize={activeEntries.length}
-                          style={pos ? {
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            width: pos.width,
-                            transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
-                            transition: 'transform 360ms cubic-bezier(0.2, 0, 0, 1)',
-                            willChange: 'transform',
-                          } : undefined}
-                        >
-                          <button
-                            type="button"
-                            className="profile-collection-media-open"
-                            aria-label={`Open ${entry.title} media profile`}
-                            onClick={() => onOpenMediaProfile?.(entry)}
-                          >
-                            <span className="profile-collection-media-art">
-                              {entry.coverUrl
-                                ? <img src={entry.coverUrl} alt="" loading="lazy" decoding="async" />
-                                : <Icon aria-hidden="true" />}
-                              <span className="profile-collection-media-type" aria-label={typeSingular}>
-                                <Icon aria-hidden="true" />
-                                <span className="profile-collection-media-type-label">{typeSingular}</span>
-                              </span>
-                              <span className="profile-collection-media-sheen" aria-hidden="true" />
-                            </span>
-                            <span className="profile-collection-media-copy">
-                              <strong title={entry.title}>{entry.title}</strong>
-                              <small>{entry.creator}{entry.year ? ` · ${entry.year}` : ''}</small>
-                            </span>
-                          </button>
-                          {isOwnProfile && collectionInlineEditing && (
-                            <button
-                              type="button"
-                              className="profile-collection-media-inline-remove"
-                              onClick={() => setCollectionInlineRemovalTarget(entry)}
-                              aria-label={`Remove ${entry.title} from collection`}
-                              title="Remove from collection"
-                            >
-                              <Minus aria-hidden="true" />
-                            </button>
-                          )}
-                        </article>
-                      )
-                    })}
-                  </section>
                 </div>
               )}
 
@@ -2392,14 +2375,16 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               exit={{ opacity: 0, scale: 0.94, y: 8 }}
               onClick={(event) => event.stopPropagation()}
             >
-              <Trash2 aria-hidden="true" />
+              <div className="collection-remove-confirm-icon-wrap" aria-hidden="true">
+                <Trash2 size={24} />
+              </div>
               <h3 id="collection-delete-title">Delete this collection?</h3>
               <p>
                 <strong>{collectionDeleteTarget.name}</strong> will be permanently deleted. The catalog entries themselves will remain.
               </p>
               <div>
                 <button type="button" onClick={() => setCollectionDeleteTarget(null)}>Cancel</button>
-                <button type="button" className="danger" onClick={confirmDeleteCollection}>Delete collection</button>
+                <button type="button" className="danger" onClick={confirmDeleteCollection}>Delete</button>
               </div>
             </motion.div>
           </div>
@@ -2421,7 +2406,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               exit={{ opacity: 0, scale: 0.94, y: 8 }}
               onClick={(event) => event.stopPropagation()}
             >
-              <Minus aria-hidden="true" />
+              <div className="collection-remove-confirm-icon-wrap" aria-hidden="true">
+                <Trash2 size={22} />
+              </div>
               <h3 id="collection-inline-remove-title">Remove this media?</h3>
               <p><strong>{collectionInlineRemovalTarget.title}</strong> will be removed from {selectedCollection.name} only.</p>
               <div>
@@ -2557,7 +2544,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 <button
                   type="button"
                   className="collection-composer-submit"
-                  disabled={!collectionName.trim() || (collectionCoverMode === 'custom' && !collectionCustomCover)}
                   onClick={handleSaveCollection}
                 >
                   Save changes
@@ -2579,7 +2565,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       exit={{ opacity: 0, scale: 0.94 }}
                       onClick={(event) => event.stopPropagation()}
                     >
-                      <Trash2 aria-hidden="true" />
+                      <div className="collection-remove-confirm-icon-wrap" aria-hidden="true">
+                        <Trash2 size={22} />
+                      </div>
                       <h3 id="collection-remove-title">Remove this media?</h3>
                       <p><strong>{collectionRemovalTarget.title}</strong> will be removed from this collection only.</p>
                       <div>
@@ -2647,7 +2635,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       type="search"
                       value={collectionItemSearch}
                       onChange={(event) => handleCollectionItemSearchChange(event.target.value)}
-                      placeholder="Search books, movies, albums, games, podcasts in library and all media..."
+                      placeholder="Search books, movies, albums, songs, shows, and games..."
                       aria-label="Search media"
                       autoFocus
                     />
@@ -2689,7 +2677,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               </div>
 
               {/* Main Content Area */}
-              <div className="collection-add-body">
+              <div className={`collection-add-body ${!collectionItemSearch.trim() ? 'no-scroll is-suggestions' : ''}`}>
                 {collectionItemSearchStatus === 'searching' && (
                   <div className="collection-add-loading-state" role="status">
                     <div className="collection-add-spinner" aria-hidden="true" />
@@ -2697,11 +2685,22 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                   </div>
                 )}
 
+                {!collectionItemSearch.trim() && collectionAddItems.length > 0 && (
+                  <div className="collection-suggestions-label">
+                    <Sparkles size={12} aria-hidden="true" />
+                    <span>
+                      {selectedCollection.items && selectedCollection.items.length > 0
+                        ? `Suggested for ${selectedCollection.name}`
+                        : 'Trending suggestions'}
+                    </span>
+                  </div>
+                )}
+
                 {collectionAddItems.length > 0 ? (
                   <div
                     className="collection-add-grid"
                     role="list"
-                    aria-label="Media results"
+                    aria-label={!collectionItemSearch.trim() ? 'Suggested media' : 'Media results'}
                   >
                     {collectionAddItems.map((item) => {
                       const identity = profileCollectionItemIdentity(item)
@@ -3021,27 +3020,35 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
                   <div className="collection-cover-controls">
                     <div className="collection-cover-dots" role="tablist" aria-label="Cover appearance styles">
-                      <button
-                        type="button"
-                        className={`collection-cover-dot photo-dot ${collectionCoverMode === 'custom' ? 'active' : ''}`}
-                        onClick={() => {
-                          if (collectionCoverMode === 'custom' || !collectionCustomCover) {
-                            collectionPhotoInputRef.current?.click()
-                          } else {
-                            setCollectionCoverMode('custom')
-                          }
-                        }}
-                        title={
-                          collectionCoverMode === 'custom' && collectionCustomCover
-                            ? 'Change custom photo'
-                            : collectionCustomCover
-                              ? 'Switch to custom photo'
-                              : 'Upload custom photo'
-                        }
-                        aria-label="Custom photo"
-                      >
-                        <ImageIcon aria-hidden="true" size={13} />
-                      </button>
+                      {(() => {
+                        const hasUploadedPhoto = Boolean(collectionCustomCover) && !collectionCustomCover.startsWith('data:image/svg+xml')
+                        return (
+                          <button
+                            type="button"
+                            className={`collection-cover-dot photo-dot ${collectionCoverMode === 'custom' ? 'active' : ''} ${hasUploadedPhoto ? 'has-uploaded' : 'is-empty-placeholder'}`}
+                            onClick={() => {
+                              if (collectionCoverMode === 'custom' || !hasUploadedPhoto) {
+                                collectionPhotoInputRef.current?.click()
+                              } else {
+                                setCollectionCoverMode('custom')
+                              }
+                            }}
+                            title={hasUploadedPhoto ? 'Click to upload photo' : 'Click to add photo'}
+                            aria-label={hasUploadedPhoto ? 'Click to upload photo' : 'Click to add photo'}
+                          >
+                            {hasUploadedPhoto ? (
+                              <span className="photo-dot-thumb-wrap">
+                                <img src={collectionCustomCover} alt="" className="photo-dot-thumb" draggable={false} />
+                                <span className="photo-dot-hover-icon" aria-hidden="true">
+                                  <Upload size={10} />
+                                </span>
+                              </span>
+                            ) : (
+                              <Upload aria-hidden="true" size={13} />
+                            )}
+                          </button>
+                        )
+                      })()}
 
                       <button
                         type="button"
@@ -3133,7 +3140,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                   <div className="collection-composer-curation">
                     <div className="collection-curation-header">
                       <div className="collection-curation-title">
-                        <span>Add items</span>
+                        <span>{!collectionItemSearch.trim() ? (collectionSelectedItems.length > 0 ? 'Suggested media' : 'Trending media') : 'Search results'}</span>
                         <em>(optional)</em>
                       </div>
                       <span className="collection-curation-count">
@@ -3148,8 +3155,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           type="search"
                           value={collectionItemSearch}
                           onChange={(event) => handleCollectionItemSearchChange(event.target.value)}
-                          placeholder="Search your catalog and all media..."
-                          aria-label="Search catalog and all media"
+                          placeholder="Search books, movies, albums, songs, shows, and games..."
+                          aria-label="Search all media"
                         />
                         {collectionItemSearch && (
                           <button
@@ -3186,9 +3193,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     </div>
 
                     <div
-                      className={`collection-item-picker ${collectionComposerItems.length === 0 ? 'is-empty' : ''}`}
+                      className={`collection-item-picker ${!collectionItemSearch.trim() ? 'no-scroll is-suggestions' : ''} ${collectionComposerItems.length === 0 ? 'is-empty' : ''}`}
                       role="list"
-                      aria-label="Catalog items"
+                      aria-label={!collectionItemSearch.trim() ? 'Suggested media' : 'Search results'}
                     >
                       {collectionComposerItems.map((item) => {
                         const itemIdentity = profileCollectionItemIdentity(item)
@@ -3229,7 +3236,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           <Search aria-hidden="true" />
                           <span>{!collectionItemSearch.trim()
                             ? (collectionSelectedItems.length === 0
-                                ? 'No items added yet. Search your catalog or media above to add items.'
+                                ? 'Search books, movies, albums, songs, shows, and games above to add items.'
                                 : 'No items match the selected media filter.')
                             : collectionItemSearch.trim().length < 2
                               ? 'Search for any movie, book, song, show, album, or game.'
@@ -3261,7 +3268,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     <button
                       type="button"
                       className="collection-composer-submit"
-                      disabled={!collectionName.trim() || (collectionCoverMode === 'custom' && !collectionCustomCover)}
                       onClick={handleSaveCollection}
                     >
                       {collectionEditingId ? 'Save Changes' : 'Create Collection'}
@@ -3342,6 +3348,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           </div>
         )}
       </AnimatePresence>
+
 
       {/* ── Followers / Following Modal ── */}
       <AnimatePresence>
@@ -3452,12 +3459,32 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           )}
                         </div>
                         <div className="follow-person-info">
-                          <span className="follow-person-name">{person.name}</span>
-                          <span className="follow-person-meta">
-                            @{person.handle}
-                            <span className="follow-person-dot">·</span>
-                            {person.reviews} reviews
-                          </span>
+                          {(() => {
+                            const cleanHandle = person.handle.replace(/^@/, '')
+                            const cleanName = (person.name || '').trim()
+                            const hasDistinctName = Boolean(
+                              cleanName &&
+                              cleanName.toLowerCase() !== `@${cleanHandle.toLowerCase()}` &&
+                              cleanName.toLowerCase() !== cleanHandle.toLowerCase()
+                            )
+
+                            return hasDistinctName ? (
+                              <>
+                                <span className="follow-person-name">
+                                  <span>{cleanName}</span>
+                                  {person.isPrivate && <Lock size={11} aria-hidden="true" />}
+                                </span>
+                                <span className="follow-person-meta">
+                                  @{cleanHandle}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="follow-person-name">
+                                <span>@{cleanHandle}</span>
+                                {person.isPrivate && <Lock size={11} aria-hidden="true" />}
+                              </span>
+                            )
+                          })()}
                         </div>
                         <div className="follow-person-actions">
                           {(() => {
@@ -3560,7 +3587,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           setProfileMediaToast('Report submitted. Thank you for helping keep The Commonplace safe.')
         }}
       />
-      <AuthToast message={profileMediaToast} onClose={() => setProfileMediaToast(null)} />
       <AnimatePresence>
         {isOwnProfile && catalogMode === 'reviewed' && !isCollectionDetail && onAddEntry && (
           <motion.div

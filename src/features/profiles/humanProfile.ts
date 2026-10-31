@@ -18,8 +18,22 @@ const professionRules: Array<{
   { profession: 'singer_songwriter', label: 'Singer-songwriter', pattern: /\bsinger[ -]songwriter\b/i },
   { profession: 'music_producer', label: 'Music Producer', pattern: /\b(?:record|music) producer\b/i },
   { profession: 'singer', label: 'Singer', pattern: /\bsinger\b/i },
+  { profession: 'singer', label: 'Vocalist', pattern: /\bvocalist\b/i },
   { profession: 'songwriter', label: 'Songwriter', pattern: /\bsongwriter\b/i },
   { profession: 'rapper', label: 'Rapper', pattern: /\brapper\b/i },
+  { profession: 'musician', label: 'Band', pattern: /\b(?:rock|pop|indie|metal|punk|boy|girl|music|musical)?\s*band\b/i },
+  { profession: 'musician', label: 'Musical Group', pattern: /\b(?:musical|music)\s*(?:group|ensemble|collective)\b/i },
+  { profession: 'musician', label: 'Duo', pattern: /\b(?:musical|music|rock|pop|electronic|hip[ -]hop)?\s*duo\b/i },
+  { profession: 'musician', label: 'Trio', pattern: /\b(?:musical|music|rock|pop)?\s*trio\b/i },
+  { profession: 'musician', label: 'Supergroup', pattern: /\bsupergroup\b/i },
+  { profession: 'musician', label: 'Orchestra', pattern: /\borchestra\b/i },
+  { profession: 'musician', label: 'DJ', pattern: /\b(?:dj|disc jockey)\b/i },
+  { profession: 'musician', label: 'Guitarist', pattern: /\bguitarist\b/i },
+  { profession: 'musician', label: 'Drummer', pattern: /\bdrummer\b/i },
+  { profession: 'musician', label: 'Bassist', pattern: /\bbassist\b/i },
+  { profession: 'musician', label: 'Pianist', pattern: /\bpianist\b/i },
+  { profession: 'musician', label: 'Keyboardist', pattern: /\bkeyboardist\b/i },
+  { profession: 'musician', label: 'Instrumentalist', pattern: /\binstrumentalist\b/i },
   { profession: 'musician', label: 'Musician', pattern: /\bmusician\b/i },
   { profession: 'composer', label: 'Composer', pattern: /\bcomposer\b/i },
   { profession: 'actor', label: 'Actor', pattern: /\bactor\b/i },
@@ -203,6 +217,20 @@ export function canonicalHumanId(ids: HumanProfileMetadata['providerIds'], fallb
   if (ids.openLibraryAuthorId) return `human:openlibrary:${ids.openLibraryAuthorId.toUpperCase()}`
   if (ids.itunesArtistId) return `human:itunes:${ids.itunesArtistId}`
   return fallbackId
+}
+
+export function emptyHumanCapabilities(overrides: Partial<HumanCapabilities> = {}): HumanCapabilities {
+  return {
+    topSongs: false,
+    discography: false,
+    filmography: false,
+    publishedWorks: false,
+    directing: false,
+    creating: false,
+    producing: false,
+    writing: false,
+    ...overrides,
+  }
 }
 
 export function capabilitiesForHuman(options: {

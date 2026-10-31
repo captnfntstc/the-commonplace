@@ -61,12 +61,14 @@ export function cacheIdentityAlias(sourceId: string, canonicalId: string) {
 }
 
 export async function migrateUnsafeIdentityCaches() {
-  if (typeof localStorage === 'undefined' || localStorage.getItem(MIGRATION_MARKER) === 'done') return
+  if (typeof localStorage === 'undefined' || localStorage.getItem(MIGRATION_MARKER) === 'done-v3') return
   await Promise.all([
     clearBrowserCacheNamespace('visited-profile-v1'),
     clearBrowserCacheNamespace('visited-profile-v2'),
     clearBrowserCacheNamespace('external-api-v7'),
     clearBrowserCacheNamespace('metadata-search-v9'),
+    clearBrowserCacheNamespace('metadata-search-v15'),
+    clearBrowserCacheNamespace('metadata-search-v16'),
   ])
-  localStorage.setItem(MIGRATION_MARKER, 'done')
+  localStorage.setItem(MIGRATION_MARKER, 'done-v3')
 }

@@ -14,7 +14,8 @@ import {
   Eye,
   EyeOff,
   MoreHorizontal,
-  Share2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { FormattedText } from './FormattedText'
 import { StarRating } from './CardHeader'
@@ -210,6 +211,17 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
     (currentUserHandle && entry?.authorHandle && currentUserHandle.replace(/^@/, '').toLowerCase() === entry.authorHandle.replace(/^@/, '').toLowerCase())
   )
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null)
+  const [menuDirection, setMenuDirection] = useState<Record<string, 'up' | 'down'>>({})
+  const [isDiscussionCollapsed, setIsDiscussionCollapsed] = useState(false)
+  const [expandedCommentIds, setExpandedCommentIds] = useState<Set<string>>(new Set())
+  const commentInputRef = useRef<HTMLTextAreaElement>(null)
+  const [editingTarget, setEditingTarget] = useState<{
+    id: string
+    type: 'comment' | 'reply'
+    parentCommentId?: string
+  } | null>(null)
+  const [editingCommentText, setEditingCommentText] = useState('')
+
   const [ownerHiddenIds, setOwnerHiddenIds] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem(`the-commonplace.owner-hidden-interactions.${activeEntryId}`)
@@ -226,18 +238,93 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
     return () => window.removeEventListener('click', handleOutsideClick)
   }, [activeMenuId])
 
-  const handleShareInteraction = async (type: 'comment' | 'reply', id: string) => {
-    const shareUrl = `${window.location.origin}${window.location.pathname}#${type}-${id}`
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(shareUrl)
-        setReportToast(`${type === 'comment' ? 'Comment' : 'Reply'} link copied to clipboard!`)
-      } else {
-        setReportToast(`${type === 'comment' ? 'Comment' : 'Reply'} link ready.`)
-      }
-    } catch {
-      setReportToast(`${type === 'comment' ? 'Comment' : 'Reply'} link ready.`)
+  // Prompt confirmation on refresh/unload if user has typed draft in comment/reply
+  useEffect(() => {
+    const hasUnsavedDraft = Boolean(
+      newCommentText.trim() ||
+      Object.values(replyTexts).some((t) => t.trim()) ||
+      editingCommentText.trim()
+    )
+    if (!hasUnsavedDraft) return
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = 'You have an unsaved comment. If you leave or refresh, your text will disappear.'
+      return e.returnValue
     }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [newCommentText, replyTexts, editingCommentText])
+
+  const toggleCommentExpand = (id: string) => {
+    setExpandedCommentIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleMenu = (menuKey: string, e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation()
+    if (activeMenuId === menuKey) {
+      setActiveMenuId(null)
+      return
+    }
+    const rect = e.currentTarget.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - rect.bottom
+    setMenuDirection((prev) => ({
+      ...prev,
+      [menuKey]: spaceBelow < 200 ? 'up' : 'down',
+    }))
+    setActiveMenuId(menuKey)
+  }
+
+  // Reset comment textarea height when input is cleared
+  useEffect(() => {
+    if (!newCommentText && commentInputRef.current) {
+      commentInputRef.current.style.height = 'auto'
+    }
+  }, [newCommentText])
+
+  const startEditing = (type: 'comment' | 'reply', id: string, text: string, parentCommentId?: string) => {
+    setEditingTarget({ id, type, parentCommentId })
+    setEditingCommentText(text)
+    setActiveMenuId(null)
+  }
+
+  const cancelEditing = () => {
+    setEditingTarget(null)
+    setEditingCommentText('')
+  }
+
+  const saveEditing = () => {
+    if (!editingTarget) return
+    const trimmed = editingCommentText.trim()
+    if (!trimmed) return
+
+    if (editingTarget.type === 'comment') {
+      setComments((prev) =>
+        prev.map((c) => (c.id === editingTarget.id ? { ...c, text: trimmed } : c))
+      )
+    } else if (editingTarget.type === 'reply' && editingTarget.parentCommentId) {
+      setComments((prev) =>
+        prev.map((c) => {
+          if (c.id === editingTarget.parentCommentId) {
+            return {
+              ...c,
+              replies: c.replies.map((r) =>
+                r.id === editingTarget.id ? { ...r, text: trimmed } : r
+              ),
+            }
+          }
+          return c
+        })
+      )
+    }
+    cancelEditing()
+    setReportToast('Comment updated.')
     window.setTimeout(() => setReportToast(null), 3000)
   }
 
@@ -407,6 +494,9 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
         .catch((error) => console.error('Unable to save comment to Firebase.', error))
     }
     setNewCommentText('')
+    if (commentInputRef.current) {
+      commentInputRef.current.style.height = 'auto'
+    }
   }
 
   const handleReplySubmit = (commentId: string) => {
@@ -439,6 +529,10 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
     setReplyingToId(null)
     setReplyTarget(null)
     setReplyMention(null)
+    const replyEl = replyInputRefs.current[commentId]
+    if (replyEl) {
+      replyEl.style.height = 'auto'
+    }
   }
 
   const toggleCommentLike = (commentId: string) => {
@@ -638,7 +732,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                 </div>
               </div>
               <h1 id="entry-reading-title">
-                {entry.title}
+                <span className="entry-reading-title-text">{entry.title}</span>
                 {(entry.type === 'song' || entry.type === 'album') && entry.explicit && (
                   <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>
                 )}
@@ -696,22 +790,35 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
             </div>
             <div className="overlay-comments-header entry-reading-sort-row">
               <span className="entry-reading-response-count">Responses ({comments.length})</span>
-              <button
-                type="button"
-                className="overlay-sort-btn"
-                onClick={() => setSortOrder(sortOrder === 'newest' ? 'oldest' : 'newest')}
-              >
-                {sortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
-                <span className="overlay-sort-chevron">▾</span>
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+                <button
+                  type="button"
+                  className="overlay-sort-btn"
+                  onClick={() => setSortOrder(sortOrder === 'newest' ? 'oldest' : 'newest')}
+                >
+                  {sortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
+                  <span className="overlay-sort-chevron">▾</span>
+                </button>
+                <button
+                  type="button"
+                  className="entry-reading-collapse-toggle-btn"
+                  onClick={() => setIsDiscussionCollapsed((prev) => !prev)}
+                  aria-label={isDiscussionCollapsed ? 'Expand responses' : 'Collapse responses'}
+                  title={isDiscussionCollapsed ? 'Expand responses' : 'Collapse responses'}
+                >
+                  {isDiscussionCollapsed ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronUp size={14} aria-hidden="true" />}
+                </button>
+              </div>
             </div>
 
-            <div className="overlay-comments-list">
+            {!isDiscussionCollapsed && (
+              <>
+                <div className="overlay-comments-list">
               {visibleComments.map((c) => {
                 const isCommentOwnerHidden = ownerHiddenIds.has(`${entry.id}:comment:${c.id}`)
                 const canDeleteC = canDeleteInteraction(c, cloudUserId, currentUserHandle, isEntryOwner)
                 const canHideC = isEntryOwner
-                const canReportC = Boolean(cloudUserId && !canDeleteC)
+                const canReportC = !canDeleteC
                 const focusedReplyIndex = c.id === focusCommentId && focusReplyId
                   ? c.replies.findIndex(({ id }) => id === focusReplyId)
                   : -1
@@ -751,7 +858,51 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                           </span>
                         )}
                       </div>
-                      <p className="overlay-comment-text">{c.text}</p>
+                      {editingTarget?.type === 'comment' && editingTarget?.id === c.id ? (
+                        <div className="comment-inline-edit-box">
+                          <textarea
+                            className="comment-inline-edit-textarea"
+                            value={editingCommentText}
+                            onChange={(e) => setEditingCommentText(e.target.value)}
+                            autoFocus
+                            aria-label="Edit comment"
+                          />
+                          <div className="comment-inline-edit-actions">
+                            <button
+                              type="button"
+                              className="comment-inline-edit-cancel"
+                              onClick={cancelEditing}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="comment-inline-edit-save"
+                              disabled={!editingCommentText.trim()}
+                              onClick={saveEditing}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="overlay-comment-text">
+                            {c.text.length > 260 && !expandedCommentIds.has(c.id)
+                              ? `${c.text.slice(0, 255)}...`
+                              : c.text}
+                          </p>
+                          {c.text.length > 260 && (
+                            <button
+                              type="button"
+                              className="comment-toggle-expand-btn"
+                              onClick={() => toggleCommentExpand(c.id)}
+                            >
+                              {expandedCommentIds.has(c.id) ? 'Show less' : 'Show more'}
+                            </button>
+                          )}
+                        </>
+                      )}
 
                       {/* Comment Action Bar */}
                       <div className="comment-actions-bar">
@@ -793,10 +944,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                           <button
                             type="button"
                             className="comment-action-btn"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setActiveMenuId((prev) => (prev === `comment-${c.id}` ? null : `comment-${c.id}`))
-                            }}
+                            onClick={(e) => toggleMenu(`comment-${c.id}`, e)}
                             title="More options"
                             aria-label="More options"
                           >
@@ -804,19 +952,22 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                           </button>
 
                           {activeMenuId === `comment-${c.id}` && (
-                            <div className="comment-dropdown-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="comment-dropdown-item"
-                                onClick={() => {
-                                  setActiveMenuId(null)
-                                  void handleShareInteraction('comment', c.id)
-                                }}
-                                role="menuitem"
-                              >
-                                <Share2 size={12} />
-                                <span>Share comment</span>
-                              </button>
+                            <div
+                              className={`comment-dropdown-menu ${menuDirection[`comment-${c.id}`] === 'up' ? 'is-open-upward' : ''}`}
+                              role="menu"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {canDeleteC && (
+                                <button
+                                  type="button"
+                                  className="comment-dropdown-item"
+                                  onClick={() => startEditing('comment', c.id, c.text)}
+                                  role="menuitem"
+                                >
+                                  <Pencil size={12} />
+                                  <span>Edit comment</span>
+                                </button>
+                              )}
 
                               {canHideC && (
                                 <button
@@ -954,7 +1105,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                             const isReplyOwnerHidden = ownerHiddenIds.has(`${entry.id}:reply:${r.id}`)
                             const canDeleteR = canDeleteInteraction(r, cloudUserId, currentUserHandle, isEntryOwner)
                             const canHideR = isEntryOwner
-                            const canReportR = Boolean(cloudUserId && !canDeleteR)
+                            const canReportR = !canDeleteR
                             return (
                               <div
                                 key={r.id}
@@ -983,7 +1134,53 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                                       </span>
                                     )}
                                   </div>
-                                  <p className="overlay-comment-text">{r.text}</p>
+
+                                  {editingTarget?.type === 'reply' && editingTarget?.id === r.id ? (
+                                    <div className="comment-inline-edit-box">
+                                      <textarea
+                                        className="comment-inline-edit-textarea"
+                                        value={editingCommentText}
+                                        onChange={(e) => setEditingCommentText(e.target.value)}
+                                        autoFocus
+                                        aria-label="Edit reply"
+                                      />
+                                      <div className="comment-inline-edit-actions">
+                                        <button
+                                          type="button"
+                                          className="comment-inline-edit-cancel"
+                                          onClick={cancelEditing}
+                                        >
+                                          Cancel
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="comment-inline-edit-save"
+                                          disabled={!editingCommentText.trim()}
+                                          onClick={saveEditing}
+                                        >
+                                          Save
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <p className="overlay-comment-text">
+                                        {r.text.length > 260 && !expandedCommentIds.has(r.id)
+                                          ? `${r.text.slice(0, 255)}...`
+                                          : r.text}
+                                      </p>
+                                      {r.text.length > 260 && (
+                                        <button
+                                          type="button"
+                                          className="comment-toggle-expand-btn"
+                                          onClick={() => toggleCommentExpand(r.id)}
+                                        >
+                                          {expandedCommentIds.has(r.id) ? 'Show less' : 'Show more'}
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+
                                   <div className="comment-actions-bar">
                                     <button
                                       type="button"
@@ -1019,10 +1216,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                                       <button
                                         type="button"
                                         className="comment-action-btn"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          setActiveMenuId((prev) => (prev === `reply-${r.id}` ? null : `reply-${r.id}`))
-                                        }}
+                                        onClick={(e) => toggleMenu(`reply-${r.id}`, e)}
                                         title="More options"
                                         aria-label="More options"
                                       >
@@ -1030,19 +1224,22 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                                       </button>
 
                                       {activeMenuId === `reply-${r.id}` && (
-                                        <div className="comment-dropdown-menu" role="menu" onClick={(e) => e.stopPropagation()}>
-                                          <button
-                                            type="button"
-                                            className="comment-dropdown-item"
-                                            onClick={() => {
-                                              setActiveMenuId(null)
-                                              void handleShareInteraction('reply', r.id)
-                                            }}
-                                            role="menuitem"
-                                          >
-                                            <Share2 size={11} />
-                                            <span>Share reply</span>
-                                          </button>
+                                        <div
+                                          className={`comment-dropdown-menu ${menuDirection[`reply-${r.id}`] === 'up' ? 'is-open-upward' : ''}`}
+                                          role="menu"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          {canDeleteR && (
+                                            <button
+                                              type="button"
+                                              className="comment-dropdown-item"
+                                              onClick={() => startEditing('reply', r.id, r.text, c.id)}
+                                              role="menuitem"
+                                            >
+                                              <Pencil size={11} />
+                                              <span>Edit reply</span>
+                                            </button>
+                                          )}
 
                                           {canHideR && (
                                             <button
@@ -1140,6 +1337,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
             {/* Main comment form */}
             <form onSubmit={handlePostComment} className="overlay-comment-form">
               <textarea
+                ref={commentInputRef}
                 className="overlay-comment-textarea"
                 placeholder="Write a comment…"
                 value={newCommentText}
@@ -1148,7 +1346,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                 onChange={(e) => {
                   setNewCommentText(e.target.value)
                   e.target.style.height = 'auto'
-                  e.target.style.height = Math.min(e.target.scrollHeight, 110) + 'px'
+                  e.target.style.height = Math.min(e.target.scrollHeight, 180) + 'px'
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
@@ -1162,6 +1360,8 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                 <span>Post</span>
               </button>
             </form>
+            </>
+          )}
           </section>
         </motion.article>
       </div>

@@ -18,14 +18,12 @@ import {
   TriangleAlert,
   WifiOff,
   X,
-  Code,
 } from 'lucide-react'
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import '../App.css'
-import { DeveloperToolsModal } from '../components/DeveloperTools/DeveloperToolsModal'
-import { DeveloperToolsDock } from '../components/DeveloperTools/DeveloperToolsDock'
-import { isTcpAdmin, useDevSettings } from '../components/DeveloperTools/devSettings'
+import '../features/appearance/appearanceSettings' // Applies the saved pairing & official fonts to <html> before first paint
+import { BrandLogo } from '../components/BrandLogo'
 import {
   type MetadataResult,
   searchMetadata,
@@ -47,15 +45,18 @@ import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 import { NotificationBell } from '../components/Notifications/NotificationPanel'
 import { MOCK_ENTITY_PROFILES } from '../data/entityProfiles'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../data/universalMediaEntities'
-import type { MediaEntityType, UniversalMediaEntity } from '../types/mediaEntity'
+import type { MediaEntityType, UniversalMediaEntity, HumanProfileMetadata } from '../types/mediaEntity'
+import { professionLabel } from '../features/profiles/humanProfile'
 import { resolveArtworkUrl } from '../utils/artwork'
 import { CollectionPickerModal } from '../components/Collections/CollectionPickerModal'
+import { APP_TOAST_EVENT, type AppToastEventDetail } from '../utils/toast'
 import {
   cacheIdentityAlias,
   cacheProfileEntity,
   getCachedProfileEntity,
   migrateUnsafeIdentityCaches,
 } from '../services/profileCache'
+import { recordReadingHistory, recordVisitedProfile } from '../services/activityHistory'
 import { identityToUniversalEntity, searchIdentities } from '../services/identity'
 import type { UserProfileState } from '../types/userProfile'
 import {
@@ -111,6 +112,7 @@ import {
 import {
   createAlbumEntityFromSongEntry,
   createCreatorEntityFromEntry,
+  slug,
 } from '../features/entities/entryProfiles'
 import {
   clearPendingEntrySync,
@@ -422,6 +424,10 @@ function collectionItemFromEntity(
     coverUrl: artworkUrl,
     year,
     genre,
+    explicit: Boolean(
+      entity.explicit ||
+      metadataChips.some((chip) => chip.label.toLowerCase() === 'explicit' && /yes|true/i.test(chip.value)),
+    ),
   }
 }
 
@@ -442,8 +448,6 @@ export default function AppController() {
   const [postEngagements, setPostEngagements] = useState<Record<string, PostEngagement>>({})
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<EntryType | 'all'>('all')
-  const [devToolsOpen, setDevToolsOpen] = useState(false)
-  const { settings: devSettings } = useDevSettings()
   const { expandedCardId, setExpandedCardId, toggleCardExpanded } = useCardExpansion()
 
   const {
@@ -498,6 +502,8 @@ export default function AppController() {
   void headerAlbumResults
   void headerAlbumSearchLoading
   const [profileCategoryFilter, setProfileCategoryFilter] = useState<string>('all')
+  const [collectionTarget, setCollectionTarget] = useState<ProfileCollectionItem | null>(null)
+  const [persistedEntityCache, setPersistedEntityCache] = useState<Record<string, UniversalMediaEntity>>({})
   const searchEntityCacheRef = useRef(new Map<string, UniversalMediaEntity>())
   // Provider-scoped source ID -> verified canonical ID. Names are never aliases.
   const humanCanonicalMapRef = useRef(new Map<string, string>())
@@ -516,18 +522,28 @@ export default function AppController() {
   }
 
   const handleOpenEntity = (entityId: string, entityType?: MediaEntityType) => {
-    const resolvedType =
+    let resolvedType =
       entityType ||
       UNIVERSAL_MEDIA_ENTITIES[entityId]?.type ||
       searchEntityCacheRef.current.get(entityId)?.type ||
       (MOCK_ENTITY_PROFILES[entityId]?.type as MediaEntityType | undefined) ||
       inferEntityTypeFromId(entityId)
 
-    setSelectedEntityId(entityId)
+    let targetId = entityId
+    if (LEGACY_HUMAN_TYPES.has(resolvedType) || resolvedType === 'human') {
+      const derivedSlug = slug(entityId.replace(/^[a-z_]+[-:]/i, ''))
+      const canonical = humanCanonicalMapRef.current.get(entityId)
+        || humanCanonicalMapRef.current.get(derivedSlug)
+        || (targetId.startsWith('human:') ? targetId : `human:${derivedSlug}`)
+      targetId = canonical
+      resolvedType = 'human'
+    }
+
+    setSelectedEntityId(targetId)
     setSelectedEntityType(resolvedType)
     setActiveView('entity')
     setSearchOpen(false)
-    navigate(getEntityRoutePath(entityId, resolvedType))
+    navigate(getEntityRoutePath(targetId, resolvedType))
   }
 
   const handleOpenCollectionMedia = (entry: Entry) => {
@@ -585,10 +601,23 @@ export default function AppController() {
   }
 
   const openCachedEntity = (entity: UniversalMediaEntity) => {
-    searchEntityCacheRef.current.set(entity.id, entity)
-    setPersistedEntityCache((current) => ({ ...current, [entity.id]: entity }))
-    void cacheProfileEntity(entity)
-    handleOpenEntity(entity.id, entity.type)
+    let target = entity
+    if (LEGACY_HUMAN_TYPES.has(entity.type) || entity.type === 'human') {
+      const derivedSlug = slug(entity.name || entity.id.replace(/^[a-z_]+[-:]/i, ''))
+      const canonicalId = humanCanonicalMapRef.current.get(entity.id)
+        || humanCanonicalMapRef.current.get(derivedSlug)
+        || humanCanonicalMapRef.current.get(entity.name.toLowerCase().trim())
+        || (entity.id.startsWith('human:') ? entity.id : `human:${derivedSlug}`)
+      target = {
+        ...entity,
+        id: canonicalId,
+        type: 'human',
+      }
+    }
+    searchEntityCacheRef.current.set(target.id, target)
+    setPersistedEntityCache((current) => ({ ...current, [target.id]: target }))
+    void cacheProfileEntity(target)
+    handleOpenEntity(target.id, target.type)
   }
 
   const handleOpenSearchEntity = (entity: HeaderSearchEntity) => {
@@ -626,9 +655,14 @@ export default function AppController() {
     }
 
     const incomingType = resolvedEntity?.type ?? entityType
-    if (incomingType && LEGACY_HUMAN_TYPES.has(incomingType)) {
+    if (incomingType && (LEGACY_HUMAN_TYPES.has(incomingType) || incomingType === 'human')) {
+      const derivedSlug = slug(resolvedEntity?.name || entityId.replace(/^[a-z_]+[-:]/i, ''))
       const canonicalId = humanCanonicalMapRef.current.get(entityId)
-      if (canonicalId && canonicalId !== entityId) {
+        || humanCanonicalMapRef.current.get(derivedSlug)
+        || humanCanonicalMapRef.current.get(resolvedEntity?.name?.toLowerCase().trim() || '')
+        || (entityId.startsWith('human:') ? entityId : `human:${derivedSlug}`)
+
+      if (canonicalId) {
         const cachedEntity = searchEntityCacheRef.current.get(canonicalId)
         if (!cachedEntity && resolvedEntity) {
           const promoted: UniversalMediaEntity = { ...resolvedEntity, id: canonicalId, type: 'human' }
@@ -657,7 +691,7 @@ export default function AppController() {
     navigate(getPathForEntity(entityId, resolvedType))
   }
 
-  const handleCanonicalMediaResolved = (
+  const handleCanonicalMediaResolved = useCallback((
     sourceId: string,
     canonicalId: string,
     canonicalEntity: UniversalMediaEntity,
@@ -665,11 +699,24 @@ export default function AppController() {
     // Cache under both IDs — future navigations from either path land on the same profile.
     searchEntityCacheRef.current.set(canonicalId, canonicalEntity)
     searchEntityCacheRef.current.set(sourceId, canonicalEntity)
-    setPersistedEntityCache((current) => ({
-      ...current,
-      [canonicalId]: canonicalEntity,
-      [sourceId]: canonicalEntity,
-    }))
+    setPersistedEntityCache((current) => {
+      const existingCanonical = current[canonicalId]
+      const existingSource = current[sourceId]
+      if (
+        existingCanonical &&
+        existingCanonical.id === canonicalEntity.id &&
+        existingCanonical.name === canonicalEntity.name &&
+        existingCanonical.explicit === canonicalEntity.explicit &&
+        (sourceId === canonicalId || (existingSource && existingSource.name === canonicalEntity.name))
+      ) {
+        return current
+      }
+      return {
+        ...current,
+        [canonicalId]: canonicalEntity,
+        [sourceId]: canonicalEntity,
+      }
+    })
     void cacheProfileEntity(canonicalEntity)
     const isProviderScopedIdentity = /^(?:human|music-group):(tmdb|musicbrainz|openlibrary|itunes):/i.test(sourceId)
       || /^itunes:artist:\d+$/i.test(sourceId)
@@ -680,10 +727,84 @@ export default function AppController() {
     if ((canonicalEntity.type === 'human' || canonicalEntity.type === 'music_group') && isProviderScopedIdentity) {
       void cacheIdentityAlias(sourceId, canonicalId)
     }
-    setSelectedEntityId(canonicalId)
-    setSelectedEntityType(canonicalEntity.type)
-    navigate(getEntityRoutePath(canonicalId, canonicalEntity.type), { replace: true })
-  }
+    if (sourceId !== canonicalId) {
+      setSelectedEntityId((prev) => (prev === canonicalId ? prev : canonicalId))
+      setSelectedEntityType(canonicalEntity.type)
+      navigate(getEntityRoutePath(canonicalId, canonicalEntity.type), { replace: true })
+    }
+  }, [navigate])
+
+  const handleCanonicalHumanResolved = useCallback((
+    sourceEntity: UniversalMediaEntity,
+    humanProfile: HumanProfileMetadata,
+  ) => {
+    const canonicalId = humanProfile.canonicalId
+    if (!canonicalId) return
+    const canonicalProfession = humanProfile.primaryProfession || humanProfile.professions[0]
+    const categoryLabel = professionLabel(canonicalProfession) || humanProfile.occupationLabels[0] || sourceEntity.categoryLabel
+    const canonicalEntity: UniversalMediaEntity = {
+      ...sourceEntity,
+      id: canonicalId,
+      type: 'human',
+      categoryLabel,
+      humanProfile,
+    }
+
+    searchEntityCacheRef.current.set(canonicalId, canonicalEntity)
+    searchEntityCacheRef.current.set(sourceEntity.id, canonicalEntity)
+    const normalizedName = sourceEntity.name.toLowerCase().trim()
+    const nameSlug = slug(sourceEntity.name)
+
+    humanCanonicalMapRef.current.set(sourceEntity.id, canonicalId)
+    humanCanonicalMapRef.current.set(canonicalId, canonicalId)
+    if (normalizedName) {
+      humanCanonicalMapRef.current.set(normalizedName, canonicalId)
+      humanCanonicalMapRef.current.set(nameSlug, canonicalId)
+      humanCanonicalMapRef.current.set(`human:${nameSlug}`, canonicalId)
+      humanCanonicalMapRef.current.set(`artist:${nameSlug}`, canonicalId)
+      humanCanonicalMapRef.current.set(`actor:${nameSlug}`, canonicalId)
+      humanCanonicalMapRef.current.set(`director:${nameSlug}`, canonicalId)
+      humanCanonicalMapRef.current.set(`creator:${nameSlug}`, canonicalId)
+      humanCanonicalMapRef.current.set(`author:${nameSlug}`, canonicalId)
+    }
+    if (humanProfile.providerIds.tmdbPersonId) {
+      humanCanonicalMapRef.current.set(`tmdb:person:${humanProfile.providerIds.tmdbPersonId}`, canonicalId)
+    }
+    if (humanProfile.providerIds.itunesArtistId) {
+      humanCanonicalMapRef.current.set(`human:itunes:${humanProfile.providerIds.itunesArtistId}`, canonicalId)
+      humanCanonicalMapRef.current.set(`itunes:artist:${humanProfile.providerIds.itunesArtistId}`, canonicalId)
+    }
+
+    setPersistedEntityCache((current) => {
+      const existingCanonical = current[canonicalId]
+      const existingSource = current[sourceEntity.id]
+      const canonicalMatch = existingCanonical &&
+        existingCanonical.id === canonicalId &&
+        existingCanonical.humanProfile?.primaryProfession === canonicalProfession &&
+        existingCanonical.categoryLabel === categoryLabel
+      const sourceMatch = existingSource &&
+        existingSource.id === canonicalId &&
+        existingSource.humanProfile?.primaryProfession === canonicalProfession
+
+      if (canonicalMatch && (sourceEntity.id === canonicalId || sourceMatch)) {
+        return current
+      }
+
+      return {
+        ...current,
+        [canonicalId]: canonicalEntity,
+        [sourceEntity.id]: canonicalEntity,
+      }
+    })
+    void cacheProfileEntity(canonicalEntity)
+    void cacheIdentityAlias(sourceEntity.id, canonicalId)
+
+    if (sourceEntity.id !== canonicalId || sourceEntity.type !== 'human') {
+      setSelectedEntityId((prev) => (prev === canonicalId ? prev : canonicalId))
+      setSelectedEntityType('human')
+      navigate(getEntityRoutePath(canonicalId, 'human'), { replace: true })
+    }
+  }, [navigate])
 
   const handleHome = () => {
     setSelectedEntityId(null)
@@ -706,6 +827,23 @@ export default function AppController() {
 
     handleHome()
   }
+
+  const handleEntityNotFound = useCallback(() => {
+    setActiveView('not-found')
+  }, [])
+
+  const handleAddToCollectionFromProfile = useCallback(({
+    entity,
+    artworkUrl,
+    metadataChips,
+  }: {
+    entity: UniversalMediaEntity
+    artworkUrl: string
+    metadataChips: Array<{ label: string; value: string }>
+  }) => {
+    const item = collectionItemFromEntity(entity, artworkUrl, metadataChips)
+    if (item) setCollectionTarget(item)
+  }, [])
 
   const handleOpenSettings = () => {
     setSelectedEntityId(null)
@@ -787,7 +925,11 @@ export default function AppController() {
 
   const handleOpenUserProfile = (handle?: string) => {
     const cleanHandle = (handle || userProfile.handle).replace(/^@/, '')
-    setSelectedProfileHandle(cleanHandle === userProfile.handle ? null : cleanHandle)
+    const isOwn = cleanHandle === userProfile.handle.replace(/^@/, '')
+    if (!isOwn && cleanHandle) {
+      recordVisitedProfile({ handle: cleanHandle })
+    }
+    setSelectedProfileHandle(isOwn ? null : cleanHandle)
     setSelectedProfileCollectionId(null)
     setActiveView('profile')
     setSearchOpen(false)
@@ -946,12 +1088,10 @@ export default function AppController() {
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [logoutLoading, setLogoutLoading] = useState(false)
   const [logoutError, setLogoutError] = useState('')
-  const [collectionTarget, setCollectionTarget] = useState<ProfileCollectionItem | null>(null)
   const gridRef = useRef<HTMLElement>(null)
   const feedSentinelRef = useRef<HTMLDivElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const [searchLimit, setSearchLimit] = useState(SEARCH_INITIAL_RESULT_LIMIT)
-  const [persistedEntityCache, setPersistedEntityCache] = useState<Record<string, UniversalMediaEntity>>({})
 
   const sendFeedSignal = (
     action: Parameters<typeof recordFeedSignal>[1],
@@ -971,6 +1111,7 @@ export default function AppController() {
     setReadingEntryStatus('ready')
     setActiveView('reading')
     navigate(`/entries/${routeSegment(entry.id)}`)
+    recordReadingHistory(entry)
     if (currentUser?.uid && shouldRecordEntryOpen(currentUser.uid, entry.id)) {
       sendFeedSignal('open', entry)
     }
@@ -1017,6 +1158,20 @@ export default function AppController() {
     const timeout = window.setTimeout(() => setAppFeedback(null), 3500)
     return () => window.clearTimeout(timeout)
   }, [appFeedback])
+
+  useEffect(() => {
+    const handleAppToast = (e: Event) => {
+      const ce = e as CustomEvent<AppToastEventDetail>
+      if (ce.detail?.message) {
+        setAppFeedback({
+          kind: ce.detail.kind || 'success',
+          message: ce.detail.message,
+        })
+      }
+    }
+    window.addEventListener(APP_TOAST_EVENT, handleAppToast)
+    return () => window.removeEventListener(APP_TOAST_EVENT, handleAppToast)
+  }, [])
 
   useEffect(() => {
     const showOfflineNotice = () => {
@@ -1900,6 +2055,20 @@ export default function AppController() {
   }, [activeView, allHomepageEntries, cloudExternalProfile, overlayEntry?.id, selectedReadingEntryId])
 
   const handleOpenEntryCreator = (entry: Entry, creatorName: string) => {
+    const normalizedName = creatorName.toLowerCase().trim()
+    const derivedSlug = slug(creatorName)
+    const canonicalId = humanCanonicalMapRef.current.get(normalizedName)
+      || humanCanonicalMapRef.current.get(derivedSlug)
+      || humanCanonicalMapRef.current.get(`human:${derivedSlug}`)
+      || humanCanonicalMapRef.current.get(`artist:${derivedSlug}`)
+      || humanCanonicalMapRef.current.get(`actor:${derivedSlug}`)
+      || humanCanonicalMapRef.current.get(`director:${derivedSlug}`)
+
+    if (canonicalId) {
+      handleNavigateEntityBreadcrumb(canonicalId, 'human')
+      return
+    }
+
     const creatorEntity = createCreatorEntityFromEntry(entry, creatorName, allHomepageEntries)
     if (creatorEntity) openCachedEntity(creatorEntity)
   }
@@ -2220,21 +2389,6 @@ export default function AppController() {
           >
             <Home aria-hidden="true" />
           </button>
-
-          {isTcpAdmin(userProfile.handle) && (
-            <button
-              type="button"
-              className={`global-header-nav-btn devtools-header-nav-btn ${devSettings.collectionLayout !== 'classic' ? 'is-alt-layout' : ''}`}
-              onClick={() => setDevToolsOpen(true)}
-              aria-label="Open Developer Tools"
-              title={`Developer Tools (@tcpadmin) — Collections: ${devSettings.collectionLayout === 'universal' ? 'Layout 2 (Universal)' : devSettings.collectionLayout === 'hollis' ? 'Layout 1 (Hollis)' : 'Standard Classic'}`}
-            >
-              <Code aria-hidden="true" />
-              <span className="devtools-nav-chip">
-                {devSettings.collectionLayout === 'universal' ? 'UNI' : devSettings.collectionLayout === 'hollis' ? 'HOL' : 'DEV'}
-              </span>
-            </button>
-          )}
         </div>
 
         <button
@@ -2245,7 +2399,7 @@ export default function AppController() {
         >
           <span className="global-brand-ornament is-left" aria-hidden="true"><i /><b>✦</b></span>
           <span className="global-header-brand-copy">
-            <span className="global-header-wordmark">The Commonplace.</span>
+            <BrandLogo className="global-header-wordmark-logo" />
             <span className="global-header-beta-badge">Beta</span>
           </span>
           <span className="global-brand-ornament is-right" aria-hidden="true"><b>✦</b><i /></span>
@@ -2320,19 +2474,6 @@ export default function AppController() {
               <CircleHelp aria-hidden="true" />
               <span>Help &amp; Support</span>
             </button>
-            {isTcpAdmin(userProfile.handle) && (
-              <button
-                type="button"
-                className="menu-item devtools-menu-item"
-                onClick={() => {
-                  setDevToolsOpen(true)
-                  setProfileMenuOpen(false)
-                }}
-              >
-                <Code aria-hidden="true" />
-                <span>Developer Tools</span>
-              </button>
-            )}
             <button type="button" className="menu-item" onClick={handleLogout}>
               <LogOut aria-hidden="true" />
               <span>Log out</span>
@@ -2366,18 +2507,18 @@ export default function AppController() {
             <motion.div
               className={`app-feedback-toast ${appFeedback.kind}`}
               role={appFeedback.kind === 'error' ? 'alert' : 'status'}
-              initial={{ opacity: 0, y: -12, scale: 0.96 }}
+              initial={{ opacity: 0, y: -10, scale: 0.98 }}
               animate={{
                 opacity: 1,
-                y: 0,
+                y: 10,
                 scale: 1,
-                transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] },
+                transition: { duration: 0.28, ease: [0.16, 1, 0.3, 1] },
               }}
               exit={{
                 opacity: 0,
-                y: -12,
-                scale: 0.96,
-                transition: { duration: 0.22, ease: [0.32, 0, 0.67, 0] },
+                y: -10,
+                scale: 0.98,
+                transition: { duration: 0.2, ease: [0.32, 0, 0.67, 0] },
               }}
             >
               {appFeedback.kind === 'success' ? (
@@ -2427,24 +2568,6 @@ export default function AppController() {
               )}
             </div>
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleHome() }}><Home aria-hidden="true" /> Home</button>
-            {isTcpAdmin(userProfile.handle) && (
-              <button
-                type="button"
-                className="devtools-mobile-item"
-                onClick={() => {
-                  setMobileMenuOpen(false)
-                  setDevToolsOpen(true)
-                }}
-              >
-                <span className="devtools-mobile-label">
-                  <Code aria-hidden="true" />
-                  <span>Developer Tools</span>
-                </span>
-                <span className="devtools-nav-chip">
-                  {devSettings.collectionLayout === 'universal' ? 'UNI' : devSettings.collectionLayout === 'hollis' ? 'HOL' : 'DEV'}
-                </span>
-              </button>
-            )}
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenUserProfile(userProfile.handle) }}><CircleUserRound aria-hidden="true" /> Profile</button>
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenActivity() }}><Activity aria-hidden="true" /> Activity</button>
             <button type="button" onClick={() => { setMobileMenuOpen(false); handleOpenSettings() }}><Settings aria-hidden="true" /> Settings</button>
@@ -2499,19 +2622,6 @@ export default function AppController() {
       }}
       onConfirm={confirmLogout}
     />
-    {isTcpAdmin(userProfile.handle) && (
-      <>
-        <DeveloperToolsDock
-          currentHandle={userProfile.handle}
-          onOpen={() => setDevToolsOpen(true)}
-        />
-        <DeveloperToolsModal
-          isOpen={devToolsOpen}
-          onClose={() => setDevToolsOpen(false)}
-          currentHandle={userProfile.handle}
-        />
-      </>
-    )}
     </>
     )
   }
@@ -2564,30 +2674,34 @@ export default function AppController() {
 
   const handleQuickAddEntityEntry = ({
     entity,
-    favoritePassage,
-    lyrics,
+    favoritePassage = '',
+    lyrics = '',
     artworkUrl,
     metadataChips,
   }: {
     entity: UniversalMediaEntity
-    favoritePassage: string
-    lyrics: string
+    favoritePassage?: string
+    lyrics?: string
     artworkUrl: string
     metadataChips: Array<{ label: string; value: string }>
   }) => {
     const getChip = (pattern: RegExp) =>
       metadataChips.find((chip) => pattern.test(chip.label))?.value || ''
-    const artist = getChip(/artist|creator/i)
-    const album = getChip(/album/i)
+    const artist = getChip(/artist|creator|author|director|studio/i)
+    const album = getChip(/album|series|publisher/i)
     const year = getChip(/year|release/i)
+
+    const mappedType: EntryType = (['book', 'movie', 'tv', 'song', 'album', 'game', 'podcast'].includes(entity.type)
+      ? entity.type
+      : 'album') as EntryType
 
     openComposer(
       null,
       {
         ...emptyDraft,
-        type: entity.type === 'song' ? 'song' : 'album',
+        type: mappedType,
         title: entity.name,
-        creator: artist,
+        creator: artist || entity.metadataChips?.find((c) => /artist|author|director|creator/i.test(c.label))?.value || '',
         provider: album || entity.categoryLabel,
         providerId: entity.providerId || entity.id,
         year,
@@ -2597,7 +2711,7 @@ export default function AppController() {
           chip.label.toLowerCase() === 'explicit' && chip.value.toLowerCase() === 'yes',
         ),
         favoritePassage,
-        coverTone: getDefaultCoverTone(entity.type === 'song' ? 'song' : 'album'),
+        coverTone: getDefaultCoverTone(mappedType),
         authorHandle: userProfile.handle,
         authorName: userProfileName,
         authorAvatarUrl: userProfile.avatarUrl,
@@ -2846,6 +2960,7 @@ export default function AppController() {
         <UserProfilePage
           key={currentProfileData.profile.handle}
           onBack={handlePageBack}
+          onHome={handleHome}
           showLocalNavigation={false}
           entries={currentProfileData.entries}
           popularDemandEntries={allHomepageEntries}
@@ -2991,23 +3106,21 @@ export default function AppController() {
       const albumIdMatch = selectedEntityId.match(/^album-(\d+)$/i)
       const legacyItunesAlbumIdMatch = selectedEntityId.match(/^itunes:album:(\d+)$/i)
 
-      const cleanName = mapItem
-        ? mapItem.name
-        : selectedEntityId
-            .replace(/^igdb:game:/i, '')
-            .replace(/^steam:game:/i, '')
-            .replace(/^game-/i, '')
-            .replace(/^album-\d+/i, '')
-            .replace(/^album-/i, '')
-            .replace(/^song-itunes-\d+/i, '')
-            .replace(/^song-\d+/i, '')
-            .replace(/^song-/i, '')
-            .replace(/^itunes:song:\d+/i, '')
-            .replace(/^itunes:album:\d+/i, '')
-            .replace(/^human:/i, '')
-            .replace(/^(?:artist|author|director|creator|actor|game-studio):/i, '')
-            .replace(/-/g, ' ')
-            .replace(/\b\w/g, (l) => l.toUpperCase())
+      const rawDerivedName = selectedEntityId
+        .replace(/^igdb:game:/i, '')
+        .replace(/^steam:game:/i, '')
+        .replace(/^game-/i, '')
+        .replace(/^album-(?:itunes-)?/i, '')
+        .replace(/^song-(?:itunes-)?/i, '')
+        .replace(/^itunes:(?:song|album):/i, '')
+        .replace(/^human:/i, '')
+        .replace(/^(?:artist|author|director|creator|actor|game-studio):/i, '')
+        .replace(/-/g, ' ')
+        .trim()
+        .replace(/\b\w/g, (l) => l.toUpperCase())
+
+      const isNumericId = /^\d+$/.test(rawDerivedName)
+      const cleanName = mapItem?.name || (!isNumericId ? rawDerivedName : '')
 
       const fallbackType = legacyItunesTrackIdMatch
         ? 'song'
@@ -3017,7 +3130,7 @@ export default function AppController() {
       const isSong = fallbackType === 'song'
       const isAlbum = fallbackType === 'album'
       const isGame = fallbackType === 'game'
-      const isHuman = ['artist', 'author', 'director', 'creator', 'actor'].includes(fallbackType)
+      const isHuman = ['human', 'artist', 'author', 'director', 'creator', 'actor'].includes(fallbackType)
 
       const providerId = trackIdMatch
         ? trackIdMatch[1]
@@ -3051,7 +3164,7 @@ export default function AppController() {
         gameMetadata,
         artworkUrl: resolveArtworkUrl(
           mapItem?.artworkUrl || '',
-          cleanName,
+          cleanName || 'Media',
           isSong ? 'Song' : isAlbum ? 'Album' : fallbackType,
         ),
         description: '',
@@ -3080,18 +3193,16 @@ export default function AppController() {
             entity={universalEntity}
             onBack={handlePageBack}
             onHome={handleHome}
-            onNotFound={() => setActiveView('not-found')}
+            onNotFound={handleEntityNotFound}
             showLocalNavigation={false}
             communityEntries={allHomepageEntries}
             onSelectEntry={openEntryOverlay}
             onOpenUserProfile={handleOpenUserProfile}
             onNavigateToEntity={handleNavigateEntityBreadcrumb}
             onCanonicalMediaResolved={handleCanonicalMediaResolved}
+            onCanonicalHumanResolved={handleCanonicalHumanResolved}
             onQuickAddEntry={handleQuickAddEntityEntry}
-            onAddToCollection={({ entity, artworkUrl, metadataChips }) => {
-              const item = collectionItemFromEntity(entity, artworkUrl, metadataChips)
-              if (item) setCollectionTarget(item)
-            }}
+            onAddToCollection={handleAddToCollectionFromProfile}
             likedEntryIds={likedEntryIds}
             postEngagements={postEngagements}
             savedEntryIds={savedEntryIds}
@@ -3160,6 +3271,11 @@ export default function AppController() {
                 requestId: `activity-${entry.id}-${focus.replyId || focus.commentId}`,
               })
             }
+          }}
+          onOpenProfile={handleOpenUserProfile}
+          onOpenSearch={(query) => {
+            setQuery(query || '')
+            setSearchOpen(true)
           }}
         />
         {renderEmailVerificationPrompt()}

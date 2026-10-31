@@ -15,4 +15,12 @@ export type UserProfileState = {
   isPrivate?: boolean
   showSavedActivity?: boolean
   accountStatus?: 'active' | 'deactivated'
+  location?: string
+  website?: string
+  curatorRole?: string
+  readingTypography?: 'serif' | 'sans' | 'mono'
+  catalogDensity?: 'comfortable' | 'compact'
+  commentAudience?: 'anyone' | 'mutuals'
+  allowQuotes?: boolean
+  activityDigest?: boolean
 }
