@@ -83,9 +83,9 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;')
 }
 
-function renderBrandLogo({ logoUrl = 'cid:commonplace-logo', width = 310 } = {}) {
+function renderBrandLogo({ logoUrl = 'cid:commonplace-logo', width = 320 } = {}) {
   const safeLogoUrl = escapeHtml(logoUrl)
-  return `<img src="${safeLogoUrl}" width="${width}" height="34" alt="The Commonplace." style="display:block;margin:0 auto;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;font-family:'Quicksand','DM Sans',sans-serif;font-size:24px;font-weight:700;color:#09090b;letter-spacing:-0.5px;" />`
+  return `<img src="${safeLogoUrl}" width="${width}" height="34" alt="The Commonplace." style="display:block;margin:0 auto;width:${width}px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;-ms-interpolation-mode:bicubic;font-family:'Quicksand','DM Sans',sans-serif;font-size:24px;font-weight:700;color:#09090b;letter-spacing:-0.5px;" />`
 }
 
 function getMailAttachments(logoUrl) {
