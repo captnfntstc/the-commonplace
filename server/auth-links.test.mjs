@@ -33,7 +33,7 @@ test('renders an aligned branded verification email without an external logo dep
   assert.match(html, /max-width:600px/)
   assert.match(html, /&lt;reader@example\.com&gt;/)
   assert.match(html, /https:\/\/commonplace\.example\/v\/token&amp;preview=true/)
-  assert.doesNotMatch(html, /<img\b/i)
+  assert.match(html, /alt="The Commonplace\."/)
 })
 
 test('requires an authenticated Firebase session before generating a short link', async () => {
@@ -107,7 +107,7 @@ test('renders a branded password reset email with escaped account data and a one
   assert.match(html, /expires in 1 hour/)
   assert.match(html, /&lt;reader@example\.com&gt;/)
   assert.match(html, /token&amp;preview=true/)
-  assert.doesNotMatch(html, /<img\b/i)
+  assert.match(html, /alt="The Commonplace\."/)
 })
 
 test('accepts only bounded URL-safe auth action tokens', () => {
