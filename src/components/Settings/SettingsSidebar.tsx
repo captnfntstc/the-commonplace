@@ -1,16 +1,26 @@
 import React from 'react'
 import {
   User,
+  Palette,
   Bell,
+  MessageSquare,
+  Globe,
   Shield,
+  HardDrive,
   Lock,
+  Scale,
 } from 'lucide-react'
 
 export type SettingsNavTab =
   | 'profile'
+  | 'theme'
+  | 'notifications'
   | 'social'
+  | 'language'
   | 'privacy'
+  | 'data'
   | 'security'
+  | 'legal'
 
 interface SettingsSidebarProps {
   activeTab: SettingsNavTab
@@ -22,6 +32,7 @@ type NavGroup = {
   items: Array<{
     id: SettingsNavTab
     label: string
+    hint?: string
     Icon: React.ElementType
     isDanger?: boolean
   }>
@@ -29,17 +40,27 @@ type NavGroup = {
 
 const NAV_GROUPS: NavGroup[] = [
   {
-    title: 'PERSONAL',
+    title: 'PERSONAL & EXPERIENCE',
     items: [
-      { id: 'profile', label: 'Profile Information', Icon: User },
-      { id: 'social', label: 'Social & Interactions', Icon: Bell },
+      { id: 'profile', label: 'Profile Information', hint: 'Identity & biography', Icon: User },
+      { id: 'theme', label: 'Theme & Appearance', hint: 'Look & feel', Icon: Palette },
+      { id: 'notifications', label: 'Notifications', hint: 'Alerts & digests', Icon: Bell },
+      { id: 'social', label: 'Social & Interactions', hint: 'Comments & community', Icon: MessageSquare },
+      { id: 'language', label: 'Language & Region', hint: 'Locale & time format', Icon: Globe },
     ],
   },
   {
     title: 'ACCOUNT & PRIVACY',
     items: [
-      { id: 'privacy', label: 'Privacy & Visibility', Icon: Shield },
-      { id: 'security', label: 'Account & Security', Icon: Lock },
+      { id: 'privacy', label: 'Privacy & Visibility', hint: 'Access & discovery', Icon: Shield },
+      { id: 'data', label: 'Your Data', hint: 'Archive, export & cache', Icon: HardDrive },
+      { id: 'security', label: 'Account & Security', hint: 'Credentials & sign-in', Icon: Lock },
+    ],
+  },
+  {
+    title: 'COMMUNITY & LEGAL',
+    items: [
+      { id: 'legal', label: 'Community Standards & Legal Policy', hint: 'Terms, privacy & conduct', Icon: Scale },
     ],
   },
 ]

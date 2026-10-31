@@ -6,6 +6,7 @@ interface SettingsFieldProps {
   badge?: React.ReactNode
   htmlFor?: string
   children: React.ReactNode
+  icon?: React.ElementType
 }
 
 export const SettingsField: React.FC<SettingsFieldProps> = ({
@@ -14,12 +15,14 @@ export const SettingsField: React.FC<SettingsFieldProps> = ({
   badge,
   htmlFor,
   children,
+  icon: Icon,
 }) => {
   return (
     <div className="settings-field">
       <div className="settings-field-header">
         <label className="settings-field-label" htmlFor={htmlFor}>
-          {label}
+          {Icon && <Icon className="field-label-icon" aria-hidden="true" />}
+          <span>{label}</span>
         </label>
         {badge && <div className="settings-field-badge">{badge}</div>}
       </div>

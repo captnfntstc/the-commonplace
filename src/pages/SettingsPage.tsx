@@ -7,7 +7,29 @@ import {
   ShieldCheck,
   Lock,
   Trash2,
+  User,
+  MessageSquare,
+  Shield,
+  HardDrive,
+  Globe,
+  Sparkles,
+  Bookmark,
+  Users,
+  Bell,
+  Mail,
+  Link2,
+  Download,
+  FileText,
+  AlertTriangle,
+  Check,
+  Cookie,
+  Scale,
+  Scroll,
 } from 'lucide-react'
+import {
+  APPEARANCE_THEMES,
+  useAppearanceSettings,
+} from '../features/appearance/appearanceSettings'
 import {
   LinkedAccountCard,
   type ConnectionStatus,
@@ -21,9 +43,10 @@ import { SettingsSection } from '../components/Settings/SettingsSection'
 import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 import { SettingsField } from '../components/Settings/SettingsField'
 import { SettingsToggle } from '../components/Settings/SettingsToggle'
+import { LegalModal, type LegalModalType } from '../components/auth/LegalModal'
+import { clearReadingHistory, clearVisitedProfiles } from '../services/activityHistory'
 import type { UserProfileState } from '../types/userProfile'
 import { useAuth } from '../context/AuthContext'
-
 
 const PROVIDERS: ProviderInfo[] = [
   {
@@ -128,6 +151,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     verificationEmailCooldownSeconds,
     verificationEmailSent,
   } = useAuth()
+  const { settings: appearanceSettings, updateSettings: updateAppearanceSettings } = useAppearanceSettings()
   const [activeTab, setActiveTab] = useState<SettingsNavTab>('profile')
   const [verificationLoading, setVerificationLoading] = useState<'send' | null>(null)
   const [verificationNotice, setVerificationNotice] = useState('')
@@ -149,6 +173,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [deactivationError, setDeactivationError] = useState('')
   const [recommendationResetting, setRecommendationResetting] = useState(false)
   const [recommendationNotice, setRecommendationNotice] = useState('')
+  const [exportNotice, setExportNotice] = useState('')
+  const [cacheNotice, setCacheNotice] = useState('')
+  const [usernameEditorOpen, setUsernameEditorOpen] = useState(false)
   const deactivationSectionRef = useRef<HTMLDivElement>(null)
   const deactivationDialogRef = useAccessibleDialog<HTMLFormElement>({
     open: deactivationDialogOpen,
@@ -169,10 +196,24 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [showFullName, setShowFullName] = useState(userProfile.showFullName)
   const [handleInput, setHandleInput] = useState(userProfile.handle.replace(/^@/, ''))
   const [bio, setBio] = useState(userProfile.bio)
+  const [commentAudience, setCommentAudience] = useState(userProfile.commentAudience || 'anyone')
+  const [activityDigest, setActivityDigest] = useState(userProfile.activityDigest ?? true)
+  const [commentAlerts, setCommentAlerts] = useState(true)
+  const [quoteAlerts, setQuoteAlerts] = useState(true)
+  const [followerAlerts, setFollowerAlerts] = useState(true)
+  const [emailDigest, setEmailDigest] = useState(true)
+  const [announcementAlerts, setAnnouncementAlerts] = useState(false)
+  const [quietHours, setQuietHours] = useState(false)
+  const [dateFormat, setDateFormat] = useState<'locale' | 'iso' | 'editorial'>('locale')
+  const [firstDayOfWeek, setFirstDayOfWeek] = useState<'sunday' | 'monday'>('sunday')
+  const [legalModalType, setLegalModalType] = useState<LegalModalType>(null)
+  const [preferenceStorage, setPreferenceStorage] = useState(true)
+  const [analyticsStorage, setAnalyticsStorage] = useState(false)
   const [showFollowLists, setShowFollowLists] = useState(userProfile.showFollowLists ?? true)
   const [allowComments, setAllowComments] = useState(userProfile.allowComments ?? true)
   const [privateProfile, setPrivateProfile] = useState(userProfile.isPrivate ?? false)
   const [showSavedActivity, setShowSavedActivity] = useState(userProfile.showSavedActivity ?? false)
+  const [avatarUrl, setAvatarUrl] = useState(userProfile.avatarUrl || '')
   const [savedNotice, setSavedNotice] = useState(false)
   const [saveError, setSaveError] = useState('')
 
@@ -276,6 +317,134 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   }
 
+  const handleExportArchive = () => {
+    try {
+      const storedEntries = localStorage.getItem('the-commonplace.entries')
+      const storedCollections = localStorage.getItem('the-commonplace.collections')
+      const entries = storedEntries ? JSON.parse(storedEntries) : []
+      const collections = storedCollections ? JSON.parse(storedCollections) : []
+
+      const archiveData = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        owner: {
+          displayName: computedDisplayName,
+          handle: `@${sanitizedHandle || 'reader'}`,
+          email: currentEmail,
+          bio,
+          location: userProfile.location || '',
+          website: userProfile.website || '',
+          curatorRole: userProfile.curatorRole || '',
+          joined: userProfile.createdAt,
+        },
+        preferences: {
+          readingTypography: userProfile.readingTypography || 'serif',
+          catalogDensity: userProfile.catalogDensity || 'comfortable',
+          isPrivate: privateProfile,
+          allowComments,
+          allowQuotes: userProfile.allowQuotes ?? true,
+        },
+        stats: {
+          totalEntries: entries.length,
+          totalCollections: collections.length,
+        },
+        entries,
+        collections,
+      }
+
+      const blob = new Blob([JSON.stringify(archiveData, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `commonplace-archive-${sanitizedHandle || 'user'}-${new Date().toISOString().split('T')[0]}.json`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      setExportNotice('Personal archive exported successfully!')
+      setTimeout(() => setExportNotice(''), 4000)
+    } catch (err) {
+      console.error('Export failed:', err)
+    }
+  }
+
+  const handleExportMarkdown = () => {
+    try {
+      const storedEntries = localStorage.getItem('the-commonplace.entries')
+      const entries = storedEntries ? JSON.parse(storedEntries) : []
+      const lines: string[] = [
+        `# Commonplace Reading Notes - @${sanitizedHandle || 'reader'}`,
+        `Exported: ${new Date().toISOString().split('T')[0]}`,
+        '',
+      ]
+      entries.forEach((e: { title?: string; creator?: string; type?: string; rating?: number; createdAt?: string; favoritePassage?: string; reflection?: string }) => {
+        lines.push(`## ${e.title || 'Untitled'}`)
+        lines.push(`- **Creator:** ${e.creator || 'Unknown'}`)
+        lines.push(`- **Type:** ${e.type || 'entry'}`)
+        if (e.rating) lines.push(`- **Rating:** ${'★'.repeat(e.rating)} (${e.rating}/5)`)
+        if (e.createdAt) lines.push(`- **Added:** ${e.createdAt.split('T')[0]}`)
+        if (e.favoritePassage) {
+          lines.push('')
+          lines.push('### Favorite Passage')
+          lines.push(`> ${e.favoritePassage}`)
+        }
+        if (e.reflection) {
+          lines.push('')
+          lines.push('### Reflection')
+          lines.push(e.reflection)
+        }
+        lines.push('')
+        lines.push('---')
+        lines.push('')
+      })
+      const blob = new Blob([lines.join('\n')], { type: 'text/markdown' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `commonplace-notes-${sanitizedHandle || 'user'}-${new Date().toISOString().split('T')[0]}.md`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      setExportNotice('Markdown reading notes exported successfully!')
+      setTimeout(() => setExportNotice(''), 4000)
+    } catch (err) {
+      console.error('Markdown export failed:', err)
+    }
+  }
+
+  const handleClearLocalCache = () => {
+    try {
+      localStorage.removeItem('the_commonplace_recent_media_searches_v4')
+      localStorage.removeItem('the_commonplace_recent_user_searches_v3')
+      sessionStorage.clear()
+      setCacheNotice('Local offline cache and search history cleared.')
+      setTimeout(() => setCacheNotice(''), 4000)
+    } catch {
+      setCacheNotice('Unable to clear local cache.')
+    }
+  }
+
+  const handleClearReadingTrace = () => {
+    try {
+      clearReadingHistory()
+      setCacheNotice('Reading and preview trace cleared.')
+      setTimeout(() => setCacheNotice(''), 4000)
+    } catch {
+      setCacheNotice('Unable to clear reading trace.')
+    }
+  }
+
+  const handleClearVisitedProfiles = () => {
+    try {
+      clearVisitedProfiles()
+      setCacheNotice('Curator visitation history cleared.')
+      setTimeout(() => setCacheNotice(''), 4000)
+    } catch {
+      setCacheNotice('Unable to clear visited profiles.')
+    }
+  }
+
   // Sync form state if props update
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- The editable draft mirrors externally hydrated account data.
@@ -284,10 +453,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setShowFullName(userProfile.showFullName)
     setHandleInput(userProfile.handle.replace(/^@/, ''))
     setBio(userProfile.bio)
+    setCommentAudience(userProfile.commentAudience || 'anyone')
+    setActivityDigest(userProfile.activityDigest ?? true)
     setShowFollowLists(userProfile.showFollowLists ?? true)
     setAllowComments(userProfile.allowComments ?? true)
     setPrivateProfile(userProfile.isPrivate ?? false)
     setShowSavedActivity(userProfile.showSavedActivity ?? false)
+    setAvatarUrl(userProfile.avatarUrl || '')
   }, [userProfile])
 
   const [accountStatuses, setAccountStatuses] = useState<Record<string, ConnectionStatus>>({
@@ -365,10 +537,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     showFullName !== userProfile.showFullName ||
     sanitizedHandle !== userProfile.handle.toLowerCase().replace(/^@/, '') ||
     bio.trim() !== userProfile.bio ||
+    commentAudience !== (userProfile.commentAudience || 'anyone') ||
+    activityDigest !== (userProfile.activityDigest ?? true) ||
     showFollowLists !== (userProfile.showFollowLists ?? true) ||
     allowComments !== (userProfile.allowComments ?? true) ||
     privateProfile !== (userProfile.isPrivate ?? false) ||
-    showSavedActivity !== (userProfile.showSavedActivity ?? false)
+    showSavedActivity !== (userProfile.showSavedActivity ?? false) ||
+    avatarUrl !== (userProfile.avatarUrl || '')
 
   // 14-Day Cooldown Calculation
   const lastChangeMs = userProfile.lastUsernameChangeDate
@@ -394,10 +569,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setShowFullName(userProfile.showFullName)
     setHandleInput(userProfile.handle.replace(/^@/, ''))
     setBio(userProfile.bio)
+    setCommentAudience(userProfile.commentAudience || 'anyone')
+    setActivityDigest(userProfile.activityDigest ?? true)
     setShowFollowLists(userProfile.showFollowLists ?? true)
     setAllowComments(userProfile.allowComments ?? true)
     setPrivateProfile(userProfile.isPrivate ?? false)
     setShowSavedActivity(userProfile.showSavedActivity ?? false)
+    setAvatarUrl(userProfile.avatarUrl || '')
   }
 
   const handleSave = async (e?: React.FormEvent) => {
@@ -423,7 +601,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       handle: sanitizedHandle || userProfile.handle,
       email: currentEmail || userProfile.email,
       bio: bio.trim(),
-      avatarUrl: userProfile.avatarUrl,
+      avatarUrl: avatarUrl || userProfile.avatarUrl,
       coverUrl: userProfile.coverUrl,
       createdAt: userProfile.createdAt,
       birthday: userProfile.birthday,
@@ -432,6 +610,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       allowComments,
       isPrivate: privateProfile,
       showSavedActivity,
+      location: userProfile.location || '',
+      website: userProfile.website || '',
+      curatorRole: userProfile.curatorRole || '',
+      readingTypography: userProfile.readingTypography || 'serif',
+      catalogDensity: userProfile.catalogDensity || 'comfortable',
+      commentAudience,
+      allowQuotes: userProfile.allowQuotes ?? true,
+      activityDigest,
     }
 
     try {
@@ -445,19 +631,23 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   }
 
   const computedDisplayName = showFullName ? `${firstName} ${lastName}`.trim() : firstName
+  const joinYear = userProfile.createdAt ? new Date(userProfile.createdAt).getFullYear() : '2026'
+  const monogram = (firstName?.[0] || 'C').toUpperCase()
 
   return (
     <div className="page-wrapper settings-desktop-wrapper">
       {/* Top Floating Circle Back Button */}
-      {showLocalNavigation && <button
-        type="button"
-        className="profile-back-circle"
-        onClick={onBack}
-        title="Back to Feed"
-        aria-label="Back to Feed"
-      >
-        <ArrowLeft aria-hidden="true" />
-      </button>}
+      {showLocalNavigation && (
+        <button
+          type="button"
+          className="profile-back-circle"
+          onClick={onBack}
+          title="Back to Feed"
+          aria-label="Back to Feed"
+        >
+          <ArrowLeft aria-hidden="true" />
+        </button>
+      )}
 
       <div className="settings-desktop-container">
         {/* Left Sticky Navigation Sidebar */}
@@ -478,201 +668,671 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </div>
           )}
 
-          {/* PAGE 1: PROFILE */}
+          {/* TAB 1: PROFILE */}
           {activeTab === 'profile' && (
             <div className="settings-page-content">
               <div className="settings-header-minimal">
                 <h1 className="settings-page-title">Profile Information</h1>
                 <p className="settings-page-desc">
-                  Manage your public profile identity and social list preferences.
+                  Manage your public identity, curator credentials, and presence across The Commonplace.
+                </p>
+              </div>
+
+              {/* Live Commonplace Passport Card */}
+              <div className="settings-passport-card">
+                <div className="passport-glow" />
+                <div className="passport-body">
+                  <div className="passport-avatar-wrap">
+                    {avatarUrl ? (
+                      <img
+                        src={avatarUrl}
+                        alt="Profile Avatar"
+                        className="passport-avatar-img"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="passport-avatar-monogram">{monogram}</div>
+                    )}
+                  </div>
+                  <div className="passport-meta">
+                    <div className="passport-name-row">
+                      <span className="passport-name">{computedDisplayName || 'Commonplace Reader'}</span>
+                      {currentUser?.emailVerified && (
+                        <span className="passport-badge-verified">
+                          <CheckCircle2 aria-hidden="true" />
+                          <span>Verified</span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="passport-handle-row">
+                      <span>@{sanitizedHandle || 'reader'}</span>
+                      <span>•</span>
+                      <span>Member since {joinYear}</span>
+                    </div>
+                    {bio && <p className="passport-bio-snippet">{bio}</p>}
+                  </div>
+                </div>
+              </div>
+
+              <SettingsSection
+                title="Identity & Profile"
+                description="Personal information and display preferences for your public commonplace."
+                icon={User}
+              >
+                <div className="settings-card">
+                  <div className="settings-form-grid">
+                    <div className="form-row-two-col">
+                      <SettingsField label="First Name" htmlFor="first-name">
+                        <input
+                          id="first-name"
+                          type="text"
+                          className="dark-setting-input"
+                          value={firstName}
+                          onChange={(e) => setFirstName(e.target.value)}
+                          placeholder="e.g. Jimmy"
+                        />
+                      </SettingsField>
+
+                      <SettingsField label="Last Name" htmlFor="last-name">
+                        <input
+                          id="last-name"
+                          type="text"
+                          className="dark-setting-input"
+                          value={lastName}
+                          onChange={(e) => setLastName(e.target.value)}
+                          placeholder="e.g. Boy"
+                        />
+                      </SettingsField>
+                    </div>
+
+                    {/* Change Username (Replaces Username Identifier) */}
+                    <SettingsField
+                      label="Change Username"
+                      badge={
+                        usernameEditorOpen && !isCurrentUsername ? (
+                          <span className={`username-status-badge ${isUsernameAvailable ? 'available' : 'taken'}`}>
+                            {isUsernameAvailable ? (
+                              <>
+                                <CheckCircle2 aria-hidden="true" />
+                                <span>Available</span>
+                              </>
+                            ) : (
+                              <>
+                                <AlertCircle aria-hidden="true" />
+                                <span>{isTaken ? 'Username Taken' : 'Invalid format'}</span>
+                              </>
+                            )}
+                          </span>
+                        ) : undefined
+                      }
+                      helperText={
+                        isUsernameCooldownActive ? (
+                          <span className="cooldown-notice locked">
+                            <Clock aria-hidden="true" />
+                            <span>
+                              Username locked. Usernames can only be changed once every 14 days. Next change available on{' '}
+                              <strong>{nextAvailableDate}</strong>.
+                            </span>
+                          </span>
+                        ) : usernameEditorOpen ? (
+                          <span className="cooldown-notice">
+                            <ShieldCheck aria-hidden="true" />
+                            <span>Choose a unique handle between 3-20 characters (letters, numbers, underscores).</span>
+                          </span>
+                        ) : (
+                          <span className="cooldown-notice">
+                            <ShieldCheck aria-hidden="true" />
+                            <span>Unique account identifier. Can be changed once every 14 days.</span>
+                          </span>
+                        )
+                      }
+                      htmlFor={usernameEditorOpen ? 'username-edit-input' : 'username-current-display'}
+                    >
+                      {!usernameEditorOpen ? (
+                        <div className="settings-inline-action-row">
+                          <div className="username-input-wrapper" style={{ flex: 1 }}>
+                            <span className="at-prefix">@</span>
+                            <input
+                              id="username-current-display"
+                              type="text"
+                              className="dark-setting-input with-prefix"
+                              value={sanitizedHandle}
+                              readOnly
+                              style={{ cursor: 'default', opacity: 0.85 }}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            className="secondary-action-btn"
+                            onClick={() => {
+                              if (!isUsernameCooldownActive) {
+                                setUsernameEditorOpen(true)
+                              }
+                            }}
+                            disabled={isUsernameCooldownActive}
+                            style={isUsernameCooldownActive ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
+                            title={isUsernameCooldownActive ? `Username locked until ${nextAvailableDate}` : 'Change Username'}
+                          >
+                            Change Username
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="settings-inline-action-row">
+                          <div className="username-input-wrapper" style={{ flex: 1 }}>
+                            <span className="at-prefix">@</span>
+                            <input
+                              id="username-edit-input"
+                              type="text"
+                              className={`dark-setting-input with-prefix ${
+                                !isCurrentUsername && !isUsernameAvailable ? 'error' : ''
+                              }`}
+                              value={handleInput}
+                              onChange={(e) => setHandleInput(e.target.value.replace(/\s+/g, ''))}
+                              placeholder="newusername"
+                              autoFocus
+                            />
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                            <button
+                              type="button"
+                              className="save-bar-cancel-btn"
+                              onClick={() => {
+                                setHandleInput(userProfile.handle.replace(/^@/, ''))
+                                setUsernameEditorOpen(false)
+                              }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary-action-btn"
+                              onClick={() => {
+                                if (isUsernameAvailable) {
+                                  setUsernameEditorOpen(false)
+                                }
+                              }}
+                              disabled={!isUsernameAvailable}
+                            >
+                              Apply
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </SettingsField>
+
+                    <div className="email-verification-setting full-width" aria-label="Email Verification">
+                      <div className="email-verification-setting-copy">
+                        <span className="toggle-label">Email Verification</span>
+                        <span className="toggle-description">
+                          {currentUser?.emailVerified
+                            ? 'Your account email has been confirmed.'
+                            : 'Confirm your account email to unlock posting.'}
+                        </span>
+                        {verificationNotice && <span className="email-verification-setting-notice">{verificationNotice}</span>}
+                      </div>
+                      {currentUser?.emailVerified ? (
+                        <span className="email-verification-status verified">
+                          <CheckCircle2 aria-hidden="true" />
+                          Verified
+                        </span>
+                      ) : (
+                        <div className="email-verification-setting-actions">
+                          <button
+                            type="button"
+                            className="secondary-action-btn"
+                            onClick={handleSendVerification}
+                            disabled={verificationLoading !== null || verificationEmailCooldownSeconds > 0}
+                          >
+                            {verificationLoading === 'send'
+                              ? 'Sending...'
+                              : verificationEmailCooldownSeconds > 0
+                                ? `Resend in ${verificationCooldownLabel}`
+                                : verificationEmailSent
+                                  ? 'Resend email'
+                                  : 'Verify now'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
+                title="Biography"
+                description="A brief personal introduction displayed on your public commonplace."
+                icon={User}
+              >
+                <div className="settings-card">
+                  <SettingsField
+                    label="Biography"
+                    helperText={<span className="char-count">{bio.length} / 300 characters</span>}
+                    htmlFor="bio"
+                  >
+                    <textarea
+                      id="bio"
+                      className="dark-setting-textarea"
+                      rows={3}
+                      value={bio}
+                      maxLength={300}
+                      onChange={(e) => setBio(e.target.value)}
+                      placeholder="Collector of timeless passages, album impressions, cinematic notes..."
+                    />
+                  </SettingsField>
+                </div>
+              </SettingsSection>
+            </div>
+          )}
+
+          {/* TAB: THEME & APPEARANCE */}
+          {activeTab === 'theme' && (
+            <div className="settings-page-content">
+              <div className="settings-header-minimal">
+                <h1 className="settings-page-title">Theme &amp; Appearance</h1>
+                <p className="settings-page-desc">
+                  Choose how The Commonplace looks on this device. Your selection applies
+                  instantly and is remembered here.
+                </p>
+              </div>
+
+              <div
+                className="settings-card settings-theme-picker-card"
+                role="radiogroup"
+                aria-label="Color pairings"
+              >
+                <div className="settings-theme-circles-grid">
+                  {APPEARANCE_THEMES.map((theme) => {
+                    const isActive = appearanceSettings.theme === theme.id
+                    return (
+                      <button
+                        key={theme.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={isActive}
+                        aria-label={theme.name}
+                        title={`${theme.name} — ${theme.description}`}
+                        className={`settings-theme-circle-option ${isActive ? 'is-active' : ''}`}
+                        onClick={() => updateAppearanceSettings({ theme: theme.id })}
+                      >
+                        <span className="settings-theme-duotone-ring" aria-hidden="true">
+                          <span
+                            className="settings-theme-duotone-circle"
+                            style={{
+                              background: `linear-gradient(135deg, ${theme.palette.baseSwatch} 0% 49.5%, ${theme.palette.accent} 50.5% 100%)`,
+                            }}
+                          />
+                          {isActive && (
+                            <span
+                              className="settings-theme-circle-check"
+                              style={{
+                                backgroundColor: theme.palette.accent,
+                                color: theme.palette.accentFg,
+                              }}
+                            >
+                              <Check size={11} strokeWidth={3.2} />
+                            </span>
+                          )}
+                        </span>
+                        <span className="settings-theme-circle-label">{theme.name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: NOTIFICATIONS */}
+          {activeTab === 'notifications' && (
+            <div className="settings-page-content">
+              <div className="settings-header-minimal">
+                <h1 className="settings-page-title">Notifications</h1>
+                <p className="settings-page-desc">
+                  Choose how and when The Commonplace notifies you of community responses, citations, and digests.
                 </p>
               </div>
 
               <SettingsSection
-                title="Identity Details"
-                description="Personal information shown on your public commonplace."
+                title="Discussion & Interaction Alerts"
+                description="Manage notifications for direct interactions with your entries and notebook entries."
+                icon={Bell}
               >
-                <div className="settings-form-grid">
-                  <div className="form-row-two-col">
-                    <SettingsField label="First Name" htmlFor="first-name">
-                      <input
-                        id="first-name"
-                        type="text"
-                        className="dark-setting-input"
-                        value={firstName}
-                        onChange={(e) => setFirstName(e.target.value)}
-                        placeholder="e.g. Jimmy"
-                      />
-                    </SettingsField>
+                <div className="settings-card">
+                  <SettingsToggle
+                    label="In-App Activity Notifications"
+                    description="Receive in-app alerts when other readers like, save, or quote your entries."
+                    checked={activityDigest}
+                    onChange={setActivityDigest}
+                    icon={Bell}
+                  />
 
-                    <SettingsField label="Last Name" htmlFor="last-name">
-                      <input
-                        id="last-name"
-                        type="text"
-                        className="dark-setting-input"
-                        value={lastName}
-                        onChange={(e) => setLastName(e.target.value)}
-                        placeholder="e.g. Boy"
-                      />
-                    </SettingsField>
-                  </div>
+                  <SettingsToggle
+                    label="Discussion & Comment Replies"
+                    description="Receive alerts when other readers reply to your thoughts or comment on your catalog entries."
+                    checked={commentAlerts}
+                    onChange={setCommentAlerts}
+                    icon={MessageSquare}
+                  />
 
-                  <SettingsField
-                    label="Display Name"
-                    helperText="This name is shown at the top of your public profile."
-                    htmlFor="display-name"
-                  >
-                    <input
-                      id="display-name"
-                      type="text"
-                      className="dark-setting-input"
-                      value={computedDisplayName}
-                      readOnly
-                      style={{ opacity: 0.8 }}
-                    />
-                  </SettingsField>
+                  <SettingsToggle
+                    label="Quote & Citation Notices"
+                    description="Notify you when someone cites or excerpts a passage from your library into their notebook."
+                    checked={quoteAlerts}
+                    onChange={setQuoteAlerts}
+                    icon={Bookmark}
+                  />
 
-                  <SettingsField
-                    label="Username Identifier"
-                    badge={
-                      !isCurrentUsername && (
-                        <span className={`username-status-badge ${isUsernameAvailable ? 'available' : 'taken'}`}>
-                          {isUsernameAvailable ? (
-                            <>
-                              <CheckCircle2 aria-hidden="true" />
-                              <span>Available</span>
-                            </>
-                          ) : (
-                            <>
-                              <AlertCircle aria-hidden="true" />
-                              <span>{isTaken ? 'Username Taken' : 'Invalid format'}</span>
-                            </>
-                          )}
-                        </span>
-                      )
-                    }
-                    helperText={
-                      isUsernameCooldownActive ? (
-                        <span className="cooldown-notice locked">
-                          <Clock aria-hidden="true" />
-                          <span>
-                            Username locked. Usernames can only be changed once every 14 days. Next change available on{' '}
-                            <strong>{nextAvailableDate}</strong>.
-                          </span>
-                        </span>
-                      ) : (
-                        <span className="cooldown-notice">
-                          <ShieldCheck aria-hidden="true" />
-                          <span>Unique account identifier. Can be changed once every 14 days.</span>
-                        </span>
-                      )
-                    }
-                    htmlFor="username"
-                  >
-                    <div className="username-input-wrapper">
-                      <span className="at-prefix">@</span>
-                      <input
-                        id="username"
-                        type="text"
-                        className={`dark-setting-input with-prefix ${
-                          !isCurrentUsername && !isUsernameAvailable ? 'error' : ''
-                        }`}
-                        value={handleInput}
-                        onChange={(e) => setHandleInput(e.target.value.replace(/\s+/g, ''))}
-                        disabled={isUsernameCooldownActive}
-                        placeholder="jimboii"
-                      />
-                    </div>
-                  </SettingsField>
-
-                  <div className="email-verification-setting" aria-label="Email Verification">
-                    <div className="email-verification-setting-copy">
-                      <span className="toggle-label">Email Verification</span>
-                      <span className="toggle-description">
-                        {currentUser?.emailVerified
-                          ? 'Your account email has been confirmed.'
-                          : 'Confirm your account email to unlock posting.'}
-                      </span>
-                      {verificationNotice && <span className="email-verification-setting-notice">{verificationNotice}</span>}
-                    </div>
-                    {currentUser?.emailVerified ? (
-                      <span className="email-verification-status verified">
-                        <CheckCircle2 aria-hidden="true" />
-                        Verified
-                      </span>
-                    ) : (
-                      <div className="email-verification-setting-actions">
-                        <button
-                          type="button"
-                          className="secondary-action-btn"
-                          onClick={handleSendVerification}
-                          disabled={verificationLoading !== null || verificationEmailCooldownSeconds > 0}
-                        >
-                          {verificationLoading === 'send'
-                            ? 'Sending...'
-                            : verificationEmailCooldownSeconds > 0
-                              ? `Resend in ${verificationCooldownLabel}`
-                              : verificationEmailSent
-                                ? 'Resend email'
-                                : 'Verify now'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
+                  <SettingsToggle
+                    label="New Follower Notices"
+                    description="Receive a discreet notification when another reader begins following your commonplace."
+                    checked={followerAlerts}
+                    onChange={setFollowerAlerts}
+                    icon={Users}
+                  />
                 </div>
               </SettingsSection>
 
-              <SettingsSection title="Biography" description="Share a short introduction about your taste.">
-                <SettingsField
-                  label="Bio"
-                  helperText={<span className="char-count">{bio.length} / 300 characters</span>}
-                  htmlFor="bio"
-                >
-                  <textarea
-                    id="bio"
-                    className="dark-setting-textarea"
-                    rows={4}
-                    value={bio}
-                    maxLength={300}
-                    onChange={(e) => setBio(e.target.value)}
-                    placeholder="Collector of timeless passages, album impressions, cinematic notes..."
+              <SettingsSection
+                title="Email Communications & Digests"
+                description="Periodic reflections and administrative dispatches delivered directly to your inbox."
+                icon={Mail}
+              >
+                <div className="settings-card">
+                  <SettingsToggle
+                    label="Weekly Sanctuary Digest"
+                    description="A calm Sunday morning summary highlighting discussions, notable quotes, and popular media in your circle."
+                    checked={emailDigest}
+                    onChange={setEmailDigest}
+                    icon={Mail}
                   />
-                </SettingsField>
+
+                  <SettingsToggle
+                    label="Product & Feature Announcements"
+                    description="Infrequent, intentional updates regarding new capabilities, typography releases, and archiving tools."
+                    checked={announcementAlerts}
+                    onChange={setAnnouncementAlerts}
+                    icon={Sparkles}
+                  />
+                </div>
               </SettingsSection>
 
-              <SettingsSection title="Social List Preferences" description="Control visibility of your followers and following lists.">
-                <SettingsToggle
-                  label="Show Followers & Following Lists"
-                  description="Allow visitors to click your follower and following counts on your profile to view your connections."
-                  checked={showFollowLists}
-                  onChange={setShowFollowLists}
-                />
+              <SettingsSection
+                title="Quiet Hours & Focus"
+                description="Silence notification sounds and real-time banners during contemplation or reading hours."
+                icon={Clock}
+              >
+                <div className="settings-card">
+                  <SettingsToggle
+                    label="Enable Quiet Hours"
+                    description="Temporarily silence push sounds and banners between 10:00 PM and 8:00 AM in your local timezone."
+                    checked={quietHours}
+                    onChange={setQuietHours}
+                    icon={Clock}
+                    badge={quietHours ? '10 PM – 8 AM' : 'Inactive'}
+                  />
+                </div>
               </SettingsSection>
             </div>
           )}
 
-          {/* PAGE 2: SOCIAL & INTERACTIONS */}
+          {/* TAB 3: SOCIAL & INTERACTIONS */}
           {activeTab === 'social' && (
             <div className="settings-page-content">
               <div className="settings-header-minimal">
                 <h1 className="settings-page-title">Social & Interactions</h1>
-                <p className="settings-page-desc">Manage comments and replies on your entries.</p>
+                <p className="settings-page-desc">Manage comments, community replies, and interaction boundaries.</p>
               </div>
 
-              <SettingsSection title="Comment Settings">
-                <SettingsToggle
-                  label="Allow Comments on Entries"
-                  description="Allow other readers to post comments and replies on your catalog entries."
-                  checked={allowComments}
-                  onChange={setAllowComments}
-                />
+              <SettingsSection
+                title="Comment Settings"
+                description="Control who is permitted to leave responses on your entries."
+                icon={MessageSquare}
+              >
+                <div className="settings-card">
+                  <SettingsToggle
+                    label="Allow Comments on Entries"
+                    description="Allow other readers to post comments and replies on your catalog entries."
+                    checked={allowComments}
+                    onChange={setAllowComments}
+                    icon={MessageSquare}
+                  />
+
+                  {allowComments && (
+                    <div style={{ paddingTop: '12px', borderTop: '1px solid var(--divider)' }}>
+                      <SettingsField label="Who can comment" helperText="Restrict comments to readers you mutually follow.">
+                        <div className="settings-tile-group">
+                          <button
+                            type="button"
+                            className={`settings-tile-card ${commentAudience === 'anyone' ? 'selected' : ''}`}
+                            onClick={() => setCommentAudience('anyone')}
+                          >
+                            <div className="settings-tile-title-row">
+                              <span>Anyone on The Commonplace</span>
+                              {commentAudience === 'anyone' && <Check size={14} aria-hidden="true" />}
+                            </div>
+                            <p className="settings-tile-desc">Open to any registered reader browsing your commonplace.</p>
+                          </button>
+
+                          <button
+                            type="button"
+                            className={`settings-tile-card ${commentAudience === 'mutuals' ? 'selected' : ''}`}
+                            onClick={() => setCommentAudience('mutuals')}
+                          >
+                            <div className="settings-tile-title-row">
+                              <span>Mutual Followers Only</span>
+                              {commentAudience === 'mutuals' && <Check size={14} aria-hidden="true" />}
+                            </div>
+                            <p className="settings-tile-desc">Only people you follow back may leave remarks.</p>
+                          </button>
+                        </div>
+                      </SettingsField>
+                    </div>
+                  )}
+                </div>
               </SettingsSection>
 
+              <SettingsSection
+                title="Social List Preferences"
+                description="Control visibility of your followers and following lists."
+                icon={Users}
+              >
+                <div className="settings-card">
+                  <SettingsToggle
+                    label="Show Followers & Following Lists"
+                    description="Allow visitors to click your follower and following counts on your profile to view your connections."
+                    checked={showFollowLists}
+                    onChange={setShowFollowLists}
+                    icon={Users}
+                  />
+                </div>
+              </SettingsSection>
             </div>
           )}
 
-          {/* PAGE 4: PRIVACY */}
+          {/* TAB 4: LANGUAGE & REGION */}
+          {activeTab === 'language' && (
+            <div className="settings-page-content">
+              <div className="settings-header-minimal">
+                <h1 className="settings-page-title">Language & Region</h1>
+                <p className="settings-page-desc">
+                  Customize your locale, regional formatting conventions, and upcoming multilingual preferences.
+                </p>
+              </div>
+
+              <SettingsSection
+                title="Multilingual Commonplace"
+                description="The Commonplace is being prepared for a global community of readers and scholars."
+                icon={Globe}
+              >
+                {/* Multilingual Placeholder Callout Card */}
+                <div className="settings-card settings-multilingual-card">
+                  <div className="settings-multilingual-badge-row">
+                    <span className="multilingual-status-pill">
+                      <Sparkles size={13} aria-hidden="true" />
+                      Multilingual Support Coming Soon
+                    </span>
+                  </div>
+                  <h3 className="settings-multilingual-headline">
+                    Literary translations currently in progress
+                  </h3>
+                  <p className="settings-multilingual-text">
+                    We are thoughtfully translating interface typography, literary catalogs, and sanctuary navigation
+                    into world languages. The current interface is fully available in English, with additional languages
+                    rolling out soon.
+                  </p>
+
+                  <div className="settings-language-grid">
+                    <div className="settings-language-option active">
+                      <div className="language-option-header">
+                        <span className="language-name">English</span>
+                        <span className="language-badge active">
+                          <Check size={12} aria-hidden="true" /> Active
+                        </span>
+                      </div>
+                      <span className="language-subname">English (US / International)</span>
+                    </div>
+
+                    <div className="settings-language-option coming-soon">
+                      <div className="language-option-header">
+                        <span className="language-name">Français</span>
+                        <span className="language-badge coming-soon">In Translation</span>
+                      </div>
+                      <span className="language-subname">French</span>
+                    </div>
+
+                    <div className="settings-language-option coming-soon">
+                      <div className="language-option-header">
+                        <span className="language-name">Deutsch</span>
+                        <span className="language-badge coming-soon">In Translation</span>
+                      </div>
+                      <span className="language-subname">German</span>
+                    </div>
+
+                    <div className="settings-language-option coming-soon">
+                      <div className="language-option-header">
+                        <span className="language-name">日本語</span>
+                        <span className="language-badge coming-soon">In Translation</span>
+                      </div>
+                      <span className="language-subname">Japanese</span>
+                    </div>
+
+                    <div className="settings-language-option coming-soon">
+                      <div className="language-option-header">
+                        <span className="language-name">Español</span>
+                        <span className="language-badge coming-soon">In Translation</span>
+                      </div>
+                      <span className="language-subname">Spanish</span>
+                    </div>
+
+                    <div className="settings-language-option coming-soon">
+                      <div className="language-option-header">
+                        <span className="language-name">Italiano</span>
+                        <span className="language-badge coming-soon">In Translation</span>
+                      </div>
+                      <span className="language-subname">Italian</span>
+                    </div>
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
+                title="Date & Time Formatting"
+                description="Select how dates, journal stamps, and publication years appear across your commonplace."
+                icon={Clock}
+              >
+                <div className="settings-card">
+                  <SettingsField label="Date Format Style" helperText="Applied to entry timestamps, reviews, and reading milestones.">
+                    <div className="settings-tile-group">
+                      <button
+                        type="button"
+                        className={`settings-tile-card ${dateFormat === 'locale' ? 'selected' : ''}`}
+                        onClick={() => setDateFormat('locale')}
+                      >
+                        <div className="settings-tile-title-row">
+                          <span>Standard Locale</span>
+                          {dateFormat === 'locale' && <Check size={14} aria-hidden="true" />}
+                        </div>
+                        <p className="settings-tile-desc">e.g. 27 Oct 2026 • Follows your browser's natural regional formatting.</p>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`settings-tile-card ${dateFormat === 'editorial' ? 'selected' : ''}`}
+                        onClick={() => setDateFormat('editorial')}
+                      >
+                        <div className="settings-tile-title-row">
+                          <span>Literary Longform</span>
+                          {dateFormat === 'editorial' && <Check size={14} aria-hidden="true" />}
+                        </div>
+                        <p className="settings-tile-desc">e.g. October 27, 2026 • Manuscript format for reflections and essays.</p>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`settings-tile-card ${dateFormat === 'iso' ? 'selected' : ''}`}
+                        onClick={() => setDateFormat('iso')}
+                      >
+                        <div className="settings-tile-title-row">
+                          <span>Archival ISO 8601</span>
+                          {dateFormat === 'iso' && <Check size={14} aria-hidden="true" />}
+                        </div>
+                        <p className="settings-tile-desc">e.g. 2026-10-27 • Strict chronological standard for archival records.</p>
+                      </button>
+                    </div>
+                  </SettingsField>
+
+                  <div style={{ paddingTop: '16px', borderTop: '1px solid var(--divider)' }}>
+                    <SettingsField label="First Day of the Week" helperText="Defines the starting day on reading logs and calendars.">
+                      <div className="settings-tile-group" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                        <button
+                          type="button"
+                          className={`settings-tile-card ${firstDayOfWeek === 'sunday' ? 'selected' : ''}`}
+                          onClick={() => setFirstDayOfWeek('sunday')}
+                        >
+                          <div className="settings-tile-title-row">
+                            <span>Sunday</span>
+                            {firstDayOfWeek === 'sunday' && <Check size={14} aria-hidden="true" />}
+                          </div>
+                          <p className="settings-tile-desc">Standard in US, Canada, and Japan</p>
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`settings-tile-card ${firstDayOfWeek === 'monday' ? 'selected' : ''}`}
+                          onClick={() => setFirstDayOfWeek('monday')}
+                        >
+                          <div className="settings-tile-title-row">
+                            <span>Monday</span>
+                            {firstDayOfWeek === 'monday' && <Check size={14} aria-hidden="true" />}
+                          </div>
+                          <p className="settings-tile-desc">ISO standard &amp; common throughout Europe</p>
+                        </button>
+                      </div>
+                    </SettingsField>
+                  </div>
+
+                  <div style={{ paddingTop: '16px', borderTop: '1px solid var(--divider)' }}>
+                    <div className="settings-timezone-row">
+                      <div className="settings-timezone-info">
+                        <span className="settings-timezone-label">Detected Timezone</span>
+                        <span className="settings-timezone-value">
+                          {Intl?.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC'}
+                        </span>
+                        <span className="settings-timezone-hint">
+                          Automatically synchronized with your operating system device clock.
+                        </span>
+                      </div>
+                      <span className="settings-badge-synced">
+                        <CheckCircle2 size={13} aria-hidden="true" /> Synchronized
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </SettingsSection>
+            </div>
+          )}
+
+          {/* TAB 4: PRIVACY */}
           {activeTab === 'privacy' && (
             <div className="settings-page-content">
               <div className="settings-header-minimal">
@@ -681,66 +1341,310 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </div>
 
               <SettingsSection
+                title="Display Name & Identity Visibility"
+                description="Control how your display name and full name appear publicly across the community."
+                icon={User}
+              >
+                <div className="settings-card">
+                  <SettingsField
+                    label="Display Name"
+                    helperText={
+                      <span>
+                        Preview: <strong>{computedDisplayName}</strong> • Shown at the top of your public profile and discussions.
+                      </span>
+                    }
+                    htmlFor="privacy-display-name"
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <input
+                        id="privacy-display-name"
+                        type="text"
+                        className="dark-setting-input"
+                        value={computedDisplayName}
+                        readOnly
+                        style={{ opacity: 0.85, cursor: 'default' }}
+                      />
+                      <SettingsToggle
+                        label="Display Full Name"
+                        description="Include your last name in public displays alongside your @handle."
+                        checked={showFullName}
+                        onChange={setShowFullName}
+                        icon={User}
+                      />
+                    </div>
+                  </SettingsField>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
                 title="Profile Visibility"
                 description="Choose whether your commonplace is open to others or kept entirely private."
+                icon={Shield}
               >
-                <SettingsToggle
-                  label="Private Profile"
-                  description="When enabled, your profile and catalog will be hidden from all other users."
-                  checked={privateProfile}
-                  onChange={setPrivateProfile}
-                />
-
-                <SettingsToggle
-                  label="Display Full Name"
-                  description="Show your full name publicly alongside your username handle."
-                  checked={showFullName}
-                  onChange={setShowFullName}
-                />
+                <div className="settings-card">
+                  <SettingsToggle
+                    label="Private Profile"
+                    description="When enabled, your profile and catalog will be hidden from all other users."
+                    checked={privateProfile}
+                    onChange={setPrivateProfile}
+                    icon={Shield}
+                    badge={privateProfile ? 'Private Sanctum' : 'Public'}
+                  />
+                </div>
               </SettingsSection>
 
               <SettingsSection
                 title="Saved Activity"
                 description="Choose whether visitors can browse the things you have saved."
+                icon={Bookmark}
               >
-                <SettingsToggle
-                  label="Show Saved Catalog & Collections"
-                  description="Display a Saved tab on your public profile. This is hidden by default and does not affect what you can see yourself."
-                  checked={showSavedActivity}
-                  onChange={setShowSavedActivity}
-                />
+                <div className="settings-card">
+                  <SettingsToggle
+                    label="Show Saved Catalog & Collections"
+                    description="Display a Saved tab on your public profile. This is hidden by default and does not affect what you can see yourself."
+                    checked={showSavedActivity}
+                    onChange={setShowSavedActivity}
+                    icon={Bookmark}
+                  />
+                </div>
               </SettingsSection>
 
               <SettingsSection
                 title="Home Recommendations"
                 description="Clear the interests learned from your catalog, saves, likes, and opened media."
+                icon={Sparkles}
               >
-                <div className="settings-danger-zone-row">
-                  <div>
-                    <strong>Reset Home recommendations</strong>
-                    <span>Your public and mutual-follow feed will return to a fresh, diverse ordering.</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="secondary-action-btn"
-                    onClick={handleResetHomeRecommendations}
-                    disabled={recommendationResetting || !onResetHomeRecommendations}
+                <div className="settings-card">
+                  <div
+                    className="settings-danger-zone-row"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '20px',
+                      flexWrap: 'wrap',
+                    }}
                   >
-                    {recommendationResetting ? 'Resetting…' : 'Reset recommendations'}
-                  </button>
+                    <div>
+                      <strong style={{ display: 'block', color: 'var(--text-strong)', fontSize: '14px', marginBottom: '3px' }}>
+                        Reset Home recommendations
+                      </strong>
+                      <span style={{ fontSize: '12.5px', color: 'var(--secondary)' }}>
+                        Your public and mutual-follow feed will return to a fresh, diverse ordering.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action-btn"
+                      onClick={handleResetHomeRecommendations}
+                      disabled={recommendationResetting || !onResetHomeRecommendations}
+                    >
+                      {recommendationResetting ? 'Resetting…' : 'Reset recommendations'}
+                    </button>
+                  </div>
+                  {recommendationNotice && <p className="settings-page-desc" role="status">{recommendationNotice}</p>}
                 </div>
-                {recommendationNotice && <p className="settings-page-desc" role="status">{recommendationNotice}</p>}
               </SettingsSection>
-
             </div>
           )}
 
-          {/* PAGE 5: SECURITY */}
+          {/* TAB: YOUR DATA */}
+          {activeTab === 'data' && (
+            <div className="settings-page-content">
+              <div className="settings-header-minimal">
+                <h1 className="settings-page-title">Your Data</h1>
+                <p className="settings-page-desc">
+                  Maintain complete sovereignty over your library, export archival records, and control local session traces.
+                </p>
+              </div>
+
+              {exportNotice && (
+                <div className="settings-saved-banner">
+                  <CheckCircle2 aria-hidden="true" />
+                  <span>{exportNotice}</span>
+                </div>
+              )}
+
+              {cacheNotice && (
+                <div className="settings-saved-banner">
+                  <CheckCircle2 aria-hidden="true" />
+                  <span>{cacheNotice}</span>
+                </div>
+              )}
+
+              <SettingsSection
+                title="Data Sovereignty & Archival Export"
+                description="Download a complete copy of your entries, reflections, and commonplace collections in portable formats."
+                icon={Download}
+              >
+                <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div className="settings-export-card" style={{ border: 'none', padding: 0 }}>
+                    <div className="settings-export-info">
+                      <span className="settings-export-title">Export Commonplace Archive (.json)</span>
+                      <span className="settings-export-desc">
+                        A machine-readable, timestamped JSON archive containing your complete catalog, quotes, reflections, and account metadata.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action-btn"
+                      onClick={handleExportArchive}
+                    >
+                      <Download aria-hidden="true" />
+                      <span>Export Archive (.json)</span>
+                    </button>
+                  </div>
+
+                  <div style={{ height: '1px', background: 'var(--divider)', width: '100%' }} />
+
+                  <div className="settings-export-card" style={{ border: 'none', padding: 0 }}>
+                    <div className="settings-export-info">
+                      <span className="settings-export-title">Export Literary Notes (.md)</span>
+                      <span className="settings-export-desc">
+                        Formatted Markdown document of your reading notes, favorite passages, and reflections for Obsidian, Notion, or personal archives.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action-btn"
+                      onClick={handleExportMarkdown}
+                    >
+                      <FileText aria-hidden="true" />
+                      <span>Export Notes (.md)</span>
+                    </button>
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
+                title="Activity & Session Traces"
+                description="Manage local device traces of your reading and exploration activity."
+                icon={Clock}
+              >
+                <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div className="settings-danger-row" style={{ padding: 0 }}>
+                    <div className="settings-danger-info">
+                      <strong className="settings-danger-title" style={{ color: 'var(--text-strong)' }}>
+                        Clear Reading &amp; Preview Trace
+                      </strong>
+                      <p className="settings-danger-desc">
+                        Clears the record of entries you opened to full reading view over the last 7 days.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action-btn"
+                      onClick={handleClearReadingTrace}
+                    >
+                      <Trash2 aria-hidden="true" />
+                      <span>Clear Reading Trace</span>
+                    </button>
+                  </div>
+
+                  <div style={{ height: '1px', background: 'var(--divider)', width: '100%' }} />
+
+                  <div className="settings-danger-row" style={{ padding: 0 }}>
+                    <div className="settings-danger-info">
+                      <strong className="settings-danger-title" style={{ color: 'var(--text-strong)' }}>
+                        Clear Visited Curators
+                      </strong>
+                      <p className="settings-danger-desc">
+                        Clears the quick-access history of curator profiles you have visited in the Activity tab.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action-btn"
+                      onClick={handleClearVisitedProfiles}
+                    >
+                      <Trash2 aria-hidden="true" />
+                      <span>Clear Visited Curators</span>
+                    </button>
+                  </div>
+
+                  <div style={{ height: '1px', background: 'var(--divider)', width: '100%' }} />
+
+                  <div className="settings-danger-row" style={{ padding: 0 }}>
+                    <div className="settings-danger-info">
+                      <strong className="settings-danger-title" style={{ color: 'var(--text-strong)' }}>
+                        Clear Search Queries
+                      </strong>
+                      <p className="settings-danger-desc">
+                        Deletes recent author and media search keywords cached in your local browser storage.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action-btn"
+                      onClick={handleClearLocalCache}
+                    >
+                      <Trash2 aria-hidden="true" />
+                      <span>Clear Search Cache</span>
+                    </button>
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
+                title="Storage & Offline Cache"
+                description="Manage client-side caching to reduce device memory usage or force synchronization."
+                icon={HardDrive}
+              >
+                <div className="settings-card">
+                  <div className="settings-danger-row" style={{ padding: 0 }}>
+                    <div className="settings-danger-info">
+                      <strong className="settings-danger-title" style={{ color: 'var(--text-strong)' }}>
+                        Purge Local Device Cache
+                      </strong>
+                      <p className="settings-danger-desc">
+                        Removes temporary media thumbnails, cached feed snippets, and session artifacts without modifying your cloud commonplace data.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary-action-btn"
+                      onClick={handleClearLocalCache}
+                    >
+                      <HardDrive aria-hidden="true" />
+                      <span>Purge Local Cache</span>
+                    </button>
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
+                title="Sanctuary Data Covenant"
+                description="Our fundamental commitment to personal sovereignty and zero monetization."
+                icon={ShieldCheck}
+              >
+                <div className="settings-card">
+                  <div className="settings-legal-policy-card">
+                    <div className="legal-policy-card-body">
+                      <div className="legal-policy-card-header">
+                        <div className="legal-policy-badge">
+                          <ShieldCheck size={13} aria-hidden="true" />
+                          <span>Zero Ad Monetization</span>
+                        </div>
+                        <span className="legal-policy-updated">Sovereignty Promise</span>
+                      </div>
+                      <h3 className="legal-policy-title">Your library belongs solely to you.</h3>
+                      <p className="legal-policy-desc">
+                        We never sell, rent, or broker your reading history, personal notes, or intellectual reflections to third parties.
+                        The Commonplace is designed as a sanctuary—free from advertising surveillance, algorithmic manipulation, and locked silos.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </SettingsSection>
+            </div>
+          )}
+
+          {/* TAB 5: SECURITY */}
           {activeTab === 'security' && (
             <div className="settings-page-content">
               <div className="settings-header-minimal">
                 <h1 className="settings-page-title">Account & Security</h1>
-                <p className="settings-page-desc">Manage two-factor authentication, passwords, and linked accounts.</p>
+                <p className="settings-page-desc">Manage credentials, passwords, and linked accounts.</p>
               </div>
 
               {passwordNotice && (
@@ -753,110 +1657,122 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <SettingsSection
                 title="Email Address"
                 description="Manage the email used to sign in and receive account messages."
+                icon={Mail}
               >
-                <div className="settings-email-address-panel">
-                  <SettingsField label="Current email" htmlFor="security-current-email">
-                    <input
-                      id="security-current-email"
-                      type="email"
-                      className="dark-setting-input"
-                      value={currentEmail}
-                      readOnly
-                    />
-                  </SettingsField>
-
-                  {!emailEditorOpen && (
-                    <button
-                      type="button"
-                      className="secondary-action-btn"
-                      onClick={() => {
-                        setEmailEditorOpen(true)
-                        setEmailChangeError('')
-                        setEmailChangeNotice('')
-                      }}
-                    >
-                      Change Email
-                    </button>
-                  )}
-
-                  {emailEditorOpen && (
-                    <form className="settings-email-change-form" onSubmit={handleChangeEmail} noValidate>
-                      <SettingsField label="New email address" htmlFor="security-new-email">
+                <div className="settings-card">
+                  <div className="settings-email-address-panel" style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%' }}>
+                    <SettingsField label="Current email" htmlFor="security-current-email">
+                      {!emailEditorOpen ? (
+                        <div className="settings-inline-action-row">
+                          <input
+                            id="security-current-email"
+                            type="email"
+                            className="dark-setting-input"
+                            value={currentEmail}
+                            readOnly
+                          />
+                          <button
+                            type="button"
+                            className="secondary-action-btn"
+                            onClick={() => {
+                              setEmailEditorOpen(true)
+                              setEmailChangeError('')
+                              setEmailChangeNotice('')
+                            }}
+                          >
+                            Change Email
+                          </button>
+                        </div>
+                      ) : (
                         <input
-                          id="security-new-email"
+                          id="security-current-email"
                           type="email"
-                          autoComplete="email"
-                          className={`dark-setting-input ${emailChangeError ? 'error' : ''}`}
-                          value={newEmail}
-                          onChange={(event) => {
-                            setNewEmail(event.target.value)
-                            setEmailChangeError('')
-                          }}
-                          placeholder="you@example.com"
-                          autoFocus
+                          className="dark-setting-input"
+                          value={currentEmail}
+                          readOnly
                         />
-                      </SettingsField>
-                      {emailChangeError && <span className="settings-email-change-error" role="alert">{emailChangeError}</span>}
-                      <div className="settings-email-change-actions">
-                        <button
-                          type="button"
-                          className="save-bar-cancel-btn"
-                          onClick={() => {
-                            setEmailEditorOpen(false)
-                            setNewEmail('')
-                            setEmailChangeError('')
-                          }}
-                          disabled={emailChangeLoading}
-                        >
-                          Cancel
-                        </button>
-                        <button type="submit" className="secondary-action-btn" disabled={emailChangeLoading}>
-                          {emailChangeLoading ? 'Sending...' : 'Send verification link'}
-                        </button>
-                      </div>
-                    </form>
-                  )}
+                      )}
+                    </SettingsField>
 
-                  {emailChangeNotice && (
-                    <div className="settings-email-change-notice" role="status">
-                      <CheckCircle2 aria-hidden="true" />
-                      <span>{emailChangeNotice}</span>
-                    </div>
-                  )}
+                    {emailEditorOpen && (
+                      <form className="settings-email-change-form" onSubmit={handleChangeEmail} noValidate>
+                        <SettingsField label="New email address" htmlFor="security-new-email">
+                          <input
+                            id="security-new-email"
+                            type="email"
+                            autoComplete="email"
+                            className={`dark-setting-input ${emailChangeError ? 'error' : ''}`}
+                            value={newEmail}
+                            onChange={(event) => {
+                              setNewEmail(event.target.value)
+                              setEmailChangeError('')
+                            }}
+                            placeholder="you@example.com"
+                            autoFocus
+                          />
+                        </SettingsField>
+                        {emailChangeError && <span className="settings-email-change-error" role="alert">{emailChangeError}</span>}
+                        <div className="settings-email-change-actions" style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                          <button
+                            type="button"
+                            className="save-bar-cancel-btn"
+                            onClick={() => {
+                              setEmailEditorOpen(false)
+                              setNewEmail('')
+                              setEmailChangeError('')
+                            }}
+                            disabled={emailChangeLoading}
+                          >
+                            Cancel
+                          </button>
+                          <button type="submit" className="secondary-action-btn" disabled={emailChangeLoading}>
+                            {emailChangeLoading ? 'Sending...' : 'Send verification link'}
+                          </button>
+                        </div>
+                      </form>
+                    )}
 
-                  <div className="email-verification-setting" aria-label="Email Verification">
-                    <div className="email-verification-setting-copy">
-                      <span className="toggle-label">Email Verification</span>
-                      <span className="toggle-description">
-                        {currentUser?.emailVerified
-                          ? 'Your account email has been confirmed.'
-                          : 'Confirm your account email to unlock posting.'}
-                      </span>
-                      {verificationNotice && <span className="email-verification-setting-notice">{verificationNotice}</span>}
-                    </div>
-                    {currentUser?.emailVerified ? (
-                      <span className="email-verification-status verified">
+                    {emailChangeNotice && (
+                      <div className="settings-email-change-notice" role="status">
                         <CheckCircle2 aria-hidden="true" />
-                        Verified
-                      </span>
-                    ) : (
-                      <div className="email-verification-setting-actions">
-                        <button
-                          type="button"
-                          className="secondary-action-btn"
-                          onClick={handleSendVerification}
-                          disabled={verificationLoading !== null || verificationEmailCooldownSeconds > 0}
-                        >
-                          {verificationLoading === 'send'
-                            ? 'Sending...'
-                            : verificationEmailCooldownSeconds > 0
-                              ? `Resend in ${verificationCooldownLabel}`
-                              : verificationEmailSent
-                                ? 'Resend email'
-                                : 'Verify now'}
-                        </button>
+                        <span>{emailChangeNotice}</span>
                       </div>
                     )}
+
+                    <div className="email-verification-setting full-width" style={{ width: '100%', boxSizing: 'border-box' }} aria-label="Email Verification">
+                      <div className="email-verification-setting-copy">
+                        <span className="toggle-label">Email Verification</span>
+                        <span className="toggle-description">
+                          {currentUser?.emailVerified
+                            ? 'Your account email has been confirmed.'
+                            : 'Confirm your account email to unlock posting.'}
+                        </span>
+                        {verificationNotice && <span className="email-verification-setting-notice">{verificationNotice}</span>}
+                      </div>
+                      {currentUser?.emailVerified ? (
+                        <span className="email-verification-status verified">
+                          <CheckCircle2 aria-hidden="true" />
+                          Verified
+                        </span>
+                      ) : (
+                        <div className="email-verification-setting-actions">
+                          <button
+                            type="button"
+                            className="secondary-action-btn"
+                            onClick={handleSendVerification}
+                            disabled={verificationLoading !== null || verificationEmailCooldownSeconds > 0}
+                          >
+                            {verificationLoading === 'send'
+                              ? 'Sending...'
+                              : verificationEmailCooldownSeconds > 0
+                                ? `Resend in ${verificationCooldownLabel}`
+                                : verificationEmailSent
+                                  ? 'Resend email'
+                                  : 'Verify now'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </SettingsSection>
@@ -864,57 +1780,60 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               <SettingsSection
                 title="Change Password"
                 description="Update your account password regularly."
+                icon={Lock}
               >
-                <form onSubmit={handlePasswordUpdate} className="settings-form-grid">
-                  <SettingsField label="Current Password" htmlFor="current-password">
-                    <input
-                      id="current-password"
-                      type="password"
-                      className="dark-setting-input"
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      placeholder="••••••••••••"
-                      required
-                    />
-                  </SettingsField>
-
-                  <div className="form-row-two-col">
-                    <SettingsField label="New Password" htmlFor="new-password">
+                <div className="settings-card">
+                  <form onSubmit={handlePasswordUpdate} className="settings-form-grid">
+                    <SettingsField label="Current Password" htmlFor="current-password">
                       <input
-                        id="new-password"
+                        id="current-password"
                         type="password"
                         className="dark-setting-input"
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
                         placeholder="••••••••••••"
                         required
                       />
                     </SettingsField>
 
-                    <SettingsField label="Confirm New Password" htmlFor="confirm-password">
-                      <input
-                        id="confirm-password"
-                        type="password"
-                        className="dark-setting-input"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="••••••••••••"
-                        required
-                      />
-                    </SettingsField>
-                  </div>
+                    <div className="form-row-two-col">
+                      <SettingsField label="New Password" htmlFor="new-password">
+                        <input
+                          id="new-password"
+                          type="password"
+                          className="dark-setting-input"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          placeholder="••••••••••••"
+                          required
+                        />
+                      </SettingsField>
 
-                  <div>
-                    <button type="submit" className="secondary-action-btn" disabled={passwordLoading}>
-                      <Lock aria-hidden="true" />
-                      <span>{passwordLoading ? 'Updating…' : 'Update Password'}</span>
-                    </button>
-                  </div>
-                  {passwordError && <p className="settings-delete-account-error" role="alert">{passwordError}</p>}
-                </form>
+                      <SettingsField label="Confirm New Password" htmlFor="confirm-password">
+                        <input
+                          id="confirm-password"
+                          type="password"
+                          className="dark-setting-input"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          placeholder="••••••••••••"
+                          required
+                        />
+                      </SettingsField>
+                    </div>
+
+                    <div>
+                      <button type="submit" className="secondary-action-btn" disabled={passwordLoading}>
+                        <Lock aria-hidden="true" />
+                        <span>{passwordLoading ? 'Updating…' : 'Update Password'}</span>
+                      </button>
+                    </div>
+                    {passwordError && <p className="settings-delete-account-error" role="alert">{passwordError}</p>}
+                  </form>
+                </div>
               </SettingsSection>
 
-              <SettingsSection title="Linked Accounts">
+              <SettingsSection title="Linked Accounts" description="Fast, secure sign-in with verified third-party identities." icon={Link2}>
                 <div className="linked-accounts-editorial-list">
                   {PROVIDERS.filter(({ id }) => id === 'google' || id === 'apple').map((provider) => {
                     const status = accountStatuses[provider.id] || 'disconnected'
@@ -936,44 +1855,234 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <SettingsSection
                   title="Danger Zone"
                   description="Step away temporarily or permanently remove your account."
+                  icon={AlertTriangle}
+                  isDanger
                 >
-                  <div className="settings-danger-zone-row settings-deactivation-row">
-                    <div>
-                      <strong>Deactivate account</strong>
-                      <span>Hide your profile and activity until your chosen return date—or until you decide to return.</span>
+                  <div className="settings-card" style={{ borderColor: 'rgba(239, 68, 68, 0.25)' }}>
+                    <div className="settings-danger-zone-container">
+                      <div className="settings-danger-row settings-deactivation-row">
+                        <div className="settings-danger-info">
+                          <strong className="settings-danger-title">Deactivate account</strong>
+                          <p className="settings-danger-desc">
+                            Hide your profile and activity until your chosen return date—or until you decide to return.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="settings-deactivation-button"
+                          onClick={openDeactivationFlow}
+                        >
+                          <Clock aria-hidden="true" />
+                          <span>Deactivate account</span>
+                        </button>
+                      </div>
+
+                      <div className="settings-danger-divider" />
+
+                      <div className="settings-danger-row">
+                        <div className="settings-danger-info">
+                          <strong className="settings-danger-title is-delete">Delete account</strong>
+                          <p className="settings-danger-desc">
+                            This removes your profile, catalogs, collections, comments, likes, follows, and sign-in account permanently.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="settings-danger-button"
+                          onClick={() => {
+                            setDeleteDialogOpen(true)
+                            setDeleteConfirmation('')
+                            setDeleteError('')
+                          }}
+                        >
+                          <Trash2 aria-hidden="true" />
+                          <span>Delete account</span>
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      className="settings-deactivation-button"
-                      onClick={openDeactivationFlow}
-                    >
-                      <Clock aria-hidden="true" />
-                      Deactivate account
-                    </button>
-                  </div>
-                  <div className="settings-danger-zone-row">
-                    <div>
-                      <strong>Delete account</strong>
-                      <span>This removes your profile, catalogs, collections, comments, likes, follows, and sign-in account.</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="settings-danger-button"
-                      onClick={() => {
-                        setDeleteDialogOpen(true)
-                        setDeleteConfirmation('')
-                        setDeleteError('')
-                      }}
-                    >
-                      <Trash2 aria-hidden="true" />
-                      Delete account
-                    </button>
                   </div>
                 </SettingsSection>
               </div>
             </div>
           )}
 
+          {/* TAB 7: COMMUNITY STANDARDS & LEGAL POLICY */}
+          {activeTab === 'legal' && (
+            <div className="settings-page-content">
+              <div className="settings-header-minimal">
+                <h1 className="settings-page-title">Community Standards &amp; Legal Policy</h1>
+                <p className="settings-page-desc">
+                  The covenants, safety rules, and legal agreements that preserve The Commonplace as a thoughtful, respectful sanctuary.
+                </p>
+              </div>
+
+              <SettingsSection
+                title="Terms of Service & Covenants"
+                description="The core agreement governing account ownership, intellectual property, and sanctuary integrity."
+                icon={Scroll}
+              >
+                <div className="settings-card">
+                  <div className="settings-legal-policy-card">
+                    <div className="legal-policy-card-body">
+                      <div className="legal-policy-card-header">
+                        <div className="legal-policy-badge">
+                          <Scroll size={13} aria-hidden="true" />
+                          <span>Binding Covenant</span>
+                        </div>
+                        <span className="legal-policy-updated">Updated for 2026</span>
+                      </div>
+                      <h3 className="legal-policy-title">Terms of Service</h3>
+                      <p className="legal-policy-desc">
+                        Covers your intellectual property rights (you own everything you record), 16+ age eligibility,
+                        responsible curation, and service continuity. We claim no ownership over your reading reflections or notes.
+                      </p>
+                    </div>
+                    <div className="legal-policy-actions">
+                      <button
+                        type="button"
+                        className="secondary-action-btn"
+                        onClick={() => setLegalModalType('terms')}
+                      >
+                        Read Full Terms
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
+                title="Privacy Policy"
+                description="How your data is protected, minimized, and kept free from advertising monetization."
+                icon={ShieldCheck}
+              >
+                <div className="settings-card">
+                  <div className="settings-legal-policy-card">
+                    <div className="legal-policy-card-body">
+                      <div className="legal-policy-card-header">
+                        <div className="legal-policy-badge">
+                          <ShieldCheck size={13} aria-hidden="true" />
+                          <span>Privacy by Design</span>
+                        </div>
+                        <span className="legal-policy-updated">Zero Ad Tracking</span>
+                      </div>
+                      <h3 className="legal-policy-title">Privacy Policy</h3>
+                      <p className="legal-policy-desc">
+                        Details our strict data minimization principles. We do not sell or monetize personal information,
+                        your date of birth is kept private and hidden, and private profiles remain completely excluded from indexing.
+                      </p>
+                    </div>
+                    <div className="legal-policy-actions">
+                      <button
+                        type="button"
+                        className="secondary-action-btn"
+                        onClick={() => setLegalModalType('privacy')}
+                      >
+                        Read Full Privacy Policy
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
+                title="Cookie & Local Storage Policy"
+                description="Understand and manage how data is stored in your browser to maintain your reading experience."
+                icon={Cookie}
+              >
+                <div className="settings-card">
+                  <div className="settings-legal-policy-card" style={{ marginBottom: '16px' }}>
+                    <div className="legal-policy-card-body">
+                      <div className="legal-policy-card-header">
+                        <div className="legal-policy-badge">
+                          <Cookie size={13} aria-hidden="true" />
+                          <span>Minimal Footprint</span>
+                        </div>
+                        <span className="legal-policy-updated">No Cross-Site Cookies</span>
+                      </div>
+                      <h3 className="legal-policy-title">Cookie &amp; Storage Principles</h3>
+                      <p className="legal-policy-desc">
+                        The Commonplace avoids third-party advertising cookies entirely. We use strictly necessary local storage
+                        for secure session preservation and local caching of your typography and reading themes.
+                      </p>
+                    </div>
+                    <div className="legal-policy-actions">
+                      <button
+                        type="button"
+                        className="secondary-action-btn"
+                        onClick={() => setLegalModalType('cookies')}
+                      >
+                        Read Full Cookie Policy
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ paddingTop: '16px', borderTop: '1px solid var(--divider)' }}>
+                    <span className="toggle-label" style={{ display: 'block', marginBottom: '8px' }}>
+                      Browser Storage Preferences
+                    </span>
+                    <SettingsToggle
+                      label="Essential Authentication & Session Tokens"
+                      description="Required to keep your account signed in and protect transactions. Cannot be disabled."
+                      checked={true}
+                      disabled={true}
+                      onChange={() => {}}
+                      badge="Strictly Necessary"
+                    />
+
+                    <SettingsToggle
+                      label="Local Reading & Typography Cache"
+                      description="Stores your reading theme, catalog layout density, and font choices in localStorage for instantaneous rendering."
+                      checked={preferenceStorage}
+                      onChange={setPreferenceStorage}
+                      badge="Functional"
+                    />
+
+                    <SettingsToggle
+                      label="Anonymous Performance Telemetry"
+                      description="Helps us understand app performance bottlenecks and masonry render speed without collecting personal data."
+                      checked={analyticsStorage}
+                      onChange={setAnalyticsStorage}
+                      badge="Optional"
+                    />
+                  </div>
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
+                title="Community Standards & Guidelines"
+                description="The Principles of Sanctuary: fostering contemplative, civil, and generous artistic discourse."
+                icon={Scale}
+              >
+                <div className="settings-card">
+                  <div className="settings-legal-policy-card">
+                    <div className="legal-policy-card-body">
+                      <div className="legal-policy-card-header">
+                        <div className="legal-policy-badge">
+                          <Scale size={13} aria-hidden="true" />
+                          <span>Sanctuary Guidelines</span>
+                        </div>
+                        <span className="legal-policy-updated">Peer Moderation</span>
+                      </div>
+                      <h3 className="legal-policy-title">Community Standards</h3>
+                      <p className="legal-policy-desc">
+                        Our commitments to civil discourse, intellectual honesty in citations and quotations, responsible
+                        spoiler notices, and a zero-tolerance policy for harassment, discrimination, or abusive conduct.
+                      </p>
+                    </div>
+                    <div className="legal-policy-actions">
+                      <button
+                        type="button"
+                        className="secondary-action-btn"
+                        onClick={() => setLegalModalType('standards')}
+                      >
+                        Read Community Standards
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </SettingsSection>
+            </div>
+          )}
         </main>
       </div>
 
@@ -1077,7 +2186,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
       )}
 
-
       {deleteDialogOpen && (
         <div className="modal-backdrop" onClick={() => !deleteLoading && setDeleteDialogOpen(false)}>
           <div
@@ -1150,6 +2258,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         </div>
       )}
+
+      {/* Legal & Policy Modal */}
+      <LegalModal type={legalModalType} onClose={() => setLegalModalType(null)} />
     </div>
   )
 }

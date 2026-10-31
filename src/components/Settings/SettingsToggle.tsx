@@ -7,6 +7,8 @@ interface SettingsToggleProps {
   checked: boolean
   onChange: (checked: boolean) => void
   disabled?: boolean
+  icon?: React.ElementType
+  badge?: React.ReactNode
 }
 
 export const SettingsToggle: React.FC<SettingsToggleProps> = ({
@@ -15,12 +17,24 @@ export const SettingsToggle: React.FC<SettingsToggleProps> = ({
   checked,
   onChange,
   disabled = false,
+  icon: Icon,
+  badge,
 }) => {
   return (
     <div className={`settings-toggle-row ${disabled ? 'disabled' : ''}`}>
-      <div className="toggle-text">
-        <span className="toggle-label">{label}</span>
-        {description && <span className="toggle-description">{description}</span>}
+      <div className="toggle-left">
+        {Icon && (
+          <div className="toggle-icon-wrap" aria-hidden="true">
+            <Icon />
+          </div>
+        )}
+        <div className="toggle-text">
+          <div className="toggle-label-row">
+            <span className="toggle-label">{label}</span>
+            {badge && <span className="toggle-badge">{badge}</span>}
+          </div>
+          {description && <span className="toggle-description">{description}</span>}
+        </div>
       </div>
       <button
         type="button"
