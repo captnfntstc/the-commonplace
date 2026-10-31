@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as metadata from '../metadata'
 import type { Entry } from '../features/entries/model'
 import type { UniversalMediaEntity } from '../types/mediaEntity'
-import { reviewMatchesEntity, UniversalMediaProfilePage } from './UniversalMediaProfilePage'
+import { EntityLoadingSkeleton } from '../components/PageLoadingSkeleton'
+import { renderInlineTitleWithExplicit, reviewMatchesEntity, UniversalMediaProfilePage } from './UniversalMediaProfilePage'
 
 const gameEntity: UniversalMediaEntity = {
   id: 'game:fixture',
@@ -245,6 +247,82 @@ it('shares reviews between clean and explicit music editions with collaboration 
   expect(reviewMatchesEntity(cleanReview, explicitAlbum, explicitAlbum.metadataChips)).toBe(true)
 })
 
+it('does not bleed solo song reviews onto duet collaborations or remix versions', () => {
+  const soloSongReview: Entry = {
+    id: 'solo-review',
+    ownerId: 'reader',
+    type: 'song',
+    title: 'expectations',
+    creator: 'Olivia Rodrigo',
+    provider: 'you seem pretty sad for a girl so in love',
+    providerId: '1889992129',
+    rating: 5,
+    favoritePassage: 'Notable line',
+    reflection: 'Solo reflection',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    coverTone: 'rose',
+  }
+
+  const duetSongEntity: UniversalMediaEntity = {
+    id: 'song-6822390426',
+    name: 'expectations',
+    type: 'song',
+    categoryLabel: 'Song',
+    artworkUrl: '',
+    description: '',
+    metadataChips: [
+      { label: 'Artist', value: 'Olivia Rodrigo & Chappell Roan' },
+      { label: 'Album', value: 'expectations - Single' },
+    ],
+    communityRating: { average: 0, count: 0, distribution: {} },
+  }
+
+  const remixSongEntity: UniversalMediaEntity = {
+    id: 'song-remix-1',
+    name: 'expectations (Remix)',
+    type: 'song',
+    categoryLabel: 'Song',
+    artworkUrl: '',
+    description: '',
+    metadataChips: [
+      { label: 'Artist', value: 'Olivia Rodrigo' },
+      { label: 'Album', value: 'expectations (Remixes) - EP' },
+    ],
+    communityRating: { average: 0, count: 0, distribution: {} },
+  }
+
+  const cleanSongReview: Entry = {
+    ...soloSongReview,
+    id: 'clean-song-review',
+    title: 'expectations (Clean)',
+  }
+
+  const explicitSongEntity: UniversalMediaEntity = {
+    id: 'song-explicit-1',
+    name: 'expectations (Explicit)',
+    type: 'song',
+    categoryLabel: 'Song',
+    artworkUrl: '',
+    description: '',
+    metadataChips: [
+      { label: 'Artist', value: 'Olivia Rodrigo' },
+      { label: 'Album', value: 'you seem pretty sad for a girl so in love' },
+    ],
+    communityRating: { average: 0, count: 0, distribution: {} },
+  }
+
+  // Solo review must NOT match the duet with Chappell Roan
+  expect(reviewMatchesEntity(soloSongReview, duetSongEntity, duetSongEntity.metadataChips)).toBe(false)
+
+  // Standard review must NOT match the remix version
+  expect(reviewMatchesEntity(soloSongReview, remixSongEntity, remixSongEntity.metadataChips)).toBe(false)
+
+  // Clean and explicit editions of the same solo recording DO match
+  expect(reviewMatchesEntity(cleanSongReview, explicitSongEntity, explicitSongEntity.metadataChips)).toBe(true)
+})
+
+
 describe('universal media profile related content', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -436,5 +514,376 @@ describe('universal media profile related content', () => {
     expect(screen.getByText('404')).toBeInTheDocument()
     await waitFor(() => expect(onNotFound).toHaveBeenCalled())
   })
-})
 
+  it('renders spotlight profile layout with backdrop and container category badge', async () => {
+    const songEntity: UniversalMediaEntity = {
+      id: 'song:fixture-spotlight',
+      name: 'Spotlight Song',
+      type: 'song',
+      categoryLabel: 'Song',
+      artworkUrl: 'https://example.com/artwork.jpg',
+      providerId: '999',
+      explicit: false,
+      description: 'Song description',
+      metadataChips: [
+        { label: 'Artist', value: 'Fixture Artist' },
+        { label: 'Track #', value: '#4' },
+      ],
+      communityRating: { average: 4, count: 1, distribution: { 5: 0, 4: 1, 3: 0, 2: 0, 1: 0 } },
+    }
+
+    const { container } = render(
+      <UniversalMediaProfilePage
+        entity={songEntity}
+        communityEntries={[]}
+        onBack={vi.fn()}
+      />,
+    )
+
+    await screen.findByRole('heading', { name: 'Spotlight Song', level: 1 })
+    expect(container.querySelector('.universal-media-profile-page.is-spotlight-profile')).toBeInTheDocument()
+    expect(container.querySelector('.media-hero-backdrop')).toBeInTheDocument()
+    expect(container.querySelector('.media-container-category-badge')).toBeInTheDocument()
+    expect(container.querySelector('.media-hero-track-eyebrow')).toHaveTextContent('TRACK 4')
+  })
+
+  it('renders explicit badge on the left before the title with the first word for explicit songs', async () => {
+    const explicitSong: UniversalMediaEntity = {
+      id: 'song:fixture-explicit',
+      name: 'you seem pretty sad for a girl so in love',
+      type: 'song',
+      categoryLabel: 'Song',
+      artworkUrl: 'https://example.com/artwork.jpg',
+      providerId: '999',
+      explicit: true,
+      description: 'Song description',
+      metadataChips: [
+        { label: 'Artist', value: 'Fixture Artist' },
+        { label: 'Explicit', value: 'Yes' },
+      ],
+      communityRating: { average: 4, count: 1, distribution: { 5: 0, 4: 1, 3: 0, 2: 0, 1: 0 } },
+    }
+
+    const { container } = render(
+      <UniversalMediaProfilePage
+        entity={explicitSong}
+        communityEntries={[]}
+        onBack={vi.fn()}
+      />,
+    )
+
+    const heading = await screen.findByRole('heading', {
+      name: 'you seem pretty sad for a girl so in love',
+      level: 1,
+    })
+    expect(heading).toBeInTheDocument()
+
+    const affixGroup = container.querySelector('.media-hero-title-affix-group.is-left')
+    expect(affixGroup).toBeInTheDocument()
+    expect(affixGroup?.textContent).toContain('you')
+    expect(affixGroup?.textContent).toContain('E')
+
+    const badge = affixGroup?.querySelector('.explicit-badge')
+    expect(badge).toBeInTheDocument()
+    expect(badge).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('renders explicit badge on the left before the title for explicit albums', async () => {
+    const explicitAlbum: UniversalMediaEntity = {
+      id: 'album:fixture-explicit',
+      name: 'you seem pretty sad for a girl so in love',
+      type: 'album',
+      categoryLabel: 'Album',
+      artworkUrl: 'https://example.com/artwork.jpg',
+      providerId: '888',
+      explicit: true,
+      description: 'Album description',
+      metadataChips: [
+        { label: 'Artist', value: 'Fixture Artist' },
+        { label: 'Explicit', value: 'Yes' },
+      ],
+      communityRating: { average: 5, count: 1, distribution: { 5: 1, 4: 0, 3: 0, 2: 0, 1: 0 } },
+    }
+
+    const { container } = render(
+      <UniversalMediaProfilePage
+        entity={explicitAlbum}
+        communityEntries={[]}
+        onBack={vi.fn()}
+      />,
+    )
+
+    const heading = await screen.findByRole('heading', {
+      name: 'you seem pretty sad for a girl so in love',
+      level: 1,
+    })
+    expect(heading).toBeInTheDocument()
+
+    const affixGroup = container.querySelector('.media-hero-title-affix-group.is-left')
+    expect(affixGroup).toBeInTheDocument()
+    expect(affixGroup?.textContent).toContain('you')
+    expect(affixGroup?.textContent).toContain('E')
+  })
+
+  it('renders primary Write an entry, Add to collection, and Share action buttons', async () => {
+    const songEntity: UniversalMediaEntity = {
+      id: 'song:fixture-actions',
+      name: 'Action Song',
+      type: 'song',
+      categoryLabel: 'Song',
+      artworkUrl: 'https://example.com/artwork.jpg',
+      providerId: '777',
+      explicit: false,
+      description: 'Song description',
+      metadataChips: [{ label: 'Artist', value: 'Fixture Artist' }],
+      communityRating: { average: 4, count: 1, distribution: { 5: 0, 4: 1, 3: 0, 2: 0, 1: 0 } },
+    }
+
+    const onQuickAddEntry = vi.fn()
+    const onAddToCollection = vi.fn()
+
+    render(
+      <UniversalMediaProfilePage
+        entity={songEntity}
+        communityEntries={[]}
+        onBack={vi.fn()}
+        onQuickAddEntry={onQuickAddEntry}
+        onAddToCollection={onAddToCollection}
+      />,
+    )
+
+    await screen.findByRole('heading', { name: 'Action Song', level: 1 })
+    const addEntryBtn = screen.getByRole('button', { name: /Write an entry/i })
+    expect(addEntryBtn).toBeInTheDocument()
+    fireEvent.click(addEntryBtn)
+    expect(onQuickAddEntry).toHaveBeenCalledTimes(1)
+
+    const addToCollectionBtn = screen.getByRole('button', { name: /Add to collection/i })
+    expect(addToCollectionBtn).toBeInTheDocument()
+    fireEvent.click(addToCollectionBtn)
+    expect(onAddToCollection).toHaveBeenCalledTimes(1)
+
+    const shareBtn = screen.getByRole('button', { name: /Share Action Song/i })
+    expect(shareBtn).toBeInTheDocument()
+  })
+
+  it('renders inline title with explicit badge inside affix group on the left before the title', () => {
+    const { container: multiWord } = render(
+      <div>
+        {renderInlineTitleWithExplicit('you seem pretty sad for a girl so in love', true)}
+      </div>,
+    )
+    const affixGroup = multiWord.querySelector('.media-hero-title-affix-group.is-left')
+    expect(affixGroup).toBeInTheDocument()
+    expect(affixGroup?.textContent).toContain('E')
+    expect(affixGroup?.textContent).toContain('you')
+    expect(multiWord.textContent).toBe('Eyou seem pretty sad for a girl so in love')
+
+    const { container: singleWord } = render(
+      <div>
+        {renderInlineTitleWithExplicit('Lover', true)}
+      </div>,
+    )
+    const singleAffix = singleWord.querySelector('.media-hero-title-affix-group.is-left')
+    expect(singleAffix).toBeInTheDocument()
+    expect(singleAffix?.textContent).toContain('E')
+    expect(singleAffix?.textContent).toContain('Lover')
+
+    const { container: nonExplicit } = render(
+      <div>
+        {renderInlineTitleWithExplicit('Fearless', false)}
+      </div>,
+    )
+    expect(nonExplicit.querySelector('.explicit-badge')).not.toBeInTheDocument()
+    expect(nonExplicit.querySelector('.media-hero-title-affix-group')).not.toBeInTheDocument()
+    expect(nonExplicit.textContent).toBe('Fearless')
+  })
+
+  it('renders EntityLoadingSkeleton matching the Spotlight Profile layout structure', () => {
+    const { container } = render(<EntityLoadingSkeleton showHeader={false} showLocalNavigation={true} />)
+
+    const main = container.querySelector('.universal-media-profile-page.is-spotlight-profile.route-entity-skeleton')
+    expect(main).toBeInTheDocument()
+
+    // Local topbar skeleton
+    expect(container.querySelector('.media-profile-topbar')).toBeInTheDocument()
+    expect(container.querySelector('.route-entity-back-btn')).toBeInTheDocument()
+    expect(container.querySelector('.editorial-divider')).toBeInTheDocument()
+
+    // Hero section skeleton with spotlight category badge and 2-column grid areas
+    const hero = container.querySelector('.media-hero-section')
+    expect(hero).toBeInTheDocument()
+    expect(hero?.querySelector('.media-container-category-badge.skeleton-box')).toBeInTheDocument()
+    expect(hero?.querySelector('.media-hero-left .route-entity-artwork')).toBeInTheDocument()
+    expect(hero?.querySelector('.media-hero-right .media-hero-text-block')).toBeInTheDocument()
+    expect(hero?.querySelector('.route-entity-title')).toBeInTheDocument()
+    expect(hero?.querySelector('.media-chips-row')).toBeInTheDocument()
+    expect(hero?.querySelector('.media-hero-body-block .media-hero-actions')).toBeInTheDocument()
+
+    // Tabs section skeleton
+    const tabsContainer = container.querySelector('.media-tabs-container')
+    expect(tabsContainer).toBeInTheDocument()
+    expect(tabsContainer?.querySelectorAll('.route-entity-tab')).toHaveLength(4)
+    expect(tabsContainer?.querySelector('.route-entity-content .is-panel')).toBeInTheDocument()
+  })
+
+  it('does not render an explicit badge on the cover art thumbnail', async () => {
+    const explicitAlbum: UniversalMediaEntity = {
+      id: 'album:fixture-art-check',
+      name: 'Album Art Check',
+      type: 'album',
+      categoryLabel: 'Album',
+      artworkUrl: 'https://example.com/artwork.jpg',
+      providerId: '9999',
+      explicit: true,
+      description: 'Album description',
+      metadataChips: [
+        { label: 'Artist', value: 'Fixture Artist' },
+        { label: 'Explicit', value: 'Yes' },
+      ],
+      communityRating: { average: 5, count: 1, distribution: { 5: 1, 4: 0, 3: 0, 2: 0, 1: 0 } },
+    }
+
+    const { container } = render(
+      <UniversalMediaProfilePage
+        entity={explicitAlbum}
+        communityEntries={[]}
+        onBack={vi.fn()}
+      />,
+    )
+
+    await screen.findByRole('heading', { name: 'Album Art Check', level: 1 })
+
+    // Ensure no explicit badge is placed directly on the cover art container or frames
+    expect(container.querySelector('.media-artwork-container .explicit-badge')).not.toBeInTheDocument()
+    expect(container.querySelector('.universal-entity-explicit-badge')).not.toBeInTheDocument()
+  })
+
+  it('renders both discography and filmography tabs with verified profession for dual-craft artist', async () => {
+    const dualArtist: UniversalMediaEntity = {
+      id: 'human:taylor-swift',
+      name: 'Taylor Swift',
+      type: 'human',
+      categoryLabel: 'Singer-songwriter',
+      description: 'Taylor Swift is an American singer-songwriter.',
+      artworkUrl: 'https://example.com/taylor.jpg',
+      humanProfile: {
+        canonicalId: 'human:Q26876',
+        context: 'musician',
+        primaryProfession: 'singer_songwriter',
+        professions: ['singer_songwriter', 'musician', 'actor', 'director'],
+        occupationLabels: ['Singer-songwriter', 'Actress', 'Director'],
+        providerIds: {
+          wikidataId: 'Q26876',
+        },
+        capabilities: {
+          topSongs: true,
+          discography: true,
+          filmography: true,
+          publishedWorks: false,
+          directing: true,
+          creating: false,
+          producing: false,
+          writing: false,
+        },
+      },
+      metadataChips: [
+        { label: 'Profession', value: 'Singer-songwriter, Actress, Director' },
+      ],
+      communityRating: { average: 5, count: 10, distribution: { 5: 10, 4: 0, 3: 0, 2: 0, 1: 0 } },
+    }
+
+    render(
+      <UniversalMediaProfilePage
+        entity={dualArtist}
+        communityEntries={[]}
+        onBack={vi.fn()}
+      />,
+    )
+
+    await screen.findByRole('heading', { name: 'Taylor Swift', level: 1 })
+    expect(screen.getByRole('button', { name: 'Top Songs' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Discography' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Filmography' })).toBeInTheDocument()
+    expect(screen.getByText('Singer-songwriter')).toBeInTheDocument()
+  })
+
+  it('renders filmography tiles adapting the discography layout with character and entity badge', async () => {
+    vi.spyOn(metadata, 'fetchWikipediaProfile').mockResolvedValue({
+      title: 'Taylor Swift',
+      portraitUrl: '',
+      description: 'Taylor Swift is an American singer-songwriter and actress.',
+      pageUrl: '',
+      wikidataId: 'Q26876',
+    })
+    vi.spyOn(metadata, 'fetchHumanScreenCredits').mockResolvedValue({
+      credits: [
+        {
+          id: 'movie:101:acting',
+          providerId: '101',
+          mediaType: 'movie',
+          title: 'Amsterdam',
+          year: '2022',
+          role: 'Liz Meekins',
+          category: 'acting',
+        },
+      ],
+    })
+
+    const actorArtist: UniversalMediaEntity = {
+      id: 'human:taylor-swift',
+      name: 'Taylor Swift',
+      type: 'human',
+      categoryLabel: 'Singer-songwriter',
+      description: 'Taylor Swift is an American singer-songwriter.',
+      artworkUrl: 'https://example.com/taylor.jpg',
+      humanProfile: {
+        canonicalId: 'human:Q26876',
+        primaryProfession: 'singer_songwriter',
+        professions: ['singer_songwriter', 'actor'],
+        occupationLabels: ['Singer-songwriter', 'Actress'],
+        providerIds: {
+          wikidataId: 'Q26876',
+        },
+        capabilities: {
+          topSongs: true,
+          discography: true,
+          filmography: true,
+          publishedWorks: false,
+          directing: false,
+          creating: false,
+          producing: false,
+          writing: false,
+        },
+      },
+      metadataChips: [],
+      communityRating: { average: 5, count: 10, distribution: { 5: 10, 4: 0, 3: 0, 2: 0, 1: 0 } },
+    }
+
+    render(
+      <UniversalMediaProfilePage
+        entity={actorArtist}
+        communityEntries={[]}
+        onBack={vi.fn()}
+      />,
+    )
+
+    await screen.findByRole('heading', { name: 'Taylor Swift', level: 1 })
+    const filmographyTab = screen.getByRole('button', { name: 'Filmography' })
+    fireEvent.click(filmographyTab)
+
+    const tileTitle = await screen.findByText('Amsterdam')
+    expect(tileTitle).toHaveClass('filmography-tile-title')
+
+    const characterSubtitle = screen.getByText('Liz Meekins')
+    expect(characterSubtitle).toHaveClass('filmography-tile-subtitle')
+
+    // Verify entity badge inside the poster frame
+    const badge = screen.getByText('Film')
+    expect(badge.closest('.universal-entity-type-badge')).toBeInTheDocument()
+
+    // Verify no title overlay covers the poster frame
+    const tileButton = screen.getByRole('button', { name: /Open Amsterdam/i })
+    expect(tileButton.querySelector('.media-title-overlay')).toBeNull()
+  })
+})

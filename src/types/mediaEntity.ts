@@ -318,7 +318,7 @@ export function getEntityTabs(type: MediaEntityType): { id: string; label: strin
         { id: 'overview', label: 'Overview' },
         { id: 'lyrics', label: 'Lyrics' },
         { id: 'reviews', label: 'Community Reviews' },
-        { id: 'related', label: 'Appears In' },
+        { id: 'related', label: 'Appears On' },
       ]
     case 'author':
       return [

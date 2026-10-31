@@ -288,4 +288,131 @@ describe('iTunes discography release classification', () => {
       expect.any(Object),
     )
   })
+
+  it('strips parenthetical disambiguation suffixes such as (band) when fetching discography', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('entity=musicArtist')) {
+        return {
+          ok: true,
+          json: async () => ({
+            results: [{ wrapperType: 'artist', artistId: 3296287, artistName: 'Queen' }],
+          }),
+        } as Response
+      }
+      if (url.includes('entity=album')) {
+        return {
+          ok: true,
+          json: async () => ({
+            results: [{
+              wrapperType: 'collection',
+              artistId: 3296287,
+              artistName: 'Queen',
+              collectionId: 101,
+              collectionName: 'A Night at the Opera',
+              trackCount: 12,
+              releaseDate: '1975-11-21T00:00:00Z',
+            }],
+          }),
+        } as Response
+      }
+      if (url.includes('entity=song')) {
+        return { ok: true, json: async () => ({ results: [] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const releases = await fetchItunesDiscography('Queen (band)')
+    expect(releases).toHaveLength(1)
+    expect(releases[0]).toMatchObject({
+      title: 'A Night at the Opera',
+      artist: 'Queen',
+    })
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('term=Queen'))).toBe(true)
+  })
+
+  it('matches artist aliases such as Tupac to 2Pac and Donald Glover to Childish Gambino', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('entity=musicArtist')) {
+        return {
+          ok: true,
+          json: async () => ({
+            results: [{ wrapperType: 'artist', artistId: 105998, artistName: '2Pac' }],
+          }),
+        } as Response
+      }
+      if (url.includes('entity=album')) {
+        return {
+          ok: true,
+          json: async () => ({
+            results: [{
+              wrapperType: 'collection',
+              artistId: 105998,
+              artistName: '2Pac',
+              collectionId: 202,
+              collectionName: 'All Eyez on Me',
+              trackCount: 27,
+              releaseDate: '1996-02-13T00:00:00Z',
+            }],
+          }),
+        } as Response
+      }
+      if (url.includes('entity=song')) {
+        return { ok: true, json: async () => ({ results: [] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const releases = await fetchItunesDiscography('Tupac')
+    expect(releases).toHaveLength(1)
+    expect(releases[0]).toMatchObject({
+      title: 'All Eyez on Me',
+      artist: '2Pac',
+    })
+  })
+
+  it('matches artists with and without leading The or acronym dots', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('entity=musicArtist')) {
+        return {
+          ok: true,
+          json: async () => ({
+            results: [{ wrapperType: 'artist', artistId: 5499810, artistName: 'The Notorious B.I.G.' }],
+          }),
+        } as Response
+      }
+      if (url.includes('entity=album')) {
+        return {
+          ok: true,
+          json: async () => ({
+            results: [{
+              wrapperType: 'collection',
+              artistId: 5499810,
+              artistName: 'The Notorious B.I.G.',
+              collectionId: 303,
+              collectionName: 'Ready to Die',
+              trackCount: 17,
+              releaseDate: '1994-09-13T00:00:00Z',
+            }],
+          }),
+        } as Response
+      }
+      if (url.includes('entity=song')) {
+        return { ok: true, json: async () => ({ results: [] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const releases = await fetchItunesDiscography('Notorious BIG')
+    expect(releases).toHaveLength(1)
+    expect(releases[0]).toMatchObject({
+      title: 'Ready to Die',
+      artist: 'The Notorious B.I.G.',
+    })
+  })
 })

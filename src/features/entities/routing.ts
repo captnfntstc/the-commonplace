@@ -67,6 +67,7 @@ export function inferEntityTypeFromId(entityId: string): MediaEntityType {
   if (normalizedId.startsWith('googlebooks:book:') || normalizedId.startsWith('book-')) return 'book'
   if (normalizedId.startsWith('tmdb:movie:') || normalizedId.startsWith('movie-') || normalizedId.startsWith('film-')) return 'movie'
   if (normalizedId.startsWith('tmdb:tv:') || normalizedId.startsWith('tv-') || normalizedId.startsWith('show-')) return 'tv'
+  if (normalizedId.startsWith('tmdb:person:')) return 'human'
   if (
     normalizedId.startsWith('game-') ||
     normalizedId.startsWith('igdb:game:') ||

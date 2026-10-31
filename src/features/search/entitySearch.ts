@@ -12,6 +12,13 @@ import { MOCK_ENTITY_PROFILES } from '../../data/entityProfiles'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../../data/universalMediaEntities'
 
 import { extractCanonicalGameTitle, isPatchOrUpdateTitle } from '../../utils/gameMetadata'
+import {
+  isFuzzyStringMatch,
+  isFuzzyTokenMatch,
+  searchTokensMatch,
+} from '../../utils/text'
+
+export { isFuzzyStringMatch, isFuzzyTokenMatch, searchTokensMatch }
 
 export function getSearchEntityArtwork(entity: {
   id: string
@@ -65,15 +72,6 @@ export function normalizeSearchText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
-function searchTokensMatch(searchableValue: string, normalizedQuery: string) {
-  const queryTokens = normalizedQuery.split(' ').filter(Boolean)
-  const searchableTokens = normalizeSearchText(searchableValue).split(' ').filter(Boolean)
-  return queryTokens.length > 0 && queryTokens.every((queryToken) =>
-    searchableTokens.some((searchableToken) =>
-      searchableToken === queryToken || searchableToken.startsWith(queryToken),
-    ),
-  )
-}
 
 export function isYearOnlyMetadataMatch(result: MetadataResult, normalizedQuery: string): boolean {
   if (!/^\d{4}$/.test(normalizedQuery)) return false
@@ -498,6 +496,9 @@ export function getSearchEntityScore(entity: HeaderSearchEntity, normalizedQuery
   const titleExact = titleNorm === normalizedQuery
   const creatorExact = creatorNorm === normalizedQuery
 
+  const titleFuzzyExact = !titleExact && isFuzzyStringMatch(titleNorm, normalizedQuery)
+  const creatorFuzzyExact = !creatorExact && isFuzzyStringMatch(creatorNorm, normalizedQuery)
+
   const titleStartsWith = titleNorm.startsWith(normalizedQuery)
   const creatorStartsWith = creatorNorm.startsWith(normalizedQuery)
 
@@ -511,8 +512,12 @@ export function getSearchEntityScore(entity: HeaderSearchEntity, normalizedQuery
   let matchTier: number
   if (titleExact) {
     matchTier = 400000
+  } else if (titleFuzzyExact) {
+    matchTier = 390000
   } else if (creatorExact) {
     matchTier = 370000
+  } else if (creatorFuzzyExact) {
+    matchTier = 360000
   } else if (contextualIdentityMatch) {
     matchTier = 350000
   } else if (titleStartsWith) {
@@ -534,7 +539,7 @@ export function getSearchEntityScore(entity: HeaderSearchEntity, normalizedQuery
   // If a person entity is NOT an exact title match AND has low popularity / no profile / no image,
   // do not allow it to outrank media items whose creator exact-matches the search query.
   const isPerson = ['human', 'artist', 'author', 'director', 'creator', 'actor', 'game_studio'].includes(entity.type)
-  if (isPerson && !titleExact) {
+  if (isPerson && !titleExact && !titleFuzzyExact) {
     const isUnverifiedPerson = !entity.universalEntity && !entity.artworkUrl && (entity.evidenceCount || 0) < 2
     if (isUnverifiedPerson && matchTier > 250000) {
       matchTier = 250000
@@ -554,7 +559,7 @@ export function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
   for (const entity of entities) {
     const creatorValue = entity.creatorValue.replace(/^[^:]+:\s*/, '')
     const creatorKey = normalizeSearchText(creatorValue)
-    const albumCreatorKey = entity.type === 'album'
+    const musicCreatorKey = (entity.type === 'album' || entity.type === 'song')
       ? normalizeSearchText(creatorValue.split(/\s*(?:&|,|\/|\bfeat(?:uring)?\.?\b|\bwith\b|\bx\b)\s*/i)[0] || creatorValue)
       : creatorKey
     const releaseYear = searchResultYear(entity)
@@ -576,7 +581,7 @@ export function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
       ? `${entity.type}:${stableIdentityId}`
       : usesReleaseIdentity
       ? `${entity.type}:${cleanTitle}:${releaseYear || creatorKey}`
-      : `${entity.type}:${cleanTitle}:${albumCreatorKey}`
+      : `${entity.type}:${cleanTitle}:${musicCreatorKey}`
 
     const group = groups.get(key) || []
     const normalizedEntity = (entity.type === 'game' && isPatchOrUpdateTitle(entity.title))
@@ -587,13 +592,33 @@ export function dedupeSearchEntities(entities: HeaderSearchEntity[]) {
     groups.set(key, group)
   }
 
+  const isCleanEntity = (e: HeaderSearchEntity) =>
+    Boolean(e.metadataResult?.clean) ||
+    /\b(?:clean|cleaned)(?: version| edition)?\b/i.test(e.title) ||
+    /\b(?:clean|cleaned)(?: version| edition)?\b/i.test(e.bio)
+
   const result: HeaderSearchEntity[] = []
   for (const group of groups.values()) {
-    const preferred =
-      group.find((e) => e.explicit) ||
-      group.find((e) => !/\bclean\b/i.test(e.title)) ||
-      group[0]
-    result.push(preferred)
+    const isMusic = group.some((e) => e.type === 'album' || e.type === 'song')
+    let preferred: HeaderSearchEntity | undefined
+
+    if (isMusic) {
+      const explicit = group.find((e) => e.explicit)
+      if (explicit) {
+        preferred = explicit
+      } else {
+        preferred = group.find((e) => !isCleanEntity(e))
+      }
+    } else {
+      preferred =
+        group.find((e) => e.explicit) ||
+        group.find((e) => !isCleanEntity(e)) ||
+        group[0]
+    }
+
+    if (preferred) {
+      result.push(preferred)
+    }
   }
 
   const portraitTypes = new Set(['human', 'music_group', 'artist', 'author', 'director', 'creator', 'actor'])

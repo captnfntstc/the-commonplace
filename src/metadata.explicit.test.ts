@@ -4,6 +4,7 @@ import {
   fetchItunesAlbumDetails,
   isExplicitItunesTrack,
   preferExplicitSongSearchItems,
+  searchMetadata,
 } from './metadata'
 
 describe('track-level explicit metadata', () => {
@@ -27,6 +28,25 @@ describe('track-level explicit metadata', () => {
     ])
 
     expect(items.map((item) => item.trackId)).toEqual([2, 3])
+  })
+
+  it('preserves mainstream recordings flagged cleaned by the provider when there is no explicit variant', () => {
+    const items = preferExplicitSongSearchItems([
+      {
+        trackId: 101,
+        trackName: "I Bet You Think About Me (Taylor's Version) (From The Vault) [feat. Chris Stapleton]",
+        artistName: 'Taylor Swift',
+        trackExplicitness: 'cleaned',
+      },
+      {
+        trackId: 102,
+        trackName: 'Dial Drunk',
+        artistName: 'Noah Kahan',
+        trackExplicitness: 'cleaned',
+      },
+    ])
+
+    expect(items.map((item) => item.trackId)).toEqual([101, 102])
   })
 
   it('keeps the album explicit while marking only individually explicit tracks', async () => {
@@ -90,5 +110,89 @@ describe('track-level explicit metadata', () => {
       { title: 'No Explicit Words', explicit: false },
       { title: 'Actually Explicit', explicit: true },
     ])
+  })
+
+  it('marks songs clean even when their parent album is tagged explicit in song search', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (!url.includes('/search')) throw new Error(`Unexpected request: ${url}`)
+      return {
+        ok: true,
+        json: async () => ({
+          results: [
+            {
+              wrapperType: 'track',
+              kind: 'song',
+              trackId: 1729001,
+              trackName: 'honeybee',
+              artistName: 'Olivia Rodrigo',
+              collectionName: 'GUTS (spilled)',
+              releaseDate: '2024-03-22T00:00:00Z',
+              trackExplicitness: 'notExplicit',
+              collectionExplicitness: 'explicit',
+            },
+            {
+              wrapperType: 'track',
+              kind: 'song',
+              trackId: 1729002,
+              trackName: "22 (Taylor's Version)",
+              artistName: 'Taylor Swift',
+              collectionName: "Red (Taylor's Version)",
+              releaseDate: '2021-11-12T00:00:00Z',
+              trackExplicitness: 'notExplicit',
+              collectionExplicitness: 'explicit',
+            },
+            {
+              wrapperType: 'track',
+              kind: 'song',
+              trackId: 1729003,
+              trackName: 'bad idea right?',
+              artistName: 'Olivia Rodrigo',
+              collectionName: 'GUTS (spilled)',
+              releaseDate: '2023-08-11T00:00:00Z',
+              trackExplicitness: 'explicit',
+              collectionExplicitness: 'explicit',
+            },
+          ],
+        }),
+      } as Response
+    }))
+
+    const results = await searchMetadata('song', 'test query')
+    const honeybee = results.find((r) => r.title === 'honeybee')
+    const twentyTwo = results.find((r) => r.title === "22 (Taylor's Version)")
+    const badIdea = results.find((r) => r.title === 'bad idea right?')
+
+    expect(honeybee?.explicit).toBe(false)
+    expect(twentyTwo?.explicit).toBe(false)
+    expect(badIdea?.explicit).toBe(true)
+  })
+
+  it('preferExplicitSongSearchItems prefers track from standard album over clean album for clean track', () => {
+    const rawCleanAlbumTrack = {
+      wrapperType: 'track',
+      kind: 'song',
+      trackId: 101,
+      trackName: 'honeybee',
+      artistName: 'Olivia Rodrigo',
+      collectionName: 'you seem pretty sad for a girl so in love',
+      trackExplicitness: 'notExplicit',
+      collectionExplicitness: 'cleaned',
+    }
+    const rawStandardAlbumTrack = {
+      wrapperType: 'track',
+      kind: 'song',
+      trackId: 102,
+      trackName: 'honeybee',
+      artistName: 'Olivia Rodrigo',
+      collectionName: 'you seem pretty sad for a girl so in love',
+      trackExplicitness: 'notExplicit',
+      collectionExplicitness: 'explicit',
+    }
+
+    const filtered = preferExplicitSongSearchItems([rawCleanAlbumTrack, rawStandardAlbumTrack])
+    expect(filtered).toHaveLength(1)
+    expect(filtered[0].trackId).toBe(102)
+    expect(filtered[0].collectionExplicitness).toBe('explicit')
   })
 })

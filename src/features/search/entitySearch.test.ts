@@ -13,6 +13,7 @@ import {
   searchResultBadge,
   searchResultSubtitle,
   shouldSuppressSynthesizedArtist,
+  universalEntityToSearchEntity,
 } from './entitySearch'
 
 function metadataResult(overrides: Partial<MetadataResult>): MetadataResult {
@@ -67,6 +68,8 @@ describe('context-aware media search identity', () => {
     })
 
     expect(metadataResultMatchesQuery(song, 'cardigan Taylor Swift')).toBe(true)
+    expect(metadataResultMatchesQuery(song, 'cardigan Tayler Swift')).toBe(true)
+    expect(metadataResultMatchesQuery(song, 'cardign Taylor Swift')).toBe(true)
     expect(metadataResultMatchesQuery(song, 'cardigan another artist')).toBe(false)
   })
 
@@ -105,6 +108,25 @@ describe('context-aware media search identity', () => {
     ])
   })
 
+  it('preserves clean tracks with explicit: false from the standard edition and omits clean albums', () => {
+    const cleanSongFromStandardAlbum = metadataResultToSearchEntity(metadataResult({
+      id: 'song-1', type: 'song', title: 'honeybee', creator: 'Olivia Rodrigo', provider: 'you seem pretty sad for a girl so in love', providerId: '1', explicit: false,
+    }), 0)
+    const cleanSongFromCleanAlbum = metadataResultToSearchEntity(metadataResult({
+      id: 'song-2', type: 'song', title: 'honeybee', creator: 'Olivia Rodrigo', provider: 'you seem pretty sad for a girl so in love (Clean)', providerId: '2', explicit: false,
+    }), 1)
+
+    const deduplicatedSongs = dedupeSearchEntities([cleanSongFromCleanAlbum, cleanSongFromStandardAlbum])
+    expect(deduplicatedSongs).toHaveLength(1)
+    expect(deduplicatedSongs[0].explicit).toBe(false)
+    expect(deduplicatedSongs[0].title).toBe('honeybee')
+
+    const cleanOnlyAlbum = metadataResultToSearchEntity(metadataResult({
+      id: 'album-99', type: 'album', title: 'Some Album (Clean Version)', creator: 'Some Artist', providerId: '99', explicit: false,
+    }), 0)
+    expect(dedupeSearchEntities([cleanOnlyAlbum])).toHaveLength(0)
+  })
+
   it('maps creators to profession-specific person entities', () => {
     expect(creatorEntityForMetadataType('album').type).toBe('artist')
     expect(creatorEntityForMetadataType('song').type).toBe('artist')
@@ -136,6 +158,11 @@ describe('context-aware media search identity', () => {
     expect(artist?.type).toBe('human')
     expect(artist?.humanProfile?.professions).toEqual(['musician'])
     expect(artist?.humanProfile?.providerIds.itunesArtistId).toBe('123456')
+
+    if (artist) {
+      const searchEntity = universalEntityToSearchEntity(artist, 0)
+      expect(searchEntityMatchesQuery(searchEntity, normalizeSearchText('Stick Season'))).toBe(true)
+    }
   })
 
   it('does not create People identities from music results without stable artist IDs', () => {

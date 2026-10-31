@@ -1,5 +1,10 @@
 import type { Entry, EntryType } from '../entries/model'
-import type { MediaEntityType, UniversalMediaEntity } from '../../types/mediaEntity'
+import type { MediaEntityType, UniversalMediaEntity, HumanProfileContext } from '../../types/mediaEntity'
+import {
+  emptyHumanCapabilities,
+  normalizeHumanProfessions,
+  professionFromLegacyContext,
+} from '../profiles/humanProfile'
 import { cleanDisplayText } from '../../utils/text'
 
 const zeroDistribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
@@ -8,7 +13,7 @@ function normalized(value?: string) {
   return cleanDisplayText(value).toLocaleLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
-function slug(value: string) {
+export function slug(value: string) {
   return normalized(value).replace(/\s+/g, '-') || 'unknown'
 }
 
@@ -87,14 +92,39 @@ export function createCreatorEntityFromEntry(entry: Entry, creatorName: string, 
     ? matchingEntries.reduce((sum, candidate) => sum + candidate.rating, 0) / matchingEntries.length
     : entry.rating
 
+  const entitySlug = slug(name)
+  const canonicalId = `human:${entitySlug}`
+  const isMusic = entry.type === 'album' || entry.type === 'song'
+  const isScreen = entry.type === 'film' || entry.type === 'tv'
+  const isBook = entry.type === 'book'
+  const legacyContext = type as HumanProfileContext
+  const primaryProf = professionFromLegacyContext(legacyContext)
+
   return {
-    id: `${type}:${slug(name)}`,
+    id: canonicalId,
     name,
-    type,
+    type: 'human',
     categoryLabel: creatorCategory[type],
     artworkUrl: '',
     description: `${creatorCategory[type]} profile for ${name}, with works and reviews collected by The Commonplace community.`,
     metadataChips: [{ label: 'Profession', value: creatorCategory[type] }],
+    humanProfile: {
+      canonicalId,
+      context: legacyContext,
+      primaryProfession: primaryProf,
+      professions: normalizeHumanProfessions([legacyContext]),
+      occupationLabels: [creatorCategory[type]],
+      providerIds: {},
+      capabilities: emptyHumanCapabilities({
+        topSongs: isMusic,
+        discography: isMusic,
+        filmography: isScreen,
+        publishedWorks: isBook,
+        directing: type === 'director',
+        creating: type === 'creator',
+        writing: isBook,
+      }),
+    },
     communityRating: { average, count: matchingEntries.length, distribution: zeroDistribution },
     primaryCollection: matchingEntries.length > 0
       ? { title: 'Top Works', items: matchingEntries.slice(0, 10).map(entryTopItem) }

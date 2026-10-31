@@ -191,4 +191,121 @@ describe('song appearance advisory filtering', () => {
       'Family Standard (Deluxe) [Clean]',
     ]))
   })
+
+  it('includes albums for songs with featured artists in trackName or artistName', async () => {
+    const featuredTrack = {
+      wrapperType: 'track',
+      kind: 'song',
+      trackId: 960001,
+      trackName: 'Exile (feat. Bon Iver)',
+      artistName: 'Taylor Swift feat. Bon Iver',
+      collectionId: 960010,
+      collectionName: 'folklore',
+      collectionArtistName: 'Taylor Swift',
+      releaseDate: '2020-07-24T00:00:00Z',
+      trackCount: 16,
+      trackExplicitness: 'notExplicit',
+      collectionExplicitness: 'notExplicit',
+    }
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/lookup?id=960001')) {
+        return { ok: true, json: async () => ({ results: [featuredTrack] }) } as Response
+      }
+      if (url.includes('/search?') && url.includes('entity=song')) {
+        return { ok: true, json: async () => ({ results: [featuredTrack] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+
+    const appearances = await fetchItunesSongAppearances(
+      'Exile (feat. Bon Iver)',
+      'Taylor Swift',
+      '960001',
+      undefined,
+      false,
+    )
+
+    expect(appearances).toHaveLength(1)
+    expect(appearances[0]?.title).toBe('folklore')
+  })
+
+  it('includes title tracks where album collectionName equals trackName', async () => {
+    const titleTrack = {
+      wrapperType: 'track',
+      kind: 'song',
+      trackId: 970001,
+      trackName: 'Fearless',
+      artistName: 'Taylor Swift',
+      collectionId: 970010,
+      collectionName: 'Fearless',
+      collectionArtistName: 'Taylor Swift',
+      releaseDate: '2008-11-11T00:00:00Z',
+      trackCount: 13,
+      trackExplicitness: 'notExplicit',
+      collectionExplicitness: 'notExplicit',
+    }
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/lookup?id=970001')) {
+        return { ok: true, json: async () => ({ results: [titleTrack] }) } as Response
+      }
+      if (url.includes('/search?') && url.includes('entity=song')) {
+        return { ok: true, json: async () => ({ results: [titleTrack] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+
+    const appearances = await fetchItunesSongAppearances(
+      'Fearless',
+      'Taylor Swift',
+      '970001',
+      undefined,
+      false,
+    )
+
+    expect(appearances).toHaveLength(1)
+    expect(appearances[0]?.title).toBe('Fearless')
+  })
+
+  it('includes soundtrack appearances where collectionArtistName is Various Artists', async () => {
+    const soundtrackTrack = {
+      wrapperType: 'track',
+      kind: 'song',
+      trackId: 980001,
+      trackName: 'Safe & Sound (feat. The Civil Wars)',
+      artistName: 'Taylor Swift',
+      collectionId: 980010,
+      collectionName: 'The Hunger Games: Songs from District 12 and Beyond',
+      collectionArtistName: 'Various Artists',
+      releaseDate: '2012-03-20T00:00:00Z',
+      trackCount: 16,
+      trackExplicitness: 'notExplicit',
+      collectionExplicitness: 'notExplicit',
+    }
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/lookup?id=980001')) {
+        return { ok: true, json: async () => ({ results: [soundtrackTrack] }) } as Response
+      }
+      if (url.includes('/search?') && url.includes('entity=song')) {
+        return { ok: true, json: async () => ({ results: [soundtrackTrack] }) } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+
+    const appearances = await fetchItunesSongAppearances(
+      'Safe & Sound',
+      'Taylor Swift',
+      '980001',
+      undefined,
+      false,
+    )
+
+    expect(appearances).toHaveLength(1)
+    expect(appearances[0]?.title).toBe('The Hunger Games: Songs from District 12 and Beyond')
+  })
 })

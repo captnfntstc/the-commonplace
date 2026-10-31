@@ -1,6 +1,7 @@
 import { externalScreenSearchScore, scoreGameTitleMatch, type MetadataResult } from '../../metadata'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../../data/universalMediaEntities'
 import { resolveArtworkUrl } from '../../utils/artwork'
+import { isFuzzyStringMatch, searchTokensMatch } from '../../utils/text'
 
 function normalizeSearchText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
@@ -64,7 +65,12 @@ export function localGameMetadataResults(query: string): MetadataResult[] {
     .filter((entity) => {
       if (entity.type !== 'game') return false
       const normalizedTitle = normalizeSearchText(entity.name)
-      return normalizedTitle.includes(normalizedQuery) || normalizedQuery.includes(normalizedTitle)
+      return (
+        normalizedTitle.includes(normalizedQuery) ||
+        normalizedQuery.includes(normalizedTitle) ||
+        isFuzzyStringMatch(normalizedTitle, normalizedQuery) ||
+        searchTokensMatch(entity.name, query)
+      )
     })
     .map((entity) => {
       const developer = entity.gameMetadata?.developers?.join(', ')

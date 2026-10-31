@@ -288,29 +288,48 @@ const UserResultRow: React.FC<{
   active: boolean
   onHover: () => void
   onOpen: () => void
-}> = ({ user, active, onHover, onOpen }) => (
-  <button
-    type="button"
-    className={`alt-search-result ${active ? 'keyboard' : ''}`}
-    onMouseEnter={onHover}
-    onClick={onOpen}
-  >
-    <span className="alt-search-user-avatar">
-      {user.avatar ? (
-        <img src={user.avatar} alt="" referrerPolicy="no-referrer" loading="eager" decoding="async" />
-      ) : (
-        <User aria-hidden="true" />
-      )}
-    </span>
-    <span className="alt-search-result-copy">
-      <span className="alt-search-result-title alt-search-result-title--mono">
-        @{user.handle}
-        {user.isPrivate && <Lock size={11} aria-hidden="true" />}
+}> = ({ user, active, onHover, onOpen }) => {
+  const cleanHandle = user.handle.replace(/^@/, '')
+  const cleanName = (user.name || '').trim()
+  const hasDistinctName = Boolean(
+    cleanName &&
+    cleanName.toLowerCase() !== `@${cleanHandle.toLowerCase()}` &&
+    cleanName.toLowerCase() !== cleanHandle.toLowerCase()
+  )
+
+  return (
+    <button
+      type="button"
+      className={`alt-search-result ${active ? 'keyboard' : ''}`}
+      onMouseEnter={onHover}
+      onClick={onOpen}
+    >
+      <span className="alt-search-user-avatar">
+        {user.avatar ? (
+          <img src={user.avatar} alt="" referrerPolicy="no-referrer" loading="eager" decoding="async" />
+        ) : (
+          <User aria-hidden="true" />
+        )}
       </span>
-      <span className="alt-search-result-sub">{user.name}</span>
-    </span>
-  </button>
-)
+      <span className="alt-search-result-copy">
+        {hasDistinctName ? (
+          <>
+            <span className="alt-search-result-title alt-search-result-title--user">
+              <span>{cleanName}</span>
+              {user.isPrivate && <Lock size={11} aria-hidden="true" />}
+            </span>
+            <span className="alt-search-result-sub">@{cleanHandle}</span>
+          </>
+        ) : (
+          <span className="alt-search-result-title alt-search-result-title--user">
+            <span>@{cleanHandle}</span>
+            {user.isPrivate && <Lock size={11} aria-hidden="true" />}
+          </span>
+        )}
+      </span>
+    </button>
+  )
+}
 
 export const PrimarySearch: React.FC<PrimarySearchProps> = ({
   query,
@@ -355,14 +374,23 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
 
   const addRecentSearch = (item: SearchMediaResult | SearchUser) => {
     const isUser = 'handle' in item
+    const cleanHandle = isUser ? item.handle.replace(/^@/, '') : ''
+    const cleanName = isUser ? (item.name || '').trim() : ''
+    const hasDistinctName = Boolean(
+      isUser &&
+      cleanName &&
+      cleanName.toLowerCase() !== `@${cleanHandle.toLowerCase()}` &&
+      cleanName.toLowerCase() !== cleanHandle.toLowerCase()
+    )
+
     const newItem: RecentSearchItem = isUser
       ? {
-          id: `user:${item.handle}`,
-          name: `@${item.handle}`,
-          subtitle: item.name,
+          id: `user:${cleanHandle}`,
+          name: hasDistinctName ? cleanName : `@${cleanHandle}`,
+          subtitle: hasDistinctName ? `@${cleanHandle}` : undefined,
           image: item.avatar,
           type: 'user',
-          handle: item.handle,
+          handle: cleanHandle,
         }
       : {
           id: item.id,
@@ -414,8 +442,9 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
     }
     setIconExpanded(false)
     onOpenChange(false)
-    if (recent.type === 'user' && recent.handle) {
-      onOpenUser(recent.handle)
+    if (recent.type === 'user') {
+      const userHandle = (recent.handle || recent.id.replace(/^user:/, '')).replace(/^@/, '')
+      onOpenUser(userHandle)
     } else {
       onOpenEntity({
         id: recent.id,
@@ -763,7 +792,7 @@ export const PrimarySearch: React.FC<PrimarySearchProps> = ({
                             />
                           )}
                           <span className="alt-search-result-copy">
-                            <span className="alt-search-result-title">
+                            <span className={`alt-search-result-title ${item.type === 'user' ? 'alt-search-result-title--user' : ''}`}>
                               <span>{item.name}</span>
                               {item.explicit && (item.type === 'song' || item.type === 'album') && (
                                 <span className="explicit-badge explicit-badge--inline" aria-label="Explicit">E</span>
