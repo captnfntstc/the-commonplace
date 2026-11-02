@@ -20,11 +20,11 @@ services:
         sync: false
       - key: APP_BASE_URL
         value: "https://the-commonplace.onrender.com"
-      - key: FIREBASE_ADMIN_PROJECT_ID
+      - key: VITE_SUPABASE_URL
         sync: false
-      - key: FIREBASE_ADMIN_CLIENT_EMAIL
+      - key: VITE_SUPABASE_ANON_KEY
         sync: false
-      - key: FIREBASE_ADMIN_PRIVATE_KEY
+      - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: VITE_PERSONALIZED_HOME_FEED
         value: "true"

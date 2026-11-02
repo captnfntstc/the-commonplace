@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { User } from 'firebase/auth'
+import type { User } from '../context/AuthContext'
 import {
   feedSignalSubject,
   loadFeedPage,

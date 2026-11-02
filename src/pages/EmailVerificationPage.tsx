@@ -1,35 +1,25 @@
 import { useEffect, useState } from 'react'
-import { applyActionCode } from 'firebase/auth'
-import { doc, setDoc } from 'firebase/firestore'
 import { CheckCircle2, MailCheck, XCircle } from 'lucide-react'
 import { AuthHeader } from '../components/auth/AuthHeader'
-import { auth, db, isFirebaseConfigured } from '../services/firebase'
+import { supabase } from '../services/supabase'
 
 type VerificationState = 'checking' | 'success' | 'error'
 type VerificationRequest =
   | { kind: 'short'; token: string }
-  | { kind: 'legacy'; code: string }
+  | { kind: 'otp'; tokenHash: string; type: string }
   | { kind: 'invalid' }
 
 const pendingVerifications = new Map<string, Promise<void>>()
-
-function verifyCode(code: string) {
-  const existing = pendingVerifications.get(code)
-  if (existing) return existing
-  const request = applyActionCode(auth, code)
-  pendingVerifications.set(code, request)
-  return request
-}
 
 async function redeemShortLink(token: string) {
   const key = `short:${token}`
   const existing = pendingVerifications.get(key)
   if (existing) return existing
   const request = fetch('/api/auth/verification-links/redeem', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    })
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
     .then(async (response) => {
       const payload = await response.json().catch(() => ({})) as { error?: string }
       if (!response.ok) throw new Error(payload.error || 'This verification link is invalid or expired.')
@@ -38,14 +28,19 @@ async function redeemShortLink(token: string) {
   return request
 }
 
+async function redeemSupabaseOtp(tokenHash: string, type: any) {
+  const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type })
+  if (error) throw error
+}
+
 function getVerificationRequest(): VerificationRequest {
   const shortToken = window.location.pathname.match(/^\/v\/([A-Za-z0-9_-]{20,64})$/)?.[1]
   if (shortToken) return { kind: 'short', token: shortToken }
   const parameters = new URLSearchParams(window.location.search)
-  const actionCode = parameters.get('oobCode')
-  const mode = parameters.get('mode')
-  if (isFirebaseConfigured && (mode === 'verifyEmail' || mode === 'verifyAndChangeEmail') && actionCode) {
-    return { kind: 'legacy', code: actionCode }
+  const tokenHash = parameters.get('token_hash')
+  const type = parameters.get('type') || 'email'
+  if (tokenHash) {
+    return { kind: 'otp', tokenHash, type }
   }
   return { kind: 'invalid' }
 }
@@ -58,7 +53,6 @@ export function EmailVerificationPage() {
 
   useEffect(() => {
     if (verificationRequest.kind !== 'short') {
-      // Remove legacy Firebase identifiers and the one-time code from the address bar immediately.
       window.history.replaceState({}, '', '/verify-email')
     }
 
@@ -67,19 +61,11 @@ export function EmailVerificationPage() {
     let cancelled = false
     const verification = verificationRequest.kind === 'short'
       ? redeemShortLink(verificationRequest.token)
-      : verifyCode(verificationRequest.code)
+      : redeemSupabaseOtp(verificationRequest.tokenHash, verificationRequest.type)
+
     verification
       .then(async () => {
-        if (auth.currentUser) {
-          await auth.currentUser.reload()
-          await auth.currentUser.getIdToken(true)
-          if (auth.currentUser.email) {
-            await setDoc(doc(db, 'users', auth.currentUser.uid, 'private', 'settings'), {
-              email: auth.currentUser.email,
-              updatedAt: new Date().toISOString(),
-            }, { merge: true }).catch(() => {})
-          }
-        }
+        await supabase.auth.getUser().catch(() => undefined)
         if (!cancelled) setStatus('success')
       })
       .catch(() => {

@@ -2,21 +2,19 @@
 
 A React, TypeScript, and Vite application for reviews, catalogs, and media collections.
 
-## Firebase data setup
+## Supabase data setup
 
-Account data and compressed profile/collection images are persisted in Cloud Firestore. Firebase Storage is not used, so the app can run on the no-cost Spark plan. Copy `.env.example` to `.env.local`, fill in the Firebase web-app values, enable Email/Password Authentication, and create Firestore for the project.
+Account data, entries, media collections, and social interactions are persisted in Supabase (PostgreSQL with Row Level Security). Copy `.env.example` to `.env.local`, fill in your Supabase project URL and keys (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`), and apply the database schema.
 
-Deploy the included access rules before using a production project:
+To initialize your database tables and security policies:
 
 ```bash
-npx firebase-tools login
-npx firebase-tools use --add
-npx firebase-tools deploy --only firestore
+# Execute supabase/schema.sql in your Supabase SQL Editor
 ```
 
-See [docs/FIREBASE_DATA.md](docs/FIREBASE_DATA.md) for the schema, migration behavior, and rollout checklist.
+See [supabase/README.md](supabase/README.md) for the database schema, security policies, and setup details.
 
-Optional clean verification links (`/v/<token>`, without Firebase parameters) require the server-only Firebase Admin and SMTP variables documented there.
+Optional clean verification links (`/v/<token>`) use the server-only Supabase service role and SMTP variables.
 
 ## Development
 

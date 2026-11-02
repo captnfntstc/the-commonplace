@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, waitForElementToBeRemoved, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BrowserRouter } from 'react-router-dom'
-import type { User } from 'firebase/auth'
+import type { User } from './context/AuthContext'
 import AppController from './app/AppController'
 import { ExpansionProvider } from './context/ExpansionContext'
 import { AuthProvider } from './context/AuthContext'
@@ -44,7 +44,7 @@ describe('application shell', () => {
     vi.unstubAllGlobals()
   })
 
-  it('starts logged out when there is no Firebase session', async () => {
+  it('starts logged out when there is no authenticated session', async () => {
     renderApplication({ authenticated: false })
 
     expect(await screen.findByRole('heading', { name: 'Welcome back.' })).toBeInTheDocument()
@@ -157,7 +157,7 @@ describe('application shell', () => {
     expect(window.location.pathname).toBe('/reset-password/abcdefghijklmnopqrst')
   })
 
-  it('hides Firebase email-action parameters from the address bar', async () => {
+  it('hides auth action parameters from the address bar', async () => {
     window.history.replaceState({}, '', '/verify-email?mode=verifyEmail&apiKey=visible-key')
     renderApplication()
 

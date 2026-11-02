@@ -14,9 +14,9 @@ describe('account profile initialization', () => {
     expect(hasDistinctProfileDisplayName('Juan Pat Rojas', '@jpatpatrojas_u6wmg3')).toBe(true)
   })
 
-  it('builds a clean profile from the registered Firebase identity', () => {
+  it('builds a clean profile from the registered auth identity', () => {
     const profile = profileFromAuthUser({
-      uid: 'firebase-user-ABC123',
+      uid: 'user-ABC123',
       displayName: 'Juan Dela Cruz',
       email: 'jpatpatrojas@gmail.com',
       photoURL: null,
@@ -30,7 +30,7 @@ describe('account profile initialization', () => {
     expect(profile.coverUrl).toBe('')
   })
 
-  it('uses the Firebase Auth creation time for the member-since label', () => {
+  it('uses the auth creation time for the member-since label', () => {
     const profile = profileFromAuthUser({
       uid: 'dated-user',
       email: 'dated@example.com',
@@ -102,7 +102,7 @@ describe('account profile initialization', () => {
     )).toBe(true)
   })
 
-  it('only reuses browser-local profile data for the matching Firebase account', () => {
+  it('only reuses browser-local profile data for the matching auth account', () => {
     const profile = profileFromAuthUser({
       uid: 'first-user',
       displayName: 'First Reader',
@@ -113,7 +113,7 @@ describe('account profile initialization', () => {
     expect(profileBelongsToAuthUser(profile, { uid: 'second-user', email: 'second@example.com' })).toBe(false)
   })
 
-  it('prefers the registration name while Firebase profile propagation is still catching up', () => {
+  it('prefers the registration name while profile propagation is still catching up', () => {
     const profile = profileFromAuthUser({
       uid: 'new-user-987654',
       displayName: null,
@@ -134,7 +134,7 @@ describe('account profile initialization', () => {
     expect(profile.handle).toBe('maria_reads')
   })
 
-  it('keeps a valid pending registration username tied to its Firebase account', () => {
+  it('keeps a valid pending registration username tied to its auth account', () => {
     expect(pendingSignupProfileForUser(
       { uid: 'new-user', email: 'patrick@example.com' },
       JSON.stringify({

@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto'
-import { FieldPath, FieldValue } from 'firebase-admin/firestore'
-import { bearerToken, getAdminServices, readJsonBody } from './firebase-admin.mjs'
-import { getSupabaseAdmin } from './supabase-admin.mjs'
+import { bearerToken, getSupabaseAdmin, readJsonBody } from './supabase-admin.mjs'
 
 export const FEED_TYPES = new Set(['album', 'book', 'film', 'game', 'song', 'tv'])
 const FEED_WINDOW_SIZE = 40
@@ -174,29 +172,10 @@ function displayName(profile, handle) {
 
 async function resolveAvatars(adminDb, profiles) {
   const avatars = new Map()
-  const mediaLookups = []
   profiles.forEach((profile, userId) => {
     const raw = String(profile.avatarUrl || '')
-    if (!raw.startsWith('firestore-media:')) {
-      avatars.set(userId, raw)
-      return
-    }
-    const mediaId = raw.slice('firestore-media:'.length)
-    if (mediaId) {
-      mediaLookups.push({
-        userId,
-        ref: adminDb.collection('users').doc(userId).collection('media').doc(mediaId),
-      })
-    } else {
-      avatars.set(userId, '')
-    }
+    avatars.set(userId, raw)
   })
-  if (mediaLookups.length > 0) {
-    const snapshots = await adminDb.getAll(...mediaLookups.map((item) => item.ref))
-    snapshots.forEach((snapshot, index) => {
-      avatars.set(mediaLookups[index].userId, snapshot.exists ? String(snapshot.data()?.dataUrl || '') : '')
-    })
-  }
   return avatars
 }
 
@@ -480,51 +459,46 @@ async function authenticate(request, env, services) {
     const decoded = await services.adminAuth.verifyIdToken(token).catch(() => {
       throw httpError('Invalid authentication session.', 401)
     })
-    return { viewerId: decoded.uid, adminDb: services.adminDb, isSupabase: false }
+    return { viewerId: decoded.uid, supabaseAdmin: services.supabaseAdmin }
   }
 
-  if (env?.VITE_SUPABASE_URL || env?.SUPABASE_URL) {
-    try {
-      const supabaseAdmin = getSupabaseAdmin(env)
-      const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
-      if (!error && user?.id) {
-        return { viewerId: user.id, supabaseAdmin, isSupabase: true }
-      }
-    } catch {}
+  if (services?.supabaseAdmin) {
+    const { data: { user }, error } = await services.supabaseAdmin.auth.getUser(token).catch(() => ({}))
+    if (!error && user?.id) {
+      return { viewerId: user.id, supabaseAdmin: services.supabaseAdmin }
+    }
   }
 
   try {
-    const { adminAuth, adminDb } = services || getAdminServices(env)
-    const decoded = await adminAuth.verifyIdToken(token)
-    return { viewerId: decoded.uid, adminDb, isSupabase: false }
-  } catch {
-    throw httpError('Invalid authentication session.', 401)
-  }
+    const supabaseAdmin = getSupabaseAdmin(env)
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
+    if (!error && user?.id) {
+      return { viewerId: user.id, supabaseAdmin }
+    }
+  } catch {}
+
+  throw httpError('Invalid authentication session.', 401)
 }
 
 export async function handleFeedApiRequest(request, env = process.env, services) {
   try {
     const url = new URL(request.url || '/', 'http://localhost')
     if (!url.pathname.startsWith('/api/feed')) return null
-    const authResult = await authenticate(request, env, services)
-    const { viewerId, adminDb, supabaseAdmin, isSupabase } = authResult
+    const { viewerId, supabaseAdmin } = await authenticate(request, env, services)
 
     if (request.method === 'GET' && url.pathname === '/api/feed') {
       const category = cleanText(url.searchParams.get('category') || 'all', 20)
       if (category !== 'all' && !FEED_TYPES.has(category)) throw httpError('Invalid feed category.', 400)
       const cursor = decodeFeedCursor(url.searchParams.get('cursor'), category)
-      if (isSupabase) {
-        return loadFeedPageSupabase(supabaseAdmin, viewerId, category, cursor)
-      }
-      return loadFeedPage(adminDb, viewerId, category, cursor)
+      return loadFeedPageSupabase(supabaseAdmin, viewerId, category, cursor)
     }
     if (request.method === 'POST' && url.pathname === '/api/feed/signals') {
-      if (isSupabase) return { recorded: true }
-      return storeSignal(adminDb, viewerId, await readJsonBody(request))
+      return { recorded: true }
     }
     if (request.method === 'DELETE' && url.pathname === '/api/feed/preferences') {
-      if (isSupabase) return { reset: true }
-      await adminDb.collection('users').doc(viewerId).collection('private').doc('feed-preferences').delete()
+      if (services?.adminDb) {
+        await services.adminDb.collection('users').doc(viewerId).collection('private').doc('feed-preferences').delete()
+      }
       return { reset: true }
     }
     throw httpError('Feed API route not found.', 404)

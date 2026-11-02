@@ -15,7 +15,9 @@ import {
 } from '../../features/auth/ageEligibility'
 
 interface RegisterFormProps {
-  onSwitchToLogin: () => void
+  onSwitchToLogin?: () => void
+  onSwitchTab?: (tab: 'login' | 'register') => void
+  activeTab?: 'login' | 'register'
 }
 
 interface HandleAvailabilityResponse {
@@ -47,7 +49,7 @@ async function checkHandleAvailability(handle: string, signal?: AbortSignal) {
   }
 }
 
-export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) => {
+export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin: _onSwitchToLogin, onSwitchTab, activeTab = 'register' }) => {
   const navigate = useNavigate()
   const { signup, loginWithApple, loginWithGoogle } = useAuth()
   const [name, setName] = useState('')
@@ -149,7 +151,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
           navigate('/')
         }, 600)
       } catch (err: unknown) {
-        const message = (err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Registration failed.'
+        const message = (err as Error)?.message || 'Registration failed.'
         if (/username.*already in use/i.test(message)) {
           setUsernameStatus('taken')
           setErrors((current) => ({ ...current, username: 'That username is already taken.' }))
@@ -189,7 +191,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
         navigate('/')
       }, 600)
     } catch (err: unknown) {
-      setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || `${provider} sign up failed.`)
+      setGenericError((err as Error)?.message || `${provider} sign up failed.`)
     } finally {
       setLoading(false)
     }
@@ -203,13 +205,36 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
         noValidate
         aria-label="Create your account"
       >
-        {/* Heading */}
+        {/* Heading (No subtitle as requested) */}
         <div className="auth-form-heading-block">
-          <h1 className="auth-form-heading">Create an account.</h1>
-          <div className="auth-ornamental-rule" aria-hidden="true">
-            <div className="auth-fading-rule" />
-          </div>
+          <h1 className="auth-form-heading" aria-label="Create an account.">Sign in</h1>
         </div>
+
+        {/* Tab switch */}
+        {onSwitchTab && (
+          <div className="auth-tabs-bar" role="group" aria-label="Sign in or Log in">
+            <button
+              type="button"
+              id="tab-login"
+              aria-label="Log in"
+              aria-pressed={activeTab === 'login'}
+              className={`auth-tab-item ${activeTab === 'login' ? 'is-active' : ''}`}
+              onClick={() => onSwitchTab('login')}
+            >
+              Log in
+            </button>
+            <button
+              type="button"
+              id="tab-register"
+              aria-label="Create one"
+              aria-pressed={activeTab === 'register'}
+              className={`auth-tab-item ${activeTab === 'register' ? 'is-active' : ''}`}
+              onClick={() => onSwitchTab('register')}
+            >
+              Sign in
+            </button>
+          </div>
+        )}
 
         {/* Generic Error Banner */}
         {genericError && (
@@ -236,57 +261,35 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
           <div className="auth-register-inline-fields">
             <div>
               <FormInput
-              id="register-username"
-              label="Username"
-              type="text"
-              autoComplete="username"
-              placeholder="your_username"
-              value={username}
-              onChange={(e) => {
-                setUsername(e.target.value.replace(/^@/, '').replace(/\s+/g, '').toLowerCase())
-                setUsernameStatus('idle')
-                setUsernameSuggestions([])
-                setErrors((current) => ({ ...current, username: undefined }))
-              }}
-              error={errors.username}
-              leadingIcon={<AtSign size={16} strokeWidth={1.75} />}
+                id="register-username"
+                label="Username"
+                type="text"
+                autoComplete="username"
+                placeholder="your_username"
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value.replace(/^@/, '').replace(/\s+/g, '').toLowerCase())
+                  setUsernameStatus('idle')
+                  setUsernameSuggestions([])
+                  setErrors((current) => ({ ...current, username: undefined }))
+                }}
+                error={errors.username}
+                leadingIcon={<AtSign size={16} strokeWidth={1.75} />}
               />
               {usernameStatus === 'checking' && (
-              <p className="auth-username-availability is-checking" role="status">
-                <LoaderCircle size={14} className="auth-spin" /> Checking availability…
-              </p>
+                <p className="auth-username-availability is-checking" role="status">
+                  <LoaderCircle size={14} className="auth-spin" /> Checking availability…
+                </p>
               )}
               {usernameStatus === 'available' && !errors.username && (
-              <p className="auth-username-availability is-available" role="status">
-                <CheckCircle2 size={14} /> Username is available.
-              </p>
+                <p className="auth-username-availability is-available" role="status">
+                  <CheckCircle2 size={14} /> Username is available.
+                </p>
               )}
               {usernameStatus === 'error' && (
-              <p className="auth-username-availability is-error" role="status">
-                Couldn’t check availability. We’ll try again when you submit.
-              </p>
-              )}
-              {usernameStatus === 'taken' && usernameSuggestions.length > 0 && (
-              <div className="auth-username-suggestions" aria-label="Available username suggestions">
-                <span>Try an available username:</span>
-                <div>
-                  {usernameSuggestions.map((suggestion) => (
-                    <button
-                      type="button"
-                      className="auth-username-suggestion"
-                      key={suggestion}
-                      onClick={() => {
-                        setUsername(suggestion)
-                        setUsernameStatus('idle')
-                        setUsernameSuggestions([])
-                        setErrors((current) => ({ ...current, username: undefined }))
-                      }}
-                    >
-                      @{suggestion}
-                    </button>
-                  ))}
-                </div>
-              </div>
+                <p className="auth-username-availability is-error" role="status">
+                  Couldn’t check availability. We’ll try again when you submit.
+                </p>
               )}
             </div>
 
@@ -306,6 +309,29 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
             />
           </div>
 
+          {usernameStatus === 'taken' && usernameSuggestions.length > 0 && (
+            <div className="auth-username-suggestions" aria-label="Available username suggestions">
+              <span className="auth-username-suggestions-label">Try an available username:</span>
+              <div className="auth-username-suggestions-row">
+                {usernameSuggestions.map((suggestion) => (
+                  <button
+                    type="button"
+                    className="auth-username-suggestion"
+                    key={suggestion}
+                    onClick={() => {
+                      setUsername(suggestion)
+                      setUsernameStatus('idle')
+                      setUsernameSuggestions([])
+                      setErrors((current) => ({ ...current, username: undefined }))
+                    }}
+                  >
+                    @{suggestion}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <FormInput
             id="register-email"
             label="Email"
@@ -318,31 +344,33 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
             leadingIcon={<Mail size={16} strokeWidth={1.75} />}
           />
 
-          <div>
+          <div className="auth-register-inline-fields">
+            <div>
+              <PasswordInput
+                id="register-password"
+                label="Password"
+                autoComplete="new-password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                error={errors.password}
+                hint="At least 8 characters."
+                leadingIcon={<Lock size={16} strokeWidth={1.75} />}
+              />
+              <PasswordStrengthMeter password={password} />
+            </div>
+
             <PasswordInput
-              id="register-password"
-              label="Password"
+              id="register-confirm-password"
+              label="Confirm Password"
               autoComplete="new-password"
               placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              error={errors.password}
-              hint="At least 8 characters."
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              error={errors.confirmPassword}
               leadingIcon={<Lock size={16} strokeWidth={1.75} />}
             />
-            <PasswordStrengthMeter password={password} />
           </div>
-
-          <PasswordInput
-            id="register-confirm-password"
-            label="Confirm Password"
-            autoComplete="new-password"
-            placeholder="••••••••"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            error={errors.confirmPassword}
-            leadingIcon={<Lock size={16} strokeWidth={1.75} />}
-          />
 
           {/* Terms checkbox */}
           <div className="auth-terms-row">
@@ -415,24 +443,11 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSwitchToLogin }) =
           {loading ? 'Creating account...' : 'Create account'}
         </button>
 
-        {/* Social Sign In Options */}
+        {/* Circular Social Sign In options below CTA */}
         <SocialSignIn
           mode="register"
           onSelectProvider={handleSelectProvider}
         />
-
-        {/* Switch to Login */}
-        <p className="auth-switch-text">
-          Already have an account?{' '}
-          <button
-            type="button"
-            className="auth-link-btn"
-            onClick={onSwitchToLogin}
-            id="btn-switch-login"
-          >
-            Log in
-          </button>
-        </p>
       </form>
 
       {/* Legal Modal Overlay */}

@@ -1,9 +1,9 @@
-# Supabase Migration for The Commonplace
+# Supabase for The Commonplace
 
-This directory contains the database schema and security rules for migrating **The Commonplace** from Firebase/Firestore to **Supabase (PostgreSQL)**.
+This directory contains the database schema and security rules for **The Commonplace** using **Supabase (PostgreSQL)**.
 
 ## Why This Schema Solves Prior Issues
-1. **No More Permission Denied Bugs**: Replaces brittle Firestore rules with native PostgreSQL Row-Level Security (RLS) policies.
+1. **No More Permission Denied Bugs**: Powered by native PostgreSQL Row-Level Security (RLS) policies.
 2. **True Relational Integrity**: Follow relationships, entries, comments, likes, and replies use foreign keys with `ON DELETE CASCADE`.
 3. **Instant Counts**: Follower counts, review counts, and entry likes are computed with zero sync errors.
 4. **Fast User & Handle Search**: Powered by PostgreSQL `pg_trgm` indexes for fast case-insensitive search (`ILIKE`).

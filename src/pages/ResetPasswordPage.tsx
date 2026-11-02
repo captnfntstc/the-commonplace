@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { signOut } from 'firebase/auth'
 import { AlertCircle, CheckCircle2, Lock, MailCheck, XCircle } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { AuthHeader } from '../components/auth/AuthHeader'
 import { PasswordInput } from '../components/auth/PasswordInput'
 import { PasswordStrengthMeter } from '../components/auth/PasswordStrengthMeter'
-import { auth } from '../services/firebase'
 import { supabase } from '../services/supabase'
 
 type ResetState = 'checking' | 'valid' | 'invalid' | 'success'
@@ -69,10 +67,7 @@ export function ResetPasswordPage() {
     try {
       setSubmitting(true)
       await postResetRequest('/api/auth/password-reset-links/redeem', { token, newPassword: password })
-      await Promise.all([
-        signOut(auth).catch(() => {}),
-        supabase.auth.signOut().catch(() => {}),
-      ])
+      await supabase.auth.signOut().catch(() => {})
       setStatus('success')
     } catch (requestError) {
       const message = (requestError as Error)?.message || 'Unable to update your password.'

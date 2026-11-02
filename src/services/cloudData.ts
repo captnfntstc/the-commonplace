@@ -1,21 +1,3 @@
-import {
-  arrayRemove,
-  arrayUnion,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  runTransaction,
-  serverTimestamp,
-  setDoc,
-  writeBatch,
-  type DocumentReference,
-  type Unsubscribe,
-  where,
-} from 'firebase/firestore'
 import { reconcileEntrySnapshots, type Entry } from '../features/entries/model'
 import {
   collectionsCreatedByProfile,
@@ -24,8 +6,15 @@ import {
 import type { AppNotification } from '../types/notification'
 import type { UserProfileState } from '../types/userProfile'
 import { removeLegacySeedEntryIds } from '../utils/legacySeedCleanup'
-import { db, isFirebaseConfigured } from './firebase'
 import { supabase, isSupabaseConfigured } from './supabase'
+
+export type Unsubscribe = () => void
+
+function cleanImageUrl(value?: string | null): string {
+  if (!value || typeof value !== 'string') return ''
+  if (value.startsWith('firestore-media:')) return ''
+  return value
+}
 
 function mapSupabaseEntryToClientEntry(row: Record<string, any>): Entry {
   const meta = (row.metadata as Record<string, any>) || {}
@@ -43,9 +32,9 @@ function mapSupabaseEntryToClientEntry(row: Record<string, any>): Entry {
     year: row.year || '',
     genre: row.genre || '',
     summary: row.summary || '',
-    coverUrl: row.cover_url || '',
+    coverUrl: cleanImageUrl(row.cover_url) || cleanImageUrl(meta.coverUrl) || '',
     coverTone: row.cover_tone || undefined,
-    artworkUrl: row.artwork_url || '',
+    artworkUrl: cleanImageUrl(row.artwork_url) || '',
     rating: row.rating ? Number(row.rating) : 0,
     quote: row.quote || '',
     favoritePassage: row.favorite_passage || '',
@@ -62,7 +51,7 @@ function mapSupabaseEntryToClientEntry(row: Record<string, any>): Entry {
     updatedAt: row.updated_at || meta.updatedAt || new Date().toISOString(),
     authorHandle: profile.handle || meta.authorHandle || '',
     authorName: authorName || meta.authorName || '',
-    authorAvatarUrl: profile.avatar_url || meta.authorAvatarUrl || '',
+    authorAvatarUrl: cleanImageUrl(profile.avatar_url) || cleanImageUrl(meta.authorAvatarUrl) || '',
     ...meta,
   } as Entry
 }
@@ -144,9 +133,7 @@ export type ContentReport = {
 type CloudCollectionKind = 'created' | 'saved'
 type CloudImageKind = 'avatar' | 'cover' | 'collection-cover'
 
-const FIRESTORE_MEDIA_PREFIX = 'firestore-media:'
 const MAX_MEDIA_DATA_URL_LENGTH = 700_000
-const mediaCache = new Map<string, Promise<string>>()
 const accountIdentityCache = new Map<string, Promise<{ handle: string; deactivated: boolean }>>()
 const pendingUserEntryWrites = new Map<string, Promise<void>>()
 
@@ -206,85 +193,61 @@ export function mergeMigrationSnapshots(
 }
 
 export function canUseCloudData(userId?: string | null) {
-  return Boolean((isSupabaseConfigured || isFirebaseConfigured) && userId)
+  return Boolean(isSupabaseConfigured && userId)
 }
 
-function cleanHandle(handle: string) {
-  return handle.replace(/^@/, '').trim().toLowerCase()
+function cleanHandle(value: string) {
+  return value.replace(/^@/, '').trim().toLowerCase()
 }
 
 function dateValueToMillis(value: unknown) {
-  if (value && typeof value === 'object' && 'toMillis' in value && typeof value.toMillis === 'function') {
-    return value.toMillis()
+  if (value && typeof value === 'object' && 'toMillis' in value && typeof (value as any).toMillis === 'function') {
+    return (value as any).toMillis()
   }
   const timestamp = typeof value === 'string' || typeof value === 'number' ? new Date(value).getTime() : Number.NaN
   return Number.isFinite(timestamp) ? timestamp : null
 }
 
 export function isAccountCurrentlyDeactivated(data: Record<string, unknown>, now = Date.now()) {
-  if (data.accountStatus !== 'deactivated') return false
-  const reactivatesAt = dateValueToMillis(data.reactivatesAt)
-  return reactivatesAt === null || reactivatesAt > now
+  if (data.account_status === 'deactivated' || data.accountStatus === 'deactivated') {
+    const reactivatesAt = dateValueToMillis(data.reactivates_at || data.reactivatesAt)
+    return reactivatesAt === null || reactivatesAt > now
+  }
+  return false
 }
 
-async function loadAccountIdentity(userId?: string) {
+export async function loadAccountIdentity(userId?: string | null): Promise<{ handle: string; deactivated: boolean }> {
   if (!userId) return { handle: '', deactivated: false }
   const cached = accountIdentityCache.get(userId)
   if (cached) return cached
-  const request = getDoc(doc(db, 'users', userId))
-    .then((snapshot) => {
-      if (!snapshot.exists()) return { handle: '', deactivated: false }
-      const data = snapshot.data()
-      return {
-        handle: cleanHandle(String(data.handle || '')),
-        deactivated: isAccountCurrentlyDeactivated(data),
+
+  if (isSupabaseConfigured) {
+    const loadFromSupabase = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('handle, account_status')
+          .eq('id', userId)
+          .maybeSingle()
+        if (error || !data) return { handle: '', deactivated: false }
+        return {
+          handle: cleanHandle(String(data.handle || '')),
+          deactivated: isAccountCurrentlyDeactivated(data as Record<string, unknown>),
+        }
+      } catch {
+        return { handle: '', deactivated: false }
       }
-    })
-    .catch(() => ({ handle: '', deactivated: false }))
-  accountIdentityCache.set(userId, request)
-  return request
-}
-
-function firestoreDateToIso(value: unknown) {
-  if (typeof value === 'string') return value
-  if (value && typeof value === 'object' && 'toDate' in value) {
-    const date = (value as { toDate: () => Date }).toDate()
-    return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
+    }
+    const request = loadFromSupabase()
+    accountIdentityCache.set(userId, request)
+    return request
   }
-  return undefined
+
+  return { handle: '', deactivated: false }
 }
 
-function mediaDocumentId(kind: CloudImageKind, fileKey: string) {
-  const safeKey = fileKey.replace(/[^a-z0-9_-]/gi, '_').slice(0, 180) || 'image'
-  return `${kind}--${safeKey}`
-}
-
-function mediaReference(documentId: string) {
-  return `${FIRESTORE_MEDIA_PREFIX}${documentId}`
-}
-
-function mediaIdFromReference(value: string) {
-  return value.startsWith(FIRESTORE_MEDIA_PREFIX)
-    ? value.slice(FIRESTORE_MEDIA_PREFIX.length)
-    : null
-}
-
-function mediaCacheKey(userId: string, documentId: string) {
-  return `${userId}/${documentId}`
-}
-
-async function resolveUserImage(userId: string, value: string) {
-  const documentId = mediaIdFromReference(value)
-  if (!documentId) return value
-  const cacheKey = mediaCacheKey(userId, documentId)
-  let pending = mediaCache.get(cacheKey)
-  if (!pending) {
-    pending = getDoc(doc(db, 'users', userId, 'media', documentId))
-      .then((snapshot) => snapshot.exists() ? String(snapshot.data().dataUrl || '') : '')
-      .catch(() => '')
-    mediaCache.set(cacheKey, pending)
-  }
-  return pending
+export async function resolveUserImage(_userId: string, value: string) {
+  return value || ''
 }
 
 function imageDimensions(kind: CloudImageKind) {
@@ -293,11 +256,11 @@ function imageDimensions(kind: CloudImageKind) {
   return { maxWidth: 1000, maxHeight: 1200 }
 }
 
-async function compressImageForFirestore(imageUrl: string, kind: CloudImageKind) {
+async function compressImage(imageUrl: string, kind: CloudImageKind) {
   if (!imageUrl.startsWith('data:')) return imageUrl
   if (typeof document === 'undefined' || typeof Image === 'undefined') {
     if (imageUrl.length <= MAX_MEDIA_DATA_URL_LENGTH) return imageUrl
-    throw new Error('This image is too large for the Firestore image limit.')
+    throw new Error('This image is too large.')
   }
 
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -352,35 +315,10 @@ export function withoutUndefined<T>(value: T): T {
   return value
 }
 
-async function replaceDocuments(
-  existingRefs: DocumentReference[],
-  records: Array<{ ref: DocumentReference; data: Record<string, unknown> }>,
-) {
-  const nextPaths = new Set(records.map((record) => record.ref.path))
-  const operations: Array<
-    | { type: 'delete'; ref: DocumentReference }
-    | { type: 'set'; ref: DocumentReference; data: Record<string, unknown> }
-  > = [
-    ...existingRefs
-      .filter((existingRef) => !nextPaths.has(existingRef.path))
-      .map((existingRef) => ({ type: 'delete' as const, ref: existingRef })),
-    ...records.map((record) => ({ type: 'set' as const, ...record })),
-  ]
-
-  for (let index = 0; index < operations.length; index += 400) {
-    const batch = writeBatch(db)
-    operations.slice(index, index + 400).forEach((operation) => {
-      if (operation.type === 'delete') batch.delete(operation.ref)
-      else batch.set(operation.ref, withoutUndefined(operation.data))
-    })
-    await batch.commit()
-  }
-}
-
 export async function saveUserProfile(
   userId: string,
   profile: UserProfileState,
-  options: { markMigrated?: boolean } = {},
+  _options: { markMigrated?: boolean } = {},
 ) {
   if (!canUseCloudData(userId)) return profile
 
@@ -402,69 +340,10 @@ export async function saveUserProfile(
       updated_at: new Date().toISOString(),
     })
     if (error) console.error('Error saving user profile in Supabase:', error)
-    const [avatarUrl, coverUrl] = await Promise.all([
-      resolveUserImage(userId, profile.avatarUrl),
-      resolveUserImage(userId, profile.coverUrl),
-    ])
-    return { ...profile, handle: nextHandle, avatarUrl, coverUrl }
+    return { ...profile, handle: nextHandle }
   }
 
-  if (isFirebaseConfigured) {
-    const userRef = doc(db, 'users', userId)
-    const {
-      email,
-      birthday,
-      createdAt: _createdAt,
-      accountStatus: _accountStatus,
-      ...publicProfile
-    } = profile
-    void _createdAt
-    void _accountStatus
-
-    await runTransaction(db, async (transaction) => {
-      const nextHandleRef = doc(db, 'handles', nextHandle)
-      const [existing, nextHandleSnapshot] = await Promise.all([
-        transaction.get(userRef),
-        transaction.get(nextHandleRef),
-      ])
-      const previousHandle = existing.exists() ? cleanHandle(String(existing.data().handle || '')) : ''
-      const existingHandleOwner = nextHandleSnapshot.exists() ? String(nextHandleSnapshot.data().uid || '') : ''
-      if (existingHandleOwner && existingHandleOwner !== userId) {
-        throw new Error('That username is already in use.')
-      }
-
-      transaction.set(userRef, withoutUndefined({
-        ...publicProfile,
-        handle: nextHandle,
-        ...(!existing.exists() || !existing.data().createdAt ? { createdAt: serverTimestamp() } : {}),
-        migrationVersion: options.markMigrated === false ? 0 : CLOUD_MIGRATION_VERSION,
-        updatedAt: new Date().toISOString(),
-      }), { merge: true })
-      transaction.set(doc(db, 'users', userId, 'private', 'settings'), withoutUndefined({
-        email,
-        birthday,
-        lastUsernameChangeDate: profile.lastUsernameChangeDate,
-        updatedAt: new Date().toISOString(),
-      }), { merge: true })
-      transaction.set(nextHandleRef, {
-        uid: userId,
-        handle: nextHandle,
-        ...(!nextHandleSnapshot.exists() || !nextHandleSnapshot.data().createdAt
-          ? { createdAt: serverTimestamp() }
-          : {}),
-        updatedAt: new Date().toISOString(),
-      })
-      if (previousHandle && previousHandle !== nextHandle) {
-        transaction.delete(doc(db, 'handles', previousHandle))
-      }
-    })
-  }
-
-  const [avatarUrl, coverUrl] = await Promise.all([
-    resolveUserImage(userId, profile.avatarUrl),
-    resolveUserImage(userId, profile.coverUrl),
-  ])
-  return { ...profile, handle: nextHandle, avatarUrl, coverUrl }
+  return { ...profile, handle: nextHandle }
 }
 
 export async function reactivateUserAccount(userId: string) {
@@ -475,13 +354,6 @@ export async function reactivateUserAccount(userId: string) {
       reactivates_at: null,
       updated_at: new Date().toISOString(),
     }).eq('id', userId)
-  }
-  if (isFirebaseConfigured) {
-    await setDoc(doc(db, 'users', userId), {
-      accountStatus: 'active',
-      reactivatedAt: serverTimestamp(),
-      updatedAt: new Date().toISOString(),
-    }, { merge: true })
   }
   accountIdentityCache.delete(userId)
 }
@@ -499,10 +371,6 @@ export async function loadUserProfile(userId: string, fallbackEmail?: string): P
       const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }))
       const sessionUser = sessionData?.session?.user
       const email = (sessionUser?.id === userId ? sessionUser.email : fallbackEmail) || fallbackEmail || ''
-      const [avatarUrl, coverUrl] = await Promise.all([
-        resolveUserImage(userId, String(profile.avatar_url || '')),
-        resolveUserImage(userId, String(profile.cover_url || '')),
-      ])
       return {
         firstName: String(profile.first_name || ''),
         lastName: String(profile.last_name || ''),
@@ -510,8 +378,8 @@ export async function loadUserProfile(userId: string, fallbackEmail?: string): P
         handle: String(profile.handle || ''),
         email,
         bio: String(profile.bio || ''),
-        avatarUrl,
-        coverUrl,
+        avatarUrl: cleanImageUrl(profile.avatar_url),
+        coverUrl: cleanImageUrl(profile.cover_url),
         createdAt: profile.created_at || new Date().toISOString(),
         birthday: profile.birthdate ? String(profile.birthdate) : undefined,
         lastUsernameChangeDate: undefined,
@@ -523,38 +391,7 @@ export async function loadUserProfile(userId: string, fallbackEmail?: string): P
     }
   }
 
-  if (!isFirebaseConfigured) return null
-  const [publicSnapshot, privateSnapshot] = await Promise.all([
-    getDoc(doc(db, 'users', userId)),
-    getDoc(doc(db, 'users', userId, 'private', 'settings')),
-  ])
-  if (!publicSnapshot.exists()) return null
-
-  const publicData = publicSnapshot.data()
-  const privateData = privateSnapshot.exists() ? privateSnapshot.data() : {}
-  const [avatarUrl, coverUrl] = await Promise.all([
-    resolveUserImage(userId, String(publicData.avatarUrl || '')),
-    resolveUserImage(userId, String(publicData.coverUrl || '')),
-  ])
-  return {
-    firstName: String(publicData.firstName || ''),
-    lastName: String(publicData.lastName || ''),
-    showFullName: publicData.showFullName !== false,
-    handle: String(publicData.handle || ''),
-    email: String(privateData.email || ''),
-    bio: String(publicData.bio || ''),
-    avatarUrl,
-    coverUrl,
-    createdAt: firestoreDateToIso(publicData.createdAt),
-    birthday: privateData.birthday ? String(privateData.birthday) : undefined,
-    lastUsernameChangeDate: privateData.lastUsernameChangeDate
-      ? String(privateData.lastUsernameChangeDate)
-      : undefined,
-    showFollowLists: publicData.showFollowLists !== false,
-    allowComments: publicData.allowComments !== false,
-    isPrivate: Boolean(publicData.isPrivate),
-    showSavedActivity: Boolean(publicData.showSavedActivity),
-  }
+  return null
 }
 
 async function writeUserEntries(
@@ -604,39 +441,7 @@ async function writeUserEntries(
     } else {
       await supabase.from('entries').delete().eq('owner_id', userId)
     }
-    return
   }
-  const entriesRef = collection(db, 'users', userId, 'entries')
-  const existing = await getDocs(entriesRef)
-  const existingPostSnapshots = await Promise.all(
-    existing.docs.map((entry) => getDoc(doc(db, 'posts', entry.id))),
-  )
-  const existingPostRefs = existingPostSnapshots.filter((item) => item.exists()).map((item) => item.ref)
-  await replaceDocuments(
-    [...existing.docs.map((entry) => entry.ref), ...existingPostRefs],
-    entries.flatMap((entry) => {
-      const storedEntry = {
-        ...entry,
-        authorAvatarUrl: entry.authorAvatarUrl?.startsWith('data:')
-          ? mediaReference(mediaDocumentId('avatar', 'profile'))
-          : entry.authorAvatarUrl,
-      }
-      return [{
-        ref: doc(entriesRef, entry.id),
-        data: withoutUndefined({ ...storedEntry, ownerId: userId }),
-      },
-      {
-        ref: doc(db, 'posts', entry.id),
-        data: {
-          ownerId: userId,
-          authorHandle: cleanHandle(entry.authorHandle || ''),
-          entryTitle: entry.title,
-          commentsDisabled: disabledCommentEntryIds.includes(entry.id),
-          updatedAt: entry.updatedAt || entry.createdAt,
-        },
-      }]
-    }),
-  )
 }
 
 export function saveUserEntries(
@@ -670,32 +475,12 @@ export async function loadUserEntries(userId: string): Promise<Entry[]> {
       .select('*, profiles:owner_id (*)')
       .eq('owner_id', userId)
       .order('created_at', { ascending: false })
-    if (!error && data && data.length > 0) {
-      return Promise.all(data.map(async (row) => {
-        const entry = mapSupabaseEntryToClientEntry(row)
-        return {
-          ...entry,
-          authorAvatarUrl: entry.authorAvatarUrl
-            ? await resolveUserImage(userId, entry.authorAvatarUrl)
-            : entry.authorAvatarUrl,
-        }
-      }))
+    if (!error && data) {
+      return data.map((row) => mapSupabaseEntryToClientEntry(row))
     }
   }
 
-  if (!isFirebaseConfigured) return []
-  const snapshot = await getDocs(collection(db, 'users', userId, 'entries'))
-  const entries = await Promise.all(snapshot.docs.map(async (entry) => {
-    const data = entry.data() as Entry
-    return {
-      ...data,
-      authorAvatarUrl: data.authorAvatarUrl
-        ? await resolveUserImage(userId, data.authorAvatarUrl)
-        : data.authorAvatarUrl,
-    }
-  }))
-  return entries
-    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+  return []
 }
 
 export async function loadPostEntry(postId: string): Promise<Entry | null> {
@@ -709,38 +494,7 @@ export async function loadPostEntry(postId: string): Promise<Entry | null> {
       return mapSupabaseEntryToClientEntry(data)
     }
   }
-
-  if (!isFirebaseConfigured || !postId) return null
-  const postSnapshot = await getDoc(doc(db, 'posts', postId))
-  if (!postSnapshot.exists()) return null
-
-  const ownerId = String(postSnapshot.data().ownerId || '')
-  if (!ownerId) return null
-  const [entrySnapshot, profileSnapshot] = await Promise.all([
-    getDoc(doc(db, 'users', ownerId, 'entries', postId)),
-    getDoc(doc(db, 'users', ownerId)),
-  ])
-  if (!entrySnapshot.exists()) return null
-
-  const entry = entrySnapshot.data() as Entry
-  const profile = profileSnapshot.exists() ? profileSnapshot.data() : undefined
-  const authorHandle = cleanHandle(String(profile?.handle || entry.authorHandle || ''))
-  const authorName = profile
-    ? profile.showFullName === false
-      ? String(profile.firstName || '')
-      : `${String(profile.firstName || '')} ${String(profile.lastName || '')}`.trim()
-    : entry.authorName
-  const avatarReference = String(profile?.avatarUrl || entry.authorAvatarUrl || '')
-
-  return {
-    ...entry,
-    ownerId,
-    authorHandle,
-    authorName: authorName || entry.authorName || (authorHandle ? `@${authorHandle}` : undefined),
-    authorAvatarUrl: avatarReference
-      ? await resolveUserImage(ownerId, avatarReference)
-      : avatarReference,
-  }
+  return null
 }
 
 export async function saveUserCloudState(userId: string, patch: Partial<UserCloudState>) {
@@ -757,112 +511,58 @@ export async function saveUserCloudState(userId: string, patch: Partial<UserClou
       updated_at: updatedAt,
     })
     if (error) console.error('Error saving user cloud state in Supabase:', error)
-    return
   }
-
-  if (!isFirebaseConfigured) return
-  const writes: Promise<void>[] = [
-    setDoc(
-      doc(db, 'users', userId, 'private', 'app-state'),
-      withoutUndefined({ ...patch, updatedAt }),
-      { merge: true },
-    ),
-  ]
-  if (patch.savedEntryIds) {
-    writes.push(setDoc(doc(db, 'users', userId, 'activity', 'saved'), {
-      ownerId: userId,
-      entryIds: patch.savedEntryIds,
-      updatedAt,
-    }))
-  }
-  await Promise.all(writes)
 }
 
 export async function setCloudSavedEntry(userId: string, entryId: string, saved: boolean) {
   if (!canUseCloudData(userId)) return
-  const updatedAt = new Date().toISOString()
-
-  if (isSupabaseConfigured) {
-    const { data: current } = await supabase
-      .from('user_cloud_state')
-      .select('saved_entries')
-      .eq('user_id', userId)
-      .maybeSingle()
-    const currentSaved: string[] = Array.isArray(current?.saved_entries) ? current.saved_entries : []
-    const nextSaved = saved
-      ? Array.from(new Set([...currentSaved, entryId]))
-      : currentSaved.filter((id) => id !== entryId)
-    await supabase.from('user_cloud_state').upsert({
-      user_id: userId,
-      saved_entries: nextSaved,
-      updated_at: updatedAt,
-    })
-    return
-  }
-  const savedEntryTransform = saved ? arrayUnion(entryId) : arrayRemove(entryId)
-  await Promise.all([
-    setDoc(doc(db, 'users', userId, 'private', 'app-state'), {
-      savedEntryIds: savedEntryTransform,
-      updatedAt,
-    }, { merge: true }),
-    setDoc(doc(db, 'users', userId, 'activity', 'saved'), {
-      ownerId: userId,
-      entryIds: savedEntryTransform,
-      updatedAt,
-    }, { merge: true }),
-  ])
+  const state = await loadUserCloudState(userId)
+  const set = new Set(state.savedEntryIds)
+  if (saved) set.add(entryId)
+  else set.delete(entryId)
+  await saveUserCloudState(userId, { savedEntryIds: Array.from(set) })
 }
 
 export function resolveSavedEntryIds(
   appState: Record<string, unknown>,
   savedActivity: Record<string, unknown>,
 ) {
-  const appStateIds = Array.isArray(appState.savedEntryIds) ? appState.savedEntryIds : null
-  const activityIds = Array.isArray(savedActivity.entryIds) ? savedActivity.entryIds : null
-  const activityIsNewest = String(savedActivity.updatedAt || '') >= String(appState.updatedAt || '')
-  const selected = activityIds && (!appStateIds || activityIsNewest) ? activityIds : appStateIds
-  return Array.isArray(selected)
-    ? removeLegacySeedEntryIds(selected.filter((value): value is string => typeof value === 'string'))
-    : []
+  const activityUpdated = dateValueToMillis(savedActivity.updatedAt) || 0
+  const stateUpdated = dateValueToMillis(appState.updatedAt) || 0
+  if (activityUpdated > stateUpdated && Array.isArray(savedActivity.entryIds)) {
+    return removeLegacySeedEntryIds(savedActivity.entryIds as string[])
+  }
+  if (Array.isArray(appState.savedEntryIds)) {
+    return removeLegacySeedEntryIds(appState.savedEntryIds as string[])
+  }
+  return removeLegacySeedEntryIds(Array.from(new Set([
+    ...(Array.isArray(savedActivity.entryIds) ? (savedActivity.entryIds as string[]) : []),
+    ...(Array.isArray(appState.savedEntryIds) ? (appState.savedEntryIds as string[]) : []),
+  ])))
 }
 
 export async function loadUserCloudState(userId: string): Promise<UserCloudState> {
   if (!canUseCloudData(userId)) return DEFAULT_CLOUD_STATE
 
   if (isSupabaseConfigured) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('user_cloud_state')
       .select('*')
       .eq('user_id', userId)
       .maybeSingle()
-    if (data) {
+    if (!error && data) {
       return {
-        likedEntryIds: data.liked_entry_ids || [],
-        savedEntryIds: Array.isArray(data.saved_entries) ? data.saved_entries : [],
-        disabledCommentEntryIds: data.disabled_comment_entry_ids || [],
-        followedUserHandles: data.followed_user_handles || [],
-        followRequestedHandles: data.follow_requested_handles || [],
+        likedEntryIds: Array.isArray(data.liked_entry_ids) ? data.liked_entry_ids : [],
+        savedEntryIds: Array.isArray(data.saved_entries) ? (data.saved_entries as string[]) : [],
+        disabledCommentEntryIds: Array.isArray(data.disabled_comment_entry_ids) ? data.disabled_comment_entry_ids : [],
+        followedUserHandles: Array.isArray(data.followed_user_handles) ? data.followed_user_handles : [],
+        followRequestedHandles: Array.isArray(data.follow_requested_handles) ? data.follow_requested_handles : [],
         notifications: [],
       }
     }
   }
 
-  if (!isFirebaseConfigured) return DEFAULT_CLOUD_STATE
-  const [snapshot, savedActivitySnapshot] = await Promise.all([
-    getDoc(doc(db, 'users', userId, 'private', 'app-state')),
-    getDoc(doc(db, 'users', userId, 'activity', 'saved')),
-  ])
-  if (!snapshot.exists() && !savedActivitySnapshot.exists()) return DEFAULT_CLOUD_STATE
-  const data = snapshot.exists() ? snapshot.data() : {}
-  const savedActivity = savedActivitySnapshot.exists() ? savedActivitySnapshot.data() : {}
-  return {
-    likedEntryIds: Array.isArray(data.likedEntryIds) ? data.likedEntryIds : [],
-    savedEntryIds: resolveSavedEntryIds(data, savedActivity),
-    disabledCommentEntryIds: Array.isArray(data.disabledCommentEntryIds) ? data.disabledCommentEntryIds : [],
-    followedUserHandles: Array.isArray(data.followedUserHandles) ? data.followedUserHandles : [],
-    followRequestedHandles: Array.isArray(data.followRequestedHandles) ? data.followRequestedHandles : [],
-    notifications: Array.isArray(data.notifications) ? data.notifications : [],
-  }
+  return DEFAULT_CLOUD_STATE
 }
 
 export async function loadOrMigrateUserData(
@@ -878,10 +578,17 @@ export async function loadOrMigrateUserData(
       loadUserCloudState(userId),
     ])
     if (profile) {
+      const mergedAvatar = profile.avatarUrl || cleanImageUrl(localSnapshot.profile.avatarUrl) || ''
+      const mergedCover = profile.coverUrl || cleanImageUrl(localSnapshot.profile.coverUrl) || ''
+      if ((mergedAvatar && !profile.avatarUrl) || (mergedCover && !profile.coverUrl)) {
+        void saveUserProfile(userId, { ...profile, avatarUrl: mergedAvatar, coverUrl: mergedCover })
+      }
       return {
         profile: {
           ...profile,
           email: profile.email || localSnapshot.profile.email,
+          avatarUrl: mergedAvatar,
+          coverUrl: mergedCover,
         },
         entries,
         state,
@@ -898,98 +605,30 @@ export async function loadOrMigrateUserData(
     }
   }
 
-  const userSnapshot = await getDoc(doc(db, 'users', userId))
-
-  if (userSnapshot.exists() && !userSnapshot.data().createdAt) {
-    await setDoc(doc(db, 'users', userId), { createdAt: serverTimestamp() }, { merge: true })
-  }
-
-  if (!userSnapshot.exists() || Number(userSnapshot.data().migrationVersion || 0) < CLOUD_MIGRATION_VERSION) {
-    const existingSnapshot = userSnapshot.exists()
-      ? await Promise.all([
-          loadUserProfile(userId),
-          loadUserEntries(userId),
-          loadUserCloudState(userId),
-        ]).then(([profile, entries, state]) => profile ? { profile, entries, state } : null)
-      : null
-    const migrationSource = existingSnapshot
-      ? mergeMigrationSnapshots(existingSnapshot, localSnapshot)
-      : localSnapshot
-    const [avatarUrl, coverUrl] = await Promise.all([
-      uploadUserImage(userId, 'avatar', migrationSource.profile.avatarUrl),
-      uploadUserImage(userId, 'cover', migrationSource.profile.coverUrl),
-    ])
-    const migratedProfile = { ...migrationSource.profile, avatarUrl, coverUrl }
-    const [savedProfile] = await Promise.all([
-      saveUserProfile(userId, migratedProfile, { markMigrated: false }),
-      saveUserEntries(userId, migrationSource.entries, migrationSource.state.disabledCommentEntryIds),
-      saveUserCloudState(userId, migrationSource.state),
-    ])
-    await setDoc(doc(db, 'users', userId), {
-      migrationVersion: CLOUD_MIGRATION_VERSION,
-      migratedAt: new Date().toISOString(),
-    }, { merge: true })
-    return { ...migrationSource, profile: savedProfile }
-  }
-
-  const [profile, entries, state] = await Promise.all([
-    loadUserProfile(userId),
-    loadUserEntries(userId),
-    loadUserCloudState(userId),
-  ])
-  return {
-    profile: profile || localSnapshot.profile,
-    entries,
-    state,
-  }
+  return localSnapshot
 }
 
 export async function uploadUserImage(
   userId: string,
   kind: CloudImageKind,
   imageUrl: string,
-  fileKey = 'profile',
+  _fileKey = 'profile',
 ) {
-  if (!canUseCloudData(userId)) return imageUrl
-  const documentId = mediaDocumentId(kind, fileKey)
-  const mediaRef = doc(db, 'users', userId, 'media', documentId)
-  const cacheKey = mediaCacheKey(userId, documentId)
-  const existing = await getDoc(mediaRef)
+  if (!canUseCloudData(userId) || !imageUrl) return imageUrl
 
-  if (!imageUrl.startsWith('data:')) {
-    if (existing.exists()) await deleteDoc(mediaRef)
-    mediaCache.delete(cacheKey)
-    return imageUrl
+  if (isSupabaseConfigured) {
+    if (!imageUrl.startsWith('data:')) {
+      return imageUrl
+    }
+    try {
+      const dataUrl = await compressImage(imageUrl, kind)
+      return dataUrl
+    } catch {
+      return imageUrl
+    }
   }
 
-  if (existing.exists() && String(existing.data().dataUrl || '') === imageUrl) {
-    mediaCache.set(cacheKey, Promise.resolve(imageUrl))
-    return mediaReference(documentId)
-  }
-
-  const dataUrl = await compressImageForFirestore(imageUrl, kind)
-  await setDoc(mediaRef, {
-    ownerId: userId,
-    kind,
-    dataUrl,
-    characterCount: dataUrl.length,
-    updatedAt: new Date().toISOString(),
-  })
-  mediaCache.set(cacheKey, Promise.resolve(dataUrl))
-  return mediaReference(documentId)
-}
-
-function collectionName(kind: CloudCollectionKind) {
-  return kind === 'created' ? 'collections' : 'saved-collections'
-}
-
-async function resolveCollectionImages(userId: string, collections: ProfileCollection[]) {
-  return Promise.all(collections.map(async (item) => ({
-    ...item,
-    customCoverUrl: item.customCoverUrl
-      ? await resolveUserImage(userId, item.customCoverUrl)
-      : item.customCoverUrl,
-  })))
+  return imageUrl
 }
 
 export async function saveUserCollections(
@@ -999,36 +638,6 @@ export async function saveUserCollections(
 ) {
   if (!canUseCloudData(userId)) return collections
 
-  if (isSupabaseConfigured) {
-    const normalizedCollections = await Promise.all(collections.map(async (item) => {
-      const customCoverUrl = item.customCoverUrl?.startsWith('data:')
-        ? await uploadUserImage(userId, 'collection-cover', item.customCoverUrl, `${kind}-${item.id}`)
-        : item.customCoverUrl
-      return { ...item, customCoverUrl }
-    }))
-    const rows = normalizedCollections.map((item) => ({
-      id: item.id,
-      owner_id: userId,
-      kind,
-      title: item.name,
-      description: item.description || '',
-      cover_url: item.customCoverUrl || '',
-      visibility: item.isHidden ? 'private' : 'public',
-      item_ids: item.entryIds || item.items?.map((it) => it.id) || [],
-      updated_at: new Date().toISOString(),
-    }))
-    if (rows.length > 0) {
-      await supabase.from('collections').upsert(rows)
-      const currentIds = collections.map((c) => c.id)
-      await supabase.from('collections').delete().eq('owner_id', userId).eq('kind', kind).not('id', 'in', `(${currentIds.join(',')})`)
-    } else {
-      await supabase.from('collections').delete().eq('owner_id', userId).eq('kind', kind)
-    }
-    return resolveCollectionImages(userId, normalizedCollections)
-  }
-
-  const collectionsRef = collection(db, 'users', userId, collectionName(kind))
-  const existing = await getDocs(collectionsRef)
   const normalizedCollections = await Promise.all(collections.map(async (item) => {
     const customCoverUrl = item.customCoverUrl?.startsWith('data:')
       ? await uploadUserImage(userId, 'collection-cover', item.customCoverUrl, `${kind}-${item.id}`)
@@ -1036,29 +645,45 @@ export async function saveUserCollections(
     return { ...item, customCoverUrl }
   }))
 
-  await replaceDocuments(
-    existing.docs.map((item) => item.ref),
-    normalizedCollections.map((item) => ({
-      ref: doc(collectionsRef, item.id),
-      data: withoutUndefined({ ...item, ownerId: userId, updatedAt: new Date().toISOString() }),
-    })),
-  )
+  const rows = normalizedCollections.map((item) => {
+    const metaPayload = {
+      items: item.items || [],
+      types: item.types || [],
+      creatorName: item.creatorName,
+      creatorHandle: item.creatorHandle,
+      coverMode: item.coverMode,
+      coverStyle: item.coverStyle,
+      spotlightItemId: item.spotlightItemId,
+    }
+    const cleanDesc = (item.description || '').replace(/\n?<!--tc-meta:[\s\S]*?-->$/, '')
+    const packedDesc = `${cleanDesc}\n<!--tc-meta:${JSON.stringify(metaPayload)}-->`
+    return {
+      id: item.id,
+      owner_id: userId,
+      kind,
+      title: item.name,
+      description: packedDesc,
+      cover_url: item.customCoverUrl || '',
+      visibility: item.isHidden ? 'private' : 'public',
+      item_ids: [
+        ...new Set([
+          ...(item.entryIds || []),
+          ...(item.items?.map((it) => it.entryId || it.id).filter(Boolean) || []),
+        ]),
+      ],
+      updated_at: new Date().toISOString(),
+    }
+  })
 
-  const usedMediaIds = new Set(normalizedCollections.flatMap((item) => {
-    const mediaId = mediaIdFromReference(item.customCoverUrl || '')
-    return mediaId ? [mediaId] : []
-  }))
-  const unusedMediaIds = new Set(existing.docs.flatMap((item) => {
-    const mediaId = mediaIdFromReference(String(item.data().customCoverUrl || ''))
-    return mediaId && !usedMediaIds.has(mediaId) ? [mediaId] : []
-  }))
-  await Promise.all([...unusedMediaIds].map(async (mediaId) => {
-    const mediaRef = doc(db, 'users', userId, 'media', mediaId)
-    const mediaSnapshot = await getDoc(mediaRef)
-    if (mediaSnapshot.exists()) await deleteDoc(mediaRef)
-    mediaCache.delete(mediaCacheKey(userId, mediaId))
-  }))
-  return resolveCollectionImages(userId, normalizedCollections)
+  if (rows.length > 0) {
+    await supabase.from('collections').upsert(rows)
+    const currentIds = collections.map((c) => c.id)
+    await supabase.from('collections').delete().eq('owner_id', userId).eq('kind', kind).not('id', 'in', `(${currentIds.join(',')})`)
+  } else {
+    await supabase.from('collections').delete().eq('owner_id', userId).eq('kind', kind)
+  }
+
+  return normalizedCollections
 }
 
 export async function loadOrMigrateUserCollections(
@@ -1077,30 +702,41 @@ export async function loadOrMigrateUserCollections(
 export async function loadUserCollections(userId: string, kind: CloudCollectionKind) {
   if (!canUseCloudData(userId)) return []
 
-  if (isSupabaseConfigured) {
-    const { data, error } = await supabase
-      .from('collections')
-      .select('*')
-      .eq('owner_id', userId)
-      .eq('kind', kind)
-    if (!error && data) {
-      const mapped: ProfileCollection[] = data.map((row: any) => ({
+  const { data, error } = await supabase
+    .from('collections')
+    .select('*')
+    .eq('owner_id', userId)
+    .eq('kind', kind)
+
+  if (!error && data) {
+    const mapped: ProfileCollection[] = data.map((row: any) => {
+      let meta: any = {}
+      const descMatch = String(row.description || '').match(/\n?<!--tc-meta:([\s\S]*?)-->$/)
+      if (descMatch) {
+        try {
+          meta = JSON.parse(descMatch[1])
+        } catch {}
+      }
+      const cleanDescription = String(row.description || '').replace(/\n?<!--tc-meta:[\s\S]*?-->$/, '')
+      return {
         id: row.id,
         name: row.title || 'Untitled',
-        types: [],
-        description: row.description || '',
+        types: row.types || meta.types || [],
+        description: cleanDescription,
         customCoverUrl: row.cover_url || '',
         entryIds: row.item_ids || [],
-        items: [],
+        items: row.items || meta.items || [],
+        creatorName: meta.creatorName || undefined,
+        creatorHandle: meta.creatorHandle || undefined,
+        coverMode: meta.coverMode || undefined,
+        coverStyle: meta.coverStyle || undefined,
+        spotlightItemId: meta.spotlightItemId || undefined,
         isHidden: row.visibility === 'private',
-      }))
-      return resolveCollectionImages(userId, mapped)
-    }
+      }
+    })
+    return mapped
   }
-
-  if (!isFirebaseConfigured) return []
-  const snapshot = await getDocs(collection(db, 'users', userId, collectionName(kind)))
-  return resolveCollectionImages(userId, snapshot.docs.map((item) => item.data() as ProfileCollection))
+  return []
 }
 
 export async function resolveUserIdByHandle(handle: string) {
@@ -1112,36 +748,38 @@ export async function resolveUserIdByHandle(handle: string) {
       .maybeSingle()
     if (data?.id) return data.id
   }
-  if (!isFirebaseConfigured) return null
-  const snapshot = await getDoc(doc(db, 'handles', cleanHandle(handle)))
-  return snapshot.exists() ? String(snapshot.data().uid || '') || null : null
+  return null
 }
 
 async function loadPublicAccountIdentityById(
   userId: string,
   fallbackHandle = '',
 ): Promise<PublicAccountIdentity | null> {
-  const userSnapshot = await getDoc(doc(db, 'users', userId))
-  if (!userSnapshot.exists()) return null
-  const data = userSnapshot.data()
-  const resolvedHandle = cleanHandle(String(data.handle || fallbackHandle))
-  if (!resolvedHandle) return null
-  const isDeactivated = isAccountCurrentlyDeactivated(data)
-  const name = data.showFullName === false
-    ? String(data.firstName || '')
-    : `${String(data.firstName || '')} ${String(data.lastName || '')}`.trim()
-  return {
-    uid: userId,
-    handle: resolvedHandle,
-    name: isDeactivated ? DEACTIVATED_ACCOUNT_NAME : name || `@${resolvedHandle}`,
-    avatarUrl: isDeactivated ? '' : await resolveUserImage(userId, String(data.avatarUrl || '')),
-    isPrivate: isDeactivated || Boolean(data.isPrivate),
-    isDeactivated,
+  if (isSupabaseConfigured) {
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle()
+    if (data) {
+      const isDeactivated = data.account_status === 'deactivated'
+      const name = data.show_full_name === false
+        ? String(data.first_name || '')
+        : `${String(data.first_name || '')} ${String(data.last_name || '')}`.trim()
+      return {
+        uid: userId,
+        handle: cleanHandle(data.handle || fallbackHandle),
+        name: isDeactivated ? DEACTIVATED_ACCOUNT_NAME : name || `@${cleanHandle(data.handle || fallbackHandle)}`,
+        avatarUrl: isDeactivated ? '' : (data.avatar_url || ''),
+        isPrivate: isDeactivated || Boolean(data.is_private),
+        isDeactivated,
+      }
+    }
   }
+  return null
 }
 
 export async function loadPublicAccountIdentityByHandle(handle: string): Promise<PublicAccountIdentity | null> {
-  if (!isFirebaseConfigured) return null
   const userId = await resolveUserIdByHandle(handle)
   return userId ? loadPublicAccountIdentityById(userId, handle) : null
 }
@@ -1155,15 +793,8 @@ export function subscribeProfileFollowLists(
   profileHandle: string,
   onChange: (lists: ProfileFollowLists) => void,
 ): Unsubscribe {
-  if (!isFirebaseConfigured) {
-    onChange({ followers: [], following: [] })
-    return () => undefined
-  }
-
   let active = true
   let subscriptions: Unsubscribe[] = []
-  let followersLoaded = false
-  let followingLoaded = false
   let followerIds: string[] = []
   let followingIds: string[] = []
   let emission = 0
@@ -1176,7 +807,6 @@ export function subscribeProfileFollowLists(
   }
 
   const emit = () => {
-    if (!followersLoaded || !followingLoaded) return
     const currentEmission = ++emission
     void Promise.all([
       resolveIdentities(followerIds),
@@ -1192,19 +822,30 @@ export function subscribeProfileFollowLists(
       onChange({ followers: [], following: [] })
       return
     }
-    const followsRef = collection(db, 'follows')
-    subscriptions = [
-      onSnapshot(query(followsRef, where('followingId', '==', profileId)), (snapshot) => {
-        followerIds = snapshot.docs.map((item) => String(item.data().followerId || '')).filter(Boolean)
-        followersLoaded = true
-        emit()
-      }, (error) => console.error('Unable to watch profile followers.', error)),
-      onSnapshot(query(followsRef, where('followerId', '==', profileId)), (snapshot) => {
-        followingIds = snapshot.docs.map((item) => String(item.data().followingId || '')).filter(Boolean)
-        followingLoaded = true
-        emit()
-      }, (error) => console.error('Unable to watch profile following.', error)),
-    ]
+
+    if (isSupabaseConfigured) {
+      const loadLists = async () => {
+        try {
+          const [followersRes, followingRes] = await Promise.all([
+            supabase.from('follows').select('follower_id').eq('following_id', profileId),
+            supabase.from('follows').select('following_id').eq('follower_id', profileId),
+          ])
+          if (!active) return
+          followerIds = (followersRes.data || []).map((r: any) => String(r.follower_id || '')).filter(Boolean)
+          followingIds = (followingRes.data || []).map((r: any) => String(r.following_id || '')).filter(Boolean)
+          emit()
+        } catch (err) {
+          console.error('Unable to load follow lists from Supabase.', err)
+        }
+      }
+      void loadLists()
+      const channel = supabase.channel(`profile-follows:${profileId}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'follows' }, () => {
+          void loadLists()
+        })
+        .subscribe()
+      subscriptions = [() => void supabase.removeChannel(channel)]
+    }
   }).catch((error) => {
     console.error('Unable to find the profile for follow lists.', error)
     if (active) onChange({ followers: [], following: [] })
@@ -1218,160 +859,139 @@ export function subscribeProfileFollowLists(
 
 export async function hasMutualFollow(viewerId: string, targetId: string) {
   if (!canUseCloudData(viewerId) || !targetId) return false
-  const [outgoing, incoming] = await Promise.all([
-    getDoc(doc(db, 'follows', `${viewerId}_${targetId}`)),
-    getDoc(doc(db, 'follows', `${targetId}_${viewerId}`)),
-  ])
-  return outgoing.exists() && incoming.exists()
+  if (isSupabaseConfigured) {
+    const [outgoing, incoming] = await Promise.all([
+      supabase.from('follows').select('following_id').eq('follower_id', viewerId).eq('following_id', targetId).maybeSingle(),
+      supabase.from('follows').select('follower_id').eq('follower_id', targetId).eq('following_id', viewerId).maybeSingle(),
+    ])
+    return Boolean(outgoing.data && incoming.data)
+  }
+  return false
 }
 
 export async function loadPublicUserByHandle(handle: string, viewerId?: string | null): Promise<PublicUserData | null> {
-  if (!isFirebaseConfigured) return null
   const userId = await resolveUserIdByHandle(handle)
   if (!userId) return null
-  const userSnapshot = await getDoc(doc(db, 'users', userId))
-  if (!userSnapshot.exists()) return null
 
-  const data = userSnapshot.data()
-  if (isAccountCurrentlyDeactivated(data)) {
+  if (isSupabaseConfigured) {
+    const { data: profileRow } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle()
+
+    if (!profileRow) return null
+
+    const isDeactivated = profileRow.account_status === 'deactivated'
+    const cleanResolvedHandle = cleanHandle(String(profileRow.handle || handle))
+
+    if (isDeactivated) {
+      return {
+        profile: {
+          firstName: DEACTIVATED_ACCOUNT_NAME,
+          lastName: '',
+          showFullName: false,
+          handle: cleanResolvedHandle,
+          email: '',
+          bio: '',
+          avatarUrl: '',
+          coverUrl: '',
+          showFollowLists: false,
+          allowComments: false,
+          isPrivate: true,
+          showSavedActivity: false,
+          accountStatus: 'deactivated',
+        },
+        entries: [],
+        collections: [],
+        savedEntryIds: [],
+        savedCollections: [],
+      }
+    }
+
+    const isViewer = Boolean(viewerId && viewerId === userId)
+    const isPrivate = Boolean(profileRow.is_private)
+    const mutualFollow = isViewer || (viewerId ? await hasMutualFollow(viewerId, userId) : false)
+    const isContentLocked = isPrivate && !mutualFollow
+
+    const publicProfile: UserProfileState = {
+      firstName: String(profileRow.first_name || ''),
+      lastName: String(profileRow.last_name || ''),
+      showFullName: profileRow.show_full_name !== false,
+      handle: cleanResolvedHandle,
+      email: '',
+      bio: String(profileRow.bio || ''),
+      avatarUrl: String(profileRow.avatar_url || ''),
+      coverUrl: String(profileRow.cover_url || ''),
+      createdAt: profileRow.created_at || new Date().toISOString(),
+      birthday: profileRow.birthdate ? String(profileRow.birthdate) : undefined,
+      showFollowLists: true,
+      allowComments: profileRow.allow_comments !== false,
+      isPrivate,
+      showSavedActivity: false,
+    }
+
+    if (isContentLocked) {
+      return {
+        profile: publicProfile,
+        entries: [],
+        collections: [],
+        savedEntryIds: [],
+        savedCollections: [],
+        isContentLocked: true,
+      }
+    }
+
+    const [loadedEntries, collections] = await Promise.all([
+      loadUserEntries(userId),
+      loadUserCollections(userId, 'created').catch(() => []),
+    ])
+    const ownedCollections = collectionsCreatedByProfile(collections, publicProfile.handle)
+    const entries = loadedEntries.map((entry) => ({
+      ...entry,
+      authorHandle: publicProfile.handle,
+      authorName: publicProfile.showFullName === false
+        ? publicProfile.firstName
+        : `${publicProfile.firstName} ${publicProfile.lastName}`.trim() || `@${publicProfile.handle}`,
+      authorAvatarUrl: publicProfile.avatarUrl,
+    }))
+
     return {
-      profile: {
-        firstName: DEACTIVATED_ACCOUNT_NAME,
-        lastName: '',
-        showFullName: false,
-        handle: cleanHandle(String(data.handle || handle)),
-        email: '',
-        bio: '',
-        avatarUrl: '',
-        coverUrl: '',
-        showFollowLists: false,
-        allowComments: false,
-        isPrivate: true,
-        showSavedActivity: false,
-        accountStatus: 'deactivated',
-      },
-      entries: [],
-      collections: [],
+      profile: publicProfile,
+      entries,
+      collections: ownedCollections,
       savedEntryIds: [],
       savedCollections: [],
     }
   }
-  const [avatarUrl, coverUrl] = await Promise.all([
-    resolveUserImage(userId, String(data.avatarUrl || '')),
-    resolveUserImage(userId, String(data.coverUrl || '')),
-  ])
-  let createdAt = firestoreDateToIso(data.createdAt)
-  if (!createdAt) {
-    const handleSnapshot = await getDoc(doc(db, 'handles', cleanHandle(String(data.handle || handle)))).catch(() => null)
-    createdAt = handleSnapshot?.exists() ? firestoreDateToIso(handleSnapshot.data().createdAt) : undefined
-  }
-  const profile: UserProfileState = {
-    firstName: String(data.firstName || ''),
-    lastName: String(data.lastName || ''),
-    showFullName: data.showFullName !== false,
-    handle: String(data.handle || cleanHandle(handle)),
-    email: '',
-    bio: String(data.bio || ''),
-    avatarUrl,
-    coverUrl,
-    createdAt,
-    showFollowLists: data.showFollowLists !== false,
-    allowComments: data.allowComments !== false,
-    isPrivate: Boolean(data.isPrivate),
-    showSavedActivity: Boolean(data.showSavedActivity),
-  }
 
-  const isContentLocked = Boolean(profile.isPrivate && (
-    !viewerId || (viewerId !== userId && !await hasMutualFollow(viewerId, userId))
-  ))
-  if (isContentLocked) {
-    return {
-      profile,
-      entries: [],
-      collections: [],
-      savedEntryIds: [],
-      savedCollections: [],
-      isContentLocked: true,
-    }
-  }
-
-  const [loadedEntries, collections] = await Promise.all([
-    loadUserEntries(userId).catch(() => []),
-    loadUserCollections(userId, 'created').catch(() => []),
-  ])
-  const ownedCollections = collectionsCreatedByProfile(collections, profile.handle)
-  const entries = loadedEntries.map((entry) => ({
-    ...entry,
-    authorHandle: profile.handle,
-    authorAvatarUrl: profile.avatarUrl,
-  }))
-  if (!profile.showSavedActivity) {
-    return { profile, entries, collections: ownedCollections, savedEntryIds: [], savedCollections: [] }
-  }
-
-  const [savedActivity, savedCollections] = await Promise.all([
-    getDoc(doc(db, 'users', userId, 'activity', 'saved')).catch(() => null),
-    loadUserCollections(userId, 'saved').catch(() => []),
-  ])
-  return {
-    profile,
-    entries,
-    collections: ownedCollections,
-    savedEntryIds: savedActivity?.exists() && Array.isArray(savedActivity.data().entryIds)
-      ? savedActivity.data().entryIds
-      : [],
-    savedCollections,
-  }
+  return null
 }
 
 export async function searchPublicUsers(searchText: string, limit = 12): Promise<PublicUserSummary[]> {
-  const normalized = searchText.replace(/^@/, '').trim().toLowerCase()
+  const normalized = searchText.trim().toLowerCase().replace(/^@/, '')
   if (!normalized) return []
 
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('profiles')
-      .select('id, handle, first_name, last_name, name, avatar_url, is_private, account_status')
+      .select('id, handle, name, first_name, last_name, avatar_url, is_private, account_status')
+      .or(`handle.ilike.%${normalized}%,name.ilike.%${normalized}%,first_name.ilike.%${normalized}%,last_name.ilike.%${normalized}%`)
       .neq('account_status', 'deactivated')
-      .or(`handle.ilike.%${normalized}%,name.ilike.%${normalized}%`)
       .limit(limit)
 
-    if (!error && data && data.length > 0) {
-      return Promise.all(data.map(async (row) => ({
-        uid: row.id,
-        handle: row.handle,
-        name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || `@${row.handle}`,
-        avatarUrl: await resolveUserImage(row.id, String(row.avatar_url || '')),
-        isPrivate: Boolean(row.is_private),
-      })))
-    }
+    if (!data) return []
+
+    return data.map((row: any) => ({
+      uid: row.id,
+      handle: row.handle,
+      name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || `@${row.handle}`,
+      avatarUrl: row.avatar_url || '',
+      isPrivate: Boolean(row.is_private),
+    }))
   }
 
-  if (!isFirebaseConfigured) return []
-  const snapshot = await getDocs(collection(db, 'users'))
-  const matches = snapshot.docs
-    .map((userDocument) => ({ uid: userDocument.id, data: userDocument.data() }))
-    .filter(({ data }) => !isAccountCurrentlyDeactivated(data))
-    .filter(({ data }) => {
-      const handle = cleanHandle(String(data.handle || ''))
-      const fullName = `${String(data.firstName || '')} ${String(data.lastName || '')}`.trim().toLowerCase()
-      return handle.includes(normalized) || fullName.includes(normalized)
-    })
-    .slice(0, limit)
-
-  return Promise.all(matches.map(async ({ uid, data }) => {
-    const handle = cleanHandle(String(data.handle || ''))
-    const fullName = data.showFullName === false
-      ? String(data.firstName || '')
-      : `${String(data.firstName || '')} ${String(data.lastName || '')}`.trim()
-    return {
-      uid,
-      handle,
-      name: fullName || `@${handle}`,
-      avatarUrl: await resolveUserImage(uid, String(data.avatarUrl || '')),
-      isPrivate: Boolean(data.isPrivate),
-    }
-  }))
+  return []
 }
 
 export async function loadPublicFeedEntries(excludedUserId?: string | null): Promise<Entry[]> {
@@ -1393,52 +1013,18 @@ export async function loadPublicFeedEntries(excludedUserId?: string | null): Pro
           Boolean(cleanHandle(String(p.handle || '')))
         )
       })
-      const entries = await Promise.all(
-        publicEntries.map(async (row: any) => {
-          const entry = mapSupabaseEntryToClientEntry(row)
-          return {
-            ...entry,
-            authorAvatarUrl: entry.authorAvatarUrl
-              ? await resolveUserImage(row.owner_id, entry.authorAvatarUrl)
-              : entry.authorAvatarUrl,
-          }
-        }),
-      )
+      const entries = publicEntries.map((row: any) => mapSupabaseEntryToClientEntry(row))
       return entries
     }
   }
-
-  if (!isFirebaseConfigured) return []
-  const snapshot = await getDocs(collection(db, 'users'))
-  const publicUsers = snapshot.docs.filter((userDocument) => (
-    userDocument.id !== excludedUserId
-      && userDocument.data().isPrivate !== true
-      && !isAccountCurrentlyDeactivated(userDocument.data())
-      && Boolean(cleanHandle(String(userDocument.data().handle || '')))
-  ))
-  const entriesByUser = await Promise.all(publicUsers.map(async (userDocument) => {
-    const data = userDocument.data()
-    const handle = cleanHandle(String(data.handle || ''))
-    const authorName = data.showFullName === false
-      ? String(data.firstName || '')
-      : `${String(data.firstName || '')} ${String(data.lastName || '')}`.trim()
-    const avatarUrl = await resolveUserImage(userDocument.id, String(data.avatarUrl || ''))
-    const entries = await loadUserEntries(userDocument.id).catch(() => [])
-    return entries.map((entry) => ({
-      ...entry,
-      authorHandle: handle,
-      authorName: authorName || `@${handle}`,
-      authorAvatarUrl: avatarUrl,
-    }))
-  }))
-  return entriesByUser.flat()
+  return []
 }
 
 export async function saveFollowRelationship(
   followerId: string,
   targetHandle: string,
   following: boolean,
-  actor: { name?: string; handle?: string } = {},
+  _actor?: { name?: string; handle?: string },
 ) {
   if (!canUseCloudData(followerId)) return
   const targetId = await resolveUserIdByHandle(targetHandle)
@@ -1446,108 +1032,69 @@ export async function saveFollowRelationship(
 
   if (isSupabaseConfigured) {
     if (following) {
-      void supabase.from('follows').upsert({
+      await supabase.from('follows').upsert({
         follower_id: followerId,
         following_id: targetId,
         target_handle: cleanHandle(targetHandle),
-        created_at: new Date().toISOString(),
       })
+      if (targetId !== followerId) {
+        try {
+          await supabase.from('notifications').insert({
+            id: `follow_${followerId}`,
+            recipient_id: targetId,
+            actor_id: followerId,
+            type: 'follow',
+            interaction_id: followerId,
+            read: false,
+          })
+        } catch {
+          // ignore notification insert failure
+        }
+      }
     } else {
-      void supabase.from('follows').delete().match({
+      await supabase.from('follows').delete().match({
         follower_id: followerId,
         following_id: targetId,
       })
-    }
-  }
-
-  if (!isFirebaseConfigured) return
-  const followRef = doc(db, 'follows', `${followerId}_${targetId}`)
-  const notificationRef = doc(db, 'users', targetId, 'notifications', `follow_${followerId}`)
-  if (!following) {
-    try {
-      await deleteDoc(followRef)
-    } catch (error: any) {
-      if (error?.code !== 'permission-denied') {
-        console.warn('The remote follow record could not be deleted.', error)
+      if (targetId !== followerId) {
+        try {
+          await supabase.from('notifications').delete().eq('id', `follow_${followerId}`)
+        } catch {
+          // ignore notification delete failure
+        }
       }
-    }
-    if (targetId !== followerId) {
-      try {
-        await deleteDoc(notificationRef)
-      } catch (error) {
-        console.error('The follow was removed, but its notification could not be removed.', error)
-      }
-    }
-    return
-  }
-  const createdAt = new Date().toISOString()
-  try {
-    await setDoc(followRef, {
-      followerId,
-      followingId: targetId,
-      targetHandle: cleanHandle(targetHandle),
-      createdAt,
-    })
-  } catch (error: any) {
-    if (error?.code === 'permission-denied') {
-      console.warn(
-        'The follow is saved in your account cloud state, but the public follow index in Firebase requires publishing the updated firestore.rules to the Firebase Console.',
-        error,
-      )
-      return
-    }
-    throw error
-  }
-  if (targetId !== followerId) {
-    try {
-      await setDoc(notificationRef, withoutUndefined({
-        recipientId: targetId,
-        actorId: followerId,
-        type: 'follow',
-        interactionId: followerId,
-        read: false,
-        createdAt,
-        actorName: actor.name,
-        actorHandle: cleanHandle(actor.handle || ''),
-      }))
-    } catch (error) {
-      console.error('The follow was saved, but its notification could not be created.', error)
     }
   }
 }
 
 export async function loadMutualFollowers(userId: string): Promise<PublicUserSummary[]> {
   if (!canUseCloudData(userId)) return []
-  const followsRef = collection(db, 'follows')
-  const [outgoing, incoming] = await Promise.all([
-    getDocs(query(followsRef, where('followerId', '==', userId))),
-    getDocs(query(followsRef, where('followingId', '==', userId))),
+  const [outgoingRes, incomingRes] = await Promise.all([
+    supabase.from('follows').select('following_id').eq('follower_id', userId),
+    supabase.from('follows').select('follower_id').eq('following_id', userId),
   ])
-  const followerIds = new Set(incoming.docs.map((item) => String(item.data().followerId || '')))
-  const mutualIds = Array.from(new Set(outgoing.docs
-    .map((item) => String(item.data().followingId || ''))
-    .filter((followingId) => followingId && followerIds.has(followingId))))
+  const outgoing = new Set((outgoingRes.data || []).map((r: any) => String(r.following_id || '')).filter(Boolean))
+  const mutualIds = (incomingRes.data || [])
+    .map((r: any) => String(r.follower_id || ''))
+    .filter((id) => outgoing.has(id))
+  if (mutualIds.length === 0) return []
 
-  const users = await Promise.all(mutualIds.map(async (mutualId) => {
-    const snapshot = await getDoc(doc(db, 'users', mutualId))
-    if (!snapshot.exists() || isAccountCurrentlyDeactivated(snapshot.data())) return null
-    const data = snapshot.data()
-    const handle = cleanHandle(String(data.handle || ''))
-    if (!handle) return null
-    const name = data.showFullName === false
-      ? String(data.firstName || '')
-      : `${String(data.firstName || '')} ${String(data.lastName || '')}`.trim()
-    return {
-      uid: mutualId,
-      handle,
-      name: name || `@${handle}`,
-      avatarUrl: await resolveUserImage(mutualId, String(data.avatarUrl || '')),
-      isPrivate: Boolean(data.isPrivate),
-    } satisfies PublicUserSummary
-  }))
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('*')
+    .in('id', mutualIds)
 
-  return users
-    .filter((user): user is PublicUserSummary => Boolean(user))
+  return (profiles || [])
+    .filter((p: any) => p.account_status !== 'deactivated')
+    .map((p: any) => ({
+      uid: p.id,
+      handle: cleanHandle(p.handle || ''),
+      name: p.show_full_name === false
+        ? String(p.first_name || '')
+        : `${String(p.first_name || '')} ${String(p.last_name || '')}`.trim() || `@${cleanHandle(p.handle || '')}`,
+      avatarUrl: p.avatar_url || '',
+      isPrivate: Boolean(p.is_private),
+    }))
     .sort((left, right) => left.name.localeCompare(right.name))
 }
 
@@ -1559,45 +1106,46 @@ export function subscribeMutualFollowIds(
     onChange([])
     return () => undefined
   }
-  const followsRef = collection(db, 'follows')
-  let outgoing = new Set<string>()
-  let incoming = new Set<string>()
-  let outgoingLoaded = false
-  let incomingLoaded = false
-  const emit = () => {
-    if (outgoingLoaded && incomingLoaded) onChange([...outgoing].filter((id) => incoming.has(id)))
+
+  if (isSupabaseConfigured) {
+    let cancelled = false
+    const loadMutuals = async () => {
+      try {
+        const [outgoingRes, incomingRes] = await Promise.all([
+          supabase.from('follows').select('following_id').eq('follower_id', userId),
+          supabase.from('follows').select('follower_id').eq('following_id', userId),
+        ])
+        if (cancelled) return
+        const outgoing = new Set((outgoingRes.data || []).map((r: any) => String(r.following_id || '')).filter(Boolean))
+        const incoming = new Set((incomingRes.data || []).map((r: any) => String(r.follower_id || '')).filter(Boolean))
+        const mutuals = [...outgoing].filter((id) => incoming.has(id))
+        onChange(mutuals)
+      } catch (err) {
+        console.error('Unable to load mutual follows from Supabase.', err)
+      }
+    }
+    void loadMutuals()
+    const channel = supabase.channel(`mutuals:${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'follows' }, () => {
+        void loadMutuals()
+      })
+      .subscribe()
+    return () => {
+      cancelled = true
+      void supabase.removeChannel(channel)
+    }
   }
-  const unsubscribeOutgoing = onSnapshot(
-    query(followsRef, where('followerId', '==', userId)),
-    (snapshot) => {
-      outgoing = new Set(snapshot.docs.map((item) => String(item.data().followingId || '')).filter(Boolean))
-      outgoingLoaded = true
-      emit()
-    },
-    (error) => console.error('Unable to watch outgoing follows.', error),
-  )
-  const unsubscribeIncoming = onSnapshot(
-    query(followsRef, where('followingId', '==', userId)),
-    (snapshot) => {
-      incoming = new Set(snapshot.docs.map((item) => String(item.data().followerId || '')).filter(Boolean))
-      incomingLoaded = true
-      emit()
-    },
-    (error) => console.error('Unable to watch incoming follows.', error),
-  )
-  return () => {
-    unsubscribeOutgoing()
-    unsubscribeIncoming()
-  }
+
+  return () => undefined
 }
 
 export async function savePostCommenting(userId: string, postId: string, commentsDisabled: boolean) {
   if (!canUseCloudData(userId)) return
-  await setDoc(doc(db, 'posts', postId), {
-    ownerId: userId,
-    commentsDisabled,
-    updatedAt: new Date().toISOString(),
-  }, { merge: true })
+  await supabase
+    .from('entries')
+    .update({ comments_disabled: commentsDisabled, updated_at: new Date().toISOString() })
+    .eq('id', postId)
+    .eq('owner_id', userId)
 }
 
 export function subscribePostEngagements(
@@ -1606,7 +1154,7 @@ export function subscribePostEngagements(
   onChange: (engagements: Record<string, PostEngagement>) => void,
 ): Unsubscribe {
   const uniquePostIds = Array.from(new Set(postIds.filter(Boolean)))
-  if (!isFirebaseConfigured || uniquePostIds.length === 0) {
+  if (!isSupabaseConfigured || uniquePostIds.length === 0) {
     onChange({})
     return () => undefined
   }
@@ -1621,76 +1169,88 @@ export function subscribePostEngagements(
   ))
 
   emit()
-  const unsubscribers = uniquePostIds.flatMap((postId) => [
-    onSnapshot(collection(db, 'posts', postId, 'likes'), (snapshot) => {
-      engagements[postId] = {
-        ...engagements[postId],
-        likeCount: snapshot.size,
-        isLiked: Boolean(viewerId && snapshot.docs.some((item) => item.id === viewerId)),
-      }
+  let cancelled = false
+  const refresh = async () => {
+    try {
+      const [likesRes, commentsRes] = await Promise.all([
+        supabase.from('entry_likes').select('entry_id, user_id').in('entry_id', uniquePostIds),
+        supabase.from('comments').select('entry_id').in('entry_id', uniquePostIds),
+      ])
+      if (cancelled) return
+      const likesByPost = new Map<string, Set<string>>()
+      const commentsByPost = new Map<string, number>()
+      uniquePostIds.forEach((id) => {
+        likesByPost.set(id, new Set())
+        commentsByPost.set(id, 0)
+      })
+      ;(likesRes.data || []).forEach((row: any) => {
+        likesByPost.get(row.entry_id)?.add(row.user_id)
+      })
+      ;(commentsRes.data || []).forEach((row: any) => {
+        commentsByPost.set(row.entry_id, (commentsByPost.get(row.entry_id) || 0) + 1)
+      })
+      uniquePostIds.forEach((id) => {
+        const postLikes = likesByPost.get(id) || new Set()
+        engagements[id] = {
+          likeCount: postLikes.size,
+          commentCount: commentsByPost.get(id) || 0,
+          isLiked: Boolean(viewerId && postLikes.has(viewerId)),
+        }
+      })
       emit()
-    }, (error) => {
-      if ((error as { code?: string })?.code !== 'permission-denied') {
-        console.error(`Unable to watch likes for post ${postId}.`, error)
-      }
-    }),
-    onSnapshot(collection(db, 'posts', postId, 'comments'), (snapshot) => {
-      engagements[postId] = { ...engagements[postId], commentCount: snapshot.size }
-      emit()
-    }, (error) => {
-      if ((error as { code?: string })?.code !== 'permission-denied') {
-        console.error(`Unable to watch comments for post ${postId}.`, error)
-      }
-    }),
-  ])
+    } catch {}
+  }
 
-  return () => unsubscribers.forEach((unsubscribe) => unsubscribe())
+  void refresh()
+
+  const channel = supabase.channel(`engagements-${Date.now()}-${Math.random()}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'entry_likes' }, () => { void refresh() })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'comments' }, () => { void refresh() })
+    .subscribe()
+
+  return () => {
+    cancelled = true
+    void supabase.removeChannel(channel)
+  }
 }
 
 export async function togglePostLike(
   postId: string,
   userId: string,
   liked: boolean,
-  actor: { name?: string; handle?: string },
-  entryTitle: string,
+  _actor: { name?: string; handle?: string },
+  _entryTitle: string,
 ) {
   if (!canUseCloudData(userId)) return
-  const postSnapshot = await getDoc(doc(db, 'posts', postId))
-  if (!postSnapshot.exists()) return
-
-  const ownerId = String(postSnapshot.data().ownerId || '')
-  const likeRef = doc(db, 'posts', postId, 'likes', userId)
-  const notificationRef = ownerId
-    ? doc(db, 'users', ownerId, 'notifications', `like_${postId}_${userId}`)
-    : null
   if (liked) {
-    await setDoc(likeRef, { userId, createdAt: new Date().toISOString() })
-    if (notificationRef && ownerId !== userId) {
+    await supabase.from('entry_likes').upsert({
+      entry_id: postId,
+      user_id: userId,
+      created_at: new Date().toISOString(),
+    })
+    const { data: entry } = await supabase.from('entries').select('owner_id').eq('id', postId).maybeSingle()
+    const ownerId = entry?.owner_id
+    if (ownerId && ownerId !== userId) {
       try {
-        await setDoc(notificationRef, withoutUndefined({
-          recipientId: ownerId,
-          actorId: userId,
+        await supabase.from('notifications').insert({
+          id: `like_${postId}_${userId}`,
+          recipient_id: ownerId,
+          actor_id: userId,
           type: 'like',
-          postId,
-          interactionId: userId,
+          entry_id: postId,
+          interaction_id: userId,
           read: false,
-          createdAt: new Date().toISOString(),
-          actorName: actor.name,
-          actorHandle: cleanHandle(actor.handle || ''),
-          entryTitle,
-        }))
-      } catch (error) {
-        console.error('The like was saved, but its notification could not be created.', error)
+        })
+      } catch {
+        // ignore notification failure
       }
     }
   } else {
-    await deleteDoc(likeRef)
-    if (notificationRef && ownerId !== userId) {
-      try {
-        await deleteDoc(notificationRef)
-      } catch (error) {
-        console.error('The like was removed, but its notification could not be removed.', error)
-      }
+    await supabase.from('entry_likes').delete().eq('entry_id', postId).eq('user_id', userId)
+    try {
+      await supabase.from('notifications').delete().eq('id', `like_${postId}_${userId}`)
+    } catch {
+      // ignore notification failure
     }
   }
 }
@@ -1703,48 +1263,83 @@ export function subscribeUserNotifications(
     onChange([])
     return () => undefined
   }
-  return onSnapshot(collection(db, 'users', userId, 'notifications'), (snapshot) => {
-    const notifications = snapshot.docs
-      .map((item) => ({ id: item.id, ...item.data() }) as AppNotification)
-      .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
-    onChange(notifications)
-  }, (error) => console.error('Unable to watch notifications.', error))
+
+  if (isSupabaseConfigured) {
+    let cancelled = false
+    const loadNotifications = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('recipient_id', userId)
+          .order('created_at', { ascending: false })
+        if (cancelled) return
+        if (!error && data) {
+          const notifications: AppNotification[] = data.map((row: any) => ({
+            id: row.id,
+            type: row.type,
+            read: Boolean(row.read),
+            createdAt: row.created_at,
+            actorId: row.actor_id,
+            entryId: row.entry_id,
+            commentId: row.comment_id,
+          }))
+          onChange(notifications)
+        }
+      } catch (err) {
+        console.error('Unable to load notifications from Supabase.', err)
+      }
+    }
+    void loadNotifications()
+    const channel = supabase.channel(`notifications:${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, () => {
+        void loadNotifications()
+      })
+      .subscribe()
+    return () => {
+      cancelled = true
+      void supabase.removeChannel(channel)
+    }
+  }
+
+  return () => undefined
 }
 
 export async function setCloudNotificationsRead(userId: string, notificationIds: string[]) {
   if (!canUseCloudData(userId) || notificationIds.length === 0) return
-  const batch = writeBatch(db)
-  notificationIds.forEach((id) => batch.set(
-    doc(db, 'users', userId, 'notifications', id),
-    { read: true },
-    { merge: true },
-  ))
-  await batch.commit()
+  if (isSupabaseConfigured) {
+    await supabase
+      .from('notifications')
+      .update({ read: true })
+      .in('id', notificationIds)
+      .eq('recipient_id', userId)
+  }
 }
 
 export async function deleteCloudNotifications(userId: string, notificationIds: string[]) {
   if (!canUseCloudData(userId) || notificationIds.length === 0) return
-  const batch = writeBatch(db)
-  notificationIds.forEach((id) => batch.delete(doc(db, 'users', userId, 'notifications', id)))
-  await batch.commit()
+  if (isSupabaseConfigured) {
+    await supabase
+      .from('notifications')
+      .delete()
+      .in('id', notificationIds)
+      .eq('recipient_id', userId)
+  }
 }
 
 export async function saveFollowRequest(requesterId: string, targetHandle: string, requested: boolean) {
   if (!canUseCloudData(requesterId)) return
   const targetId = await resolveUserIdByHandle(targetHandle)
   if (!targetId) return
-  const requestRef = doc(db, 'follow-requests', `${requesterId}_${targetId}`)
   if (!requested) {
-    await deleteDoc(requestRef)
-    return
+    await supabase.from('follow_requests').delete().eq('requester_id', requesterId).eq('target_id', targetId)
+  } else {
+    await supabase.from('follow_requests').upsert({
+      requester_id: requesterId,
+      target_id: targetId,
+      status: 'pending',
+    })
   }
-  await setDoc(requestRef, {
-    requesterId,
-    targetId,
-    targetHandle: cleanHandle(targetHandle),
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-  })
 }
 
 export async function submitContentReport(reporterId: string, report: ContentReport) {
@@ -1768,102 +1363,143 @@ export async function submitContentReport(reporterId: string, report: ContentRep
   if (!reason) throw new Error('Choose a reason for your report.')
   if (details.length > 1000) throw new Error('Report details must be 1,000 characters or fewer.')
 
-  const reportRef = doc(collection(db, 'reports'))
-  await setDoc(reportRef, withoutUndefined({
-    reporterId,
-    targetType: report.targetType,
-    targetId,
-    targetHandle,
-    postId: report.postId?.trim(),
-    parentCommentId: report.parentCommentId?.trim(),
+  const reportId = `report-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const { error } = await supabase.from('reports').insert({
+    id: reportId,
+    reporter_id: reporterId,
+    target_type: report.targetType,
+    target_id: targetId,
+    target_handle: targetHandle,
+    post_id: report.postId?.trim() || null,
+    parent_comment_id: report.parentCommentId?.trim() || null,
     reason,
     details,
     status: 'pending',
-    createdAt: serverTimestamp(),
-  }))
-  return reportRef.id
+  })
+  if (error) throw error
+  return reportId
 }
 
 export async function loadPostComments(postId: string, viewerId?: string | null): Promise<CloudComment[]> {
-  if (!isFirebaseConfigured) return []
-  const snapshot = await getDocs(collection(db, 'posts', postId, 'comments'))
-  const comments = await Promise.all(snapshot.docs.map(async (item) => {
-    const [likesSnapshot, repliesSnapshot] = await Promise.all([
-      getDocs(collection(item.ref, 'likes')),
-      getDocs(collection(item.ref, 'replies')),
-    ])
-    const replies = await Promise.all(repliesSnapshot.docs.map(async (replyItem) => {
-      const replyData = replyItem.data() as CloudCommentReply
-      const [replyLikes, replyIdentity] = await Promise.all([
-        getDocs(collection(replyItem.ref, 'likes')),
-        loadAccountIdentity(replyData.authorId),
-      ])
-      return {
-        ...replyData,
-        id: replyItem.id,
-        authorHandle: replyIdentity.handle || replyData.authorHandle,
-        ...(replyIdentity.deactivated ? {
-          author: DEACTIVATED_ACCOUNT_NAME,
-          initials: 'QR',
-        } : {}),
-        likesCount: replyLikes.size,
-        isLiked: Boolean(viewerId && replyLikes.docs.some((like) => like.id === viewerId)),
-      }
-    }))
-    const commentData = item.data() as CloudComment
-    const commentIdentity = await loadAccountIdentity(commentData.authorId)
-    return {
-      ...commentData,
-      id: item.id,
-      authorHandle: commentIdentity.handle || commentData.authorHandle,
-      ...(commentIdentity.deactivated ? {
-        author: DEACTIVATED_ACCOUNT_NAME,
-        initials: 'QR',
-      } : {}),
-      likesCount: likesSnapshot.size,
-      isLiked: Boolean(viewerId && likesSnapshot.docs.some((like) => like.id === viewerId)),
-      replies: replies.sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt))),
+  if (!postId) return []
+  const [commentsRes, repliesRes] = await Promise.all([
+    supabase
+      .from('comments')
+      .select('*, profiles!author_id(id, handle, name, first_name, last_name, avatar_url, account_status, show_full_name)')
+      .eq('entry_id', postId)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('comment_replies')
+      .select('*, profiles!author_id(id, handle, name, first_name, last_name, avatar_url, account_status, show_full_name)')
+      .eq('entry_id', postId)
+      .order('created_at', { ascending: true }),
+  ])
+
+  const commentsData = commentsRes.data || []
+  const repliesData = repliesRes.data || []
+
+  const commentIds = commentsData.map((c: any) => c.id)
+  const replyIds = repliesData.map((r: any) => r.id)
+
+  const [commentLikesRes, replyLikesRes] = await Promise.all([
+    commentIds.length > 0
+      ? supabase.from('comment_likes').select('comment_id, user_id').in('comment_id', commentIds)
+      : Promise.resolve({ data: [] }),
+    replyIds.length > 0
+      ? supabase.from('reply_likes').select('reply_id, user_id').in('reply_id', replyIds)
+      : Promise.resolve({ data: [] }),
+  ])
+
+  const commentLikesMap = new Map<string, Set<string>>()
+  ;(commentLikesRes.data || []).forEach((row: any) => {
+    if (!commentLikesMap.has(row.comment_id)) commentLikesMap.set(row.comment_id, new Set())
+    commentLikesMap.get(row.comment_id)?.add(row.user_id)
+  })
+
+  const replyLikesMap = new Map<string, Set<string>>()
+  ;(replyLikesRes.data || []).forEach((row: any) => {
+    if (!replyLikesMap.has(row.reply_id)) replyLikesMap.set(row.reply_id, new Set())
+    replyLikesMap.get(row.reply_id)?.add(row.user_id)
+  })
+
+  const repliesByCommentId = new Map<string, CloudCommentReply[]>()
+  repliesData.forEach((row: any) => {
+    const authorProfile = row.profiles
+    const isDeactivated = authorProfile?.account_status === 'deactivated'
+    const name = authorProfile?.show_full_name === false
+      ? String(authorProfile?.first_name || '')
+      : `${String(authorProfile?.first_name || '')} ${String(authorProfile?.last_name || '')}`.trim() || authorProfile?.name || 'Reader'
+    const replyLikes = replyLikesMap.get(row.id) || new Set()
+    const reply: CloudCommentReply = {
+      id: row.id,
+      authorId: row.author_id,
+      authorHandle: cleanHandle(authorProfile?.handle || ''),
+      author: isDeactivated ? DEACTIVATED_ACCOUNT_NAME : name,
+      initials: isDeactivated ? 'QR' : name.slice(0, 2).toUpperCase(),
+      text: row.text,
+      createdAt: row.created_at,
+      replyToUserId: row.reply_to_user_id || undefined,
+      likesCount: replyLikes.size,
+      isLiked: Boolean(viewerId && replyLikes.has(viewerId)),
     }
-  }))
-  return comments.sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)))
+    if (!repliesByCommentId.has(row.comment_id)) repliesByCommentId.set(row.comment_id, [])
+    repliesByCommentId.get(row.comment_id)?.push(reply)
+  })
+
+  return commentsData.map((row: any): CloudComment => {
+    const authorProfile = row.profiles
+    const isDeactivated = authorProfile?.account_status === 'deactivated'
+    const name = authorProfile?.show_full_name === false
+      ? String(authorProfile?.first_name || '')
+      : `${String(authorProfile?.first_name || '')} ${String(authorProfile?.last_name || '')}`.trim() || authorProfile?.name || 'Reader'
+    const commentLikes = commentLikesMap.get(row.id) || new Set()
+    return {
+      id: row.id,
+      authorId: row.author_id,
+      authorHandle: cleanHandle(authorProfile?.handle || ''),
+      author: isDeactivated ? DEACTIVATED_ACCOUNT_NAME : name,
+      initials: isDeactivated ? 'QR' : name.slice(0, 2).toUpperCase(),
+      text: row.text,
+      createdAt: row.created_at,
+      likesCount: commentLikes.size,
+      isLiked: Boolean(viewerId && commentLikes.has(viewerId)),
+      replies: repliesByCommentId.get(row.id) || [],
+    }
+  })
 }
 
 export async function createPostComment(
   postId: string,
   userId: string,
   comment: CloudComment,
-  entryTitle?: string,
+  _entryTitle?: string,
 ) {
   if (!canUseCloudData(userId)) return
-  const { replies: _replies, likesCount: _likesCount, isLiked: _isLiked, ...data } = comment
-  void _replies
-  void _likesCount
-  void _isLiked
-  const postSnapshot = await getDoc(doc(db, 'posts', postId))
-  if (!postSnapshot.exists()) return
-  const ownerId = String(postSnapshot.data().ownerId || '')
-  await setDoc(doc(db, 'posts', postId, 'comments', comment.id), withoutUndefined({
-    ...data,
-    authorId: userId,
-    createdAt: new Date().toISOString(),
-  }))
+  await supabase.from('comments').insert({
+    id: comment.id,
+    entry_id: postId,
+    author_id: userId,
+    text: comment.text,
+    created_at: comment.createdAt || new Date().toISOString(),
+    updated_at: comment.createdAt || new Date().toISOString(),
+  })
+
+  const { data: entry } = await supabase.from('entries').select('owner_id').eq('id', postId).maybeSingle()
+  const ownerId = entry?.owner_id
   if (ownerId && ownerId !== userId) {
     try {
-      await setDoc(doc(db, 'users', ownerId, 'notifications', `comment_${postId}_${comment.id}`), withoutUndefined({
-        recipientId: ownerId,
-        actorId: userId,
+      await supabase.from('notifications').insert({
+        id: `comment_${postId}_${comment.id}`,
+        recipient_id: ownerId,
+        actor_id: userId,
         type: 'comment',
-        postId,
-        interactionId: comment.id,
+        entry_id: postId,
+        comment_id: comment.id,
+        interaction_id: comment.id,
         read: false,
-        createdAt: new Date().toISOString(),
-        actorName: comment.author,
-        actorHandle: cleanHandle(comment.authorHandle || ''),
-        entryTitle: entryTitle || String(postSnapshot.data().entryTitle || 'Untitled entry'),
-        commentSnippet: comment.text.slice(0, 160),
-      }))
-    } catch (error) {
-      console.error('The comment was saved, but its notification could not be created.', error)
+      })
+    } catch {
+      // ignore notification failure
     }
   }
 }
@@ -1875,86 +1511,71 @@ export async function createPostReply(
   reply: CloudCommentReply,
 ) {
   if (!canUseCloudData(userId)) return
-  const { likesCount: _likesCount, isLiked: _isLiked, ...data } = reply
-  void _likesCount
-  void _isLiked
-  const [postSnapshot, commentSnapshot] = await Promise.all([
-    getDoc(doc(db, 'posts', postId)),
-    getDoc(doc(db, 'posts', postId, 'comments', commentId)),
-  ])
-  if (!postSnapshot.exists() || !commentSnapshot.exists()) return
-
-  const commentData = commentSnapshot.data() as CloudComment
-  const recipientId = reply.replyToUserId || commentData.authorId || ''
-  const replyToInteractionId = reply.replyToInteractionId || commentId
-  await setDoc(doc(db, 'posts', postId, 'comments', commentId, 'replies', reply.id), withoutUndefined({
-    ...data,
-    authorId: userId,
-    replyToUserId: recipientId,
-    replyToInteractionId,
-    createdAt: new Date().toISOString(),
-  }))
+  const recipientId = reply.replyToUserId || null
+  await supabase.from('comment_replies').insert({
+    id: reply.id,
+    comment_id: commentId,
+    entry_id: postId,
+    author_id: userId,
+    reply_to_user_id: recipientId,
+    text: reply.text,
+    created_at: reply.createdAt || new Date().toISOString(),
+    updated_at: reply.createdAt || new Date().toISOString(),
+  })
 
   if (recipientId && recipientId !== userId) {
     try {
-      await setDoc(doc(db, 'users', recipientId, 'notifications', `reply_${postId}_${commentId}_${reply.id}`), withoutUndefined({
-        recipientId,
-        actorId: userId,
+      await supabase.from('notifications').insert({
+        id: `reply_${postId}_${commentId}_${reply.id}`,
+        recipient_id: recipientId,
+        actor_id: userId,
         type: 'reply',
-        postId,
-        interactionId: reply.id,
-        parentInteractionId: commentId,
-        replyToInteractionId,
+        entry_id: postId,
+        comment_id: commentId,
+        interaction_id: reply.id,
         read: false,
-        createdAt: new Date().toISOString(),
-        actorName: reply.author,
-        actorHandle: cleanHandle(reply.authorHandle || ''),
-        entryTitle: String(postSnapshot.data().entryTitle || 'Untitled entry'),
-        commentSnippet: reply.text.slice(0, 160),
-      }))
-    } catch (error) {
-      console.error('The reply was saved, but its notification could not be created.', error)
+      })
+    } catch {
+      // ignore notification failure
     }
   }
 }
 
 export async function togglePostCommentLike(
-  postId: string,
+  _postId: string,
   commentId: string,
   userId: string,
   liked: boolean,
 ) {
   if (!canUseCloudData(userId)) return
-  const likeRef = doc(db, 'posts', postId, 'comments', commentId, 'likes', userId)
-  if (liked) await setDoc(likeRef, { userId, createdAt: new Date().toISOString() })
-  else await deleteDoc(likeRef)
+  if (liked) {
+    await supabase.from('comment_likes').upsert({ comment_id: commentId, user_id: userId })
+  } else {
+    await supabase.from('comment_likes').delete().eq('comment_id', commentId).eq('user_id', userId)
+  }
 }
 
 export async function togglePostReplyLike(
-  postId: string,
-  commentId: string,
+  _postId: string,
+  _commentId: string,
   replyId: string,
   userId: string,
   liked: boolean,
 ) {
   if (!canUseCloudData(userId)) return
-  const likeRef = doc(db, 'posts', postId, 'comments', commentId, 'replies', replyId, 'likes', userId)
-  if (liked) await setDoc(likeRef, { userId, createdAt: new Date().toISOString() })
-  else await deleteDoc(likeRef)
+  if (liked) {
+    await supabase.from('reply_likes').upsert({ reply_id: replyId, user_id: userId })
+  } else {
+    await supabase.from('reply_likes').delete().eq('reply_id', replyId).eq('user_id', userId)
+  }
 }
 
-export async function deletePostReply(postId: string, commentId: string, replyId: string, userId: string) {
+export async function deletePostReply(_postId: string, _commentId: string, replyId: string, userId: string) {
   if (!canUseCloudData(userId)) return
-  const replyRef = doc(db, 'posts', postId, 'comments', commentId, 'replies', replyId)
-  const likes = await getDocs(collection(replyRef, 'likes'))
-  await replaceDocuments(likes.docs.map((item) => item.ref), [])
-  await deleteDoc(replyRef)
+  await supabase.from('comment_replies').delete().eq('id', replyId)
 }
 
-export async function deletePostComment(postId: string, commentId: string, userId: string) {
+export async function deletePostComment(_postId: string, commentId: string, userId: string) {
   if (!canUseCloudData(userId)) return
-  const commentRef = doc(db, 'posts', postId, 'comments', commentId)
-  const likes = await getDocs(collection(commentRef, 'likes'))
-  await replaceDocuments(likes.docs.map((item) => item.ref), [])
-  await deleteDoc(commentRef)
+  await supabase.from('comments').delete().eq('id', commentId)
 }

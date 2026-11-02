@@ -8,10 +8,12 @@ import { SocialSignIn } from './SocialSignIn'
 import { useAuth } from '../../context/AuthContext'
 
 interface LoginFormProps {
-  onSwitchToRegister: () => void
+  onSwitchToRegister?: () => void
+  onSwitchTab?: (tab: 'login' | 'register') => void
+  activeTab?: 'login' | 'register'
 }
 
-export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
+export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister: _onSwitchToRegister, onSwitchTab, activeTab = 'login' }) => {
   const navigate = useNavigate()
   const { login, loginWithApple, loginWithGoogle } = useAuth()
   const [email, setEmail] = useState('')
@@ -53,7 +55,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
       ) {
         setGenericError('Invalid email or password.')
       } else {
-        setGenericError(message.replace(/^Firebase:\s*/, ''))
+        setGenericError(message)
       }
     } finally {
       setLoading(false)
@@ -86,7 +88,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
       setViewMode('reset-sent')
       setToastMessage('✦ Password reset request received.')
     } catch (err: unknown) {
-      setResetError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Failed to send reset link.')
+      setResetError((err as Error)?.message || 'Failed to send reset link.')
     } finally {
       setLoading(false)
     }
@@ -103,7 +105,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
         navigate('/')
       }, 600)
     } catch (err: unknown) {
-      setGenericError((err as Error)?.message?.replace(/^Firebase:\s*/, '') || `${provider} login failed.`)
+      setGenericError((err as Error)?.message || `${provider} login failed.`)
     } finally {
       setLoading(false)
     }
@@ -113,12 +115,9 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   if (viewMode === 'reset-sent') {
     return (
       <>
-        <div className="auth-form">
+        <div className="auth-form auth-form-login auth-form-forgot">
           <div className="auth-form-heading-block">
             <h1 className="auth-form-heading">Check your email.</h1>
-            <div className="auth-ornamental-rule" aria-hidden="true">
-              <div className="auth-fading-rule" />
-            </div>
           </div>
 
           <p className="auth-reset-sent-desc">
@@ -148,16 +147,13 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
     return (
       <>
         <form
-          className="auth-form"
+          className="auth-form auth-form-login auth-form-forgot"
           onSubmit={handleResetSubmit}
           noValidate
           aria-label="Reset your password"
         >
           <div className="auth-form-heading-block">
             <h1 className="auth-form-heading">Reset password.</h1>
-            <div className="auth-ornamental-rule" aria-hidden="true">
-              <div className="auth-fading-rule" />
-            </div>
           </div>
 
           <p className="auth-reset-prompt-desc">
@@ -185,7 +181,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
             {loading ? 'Sending...' : 'Send reset link'}
           </button>
 
-          <p className="auth-switch-text" style={{ marginTop: 16 }}>
+          <p className="auth-switch-text" style={{ marginTop: 20 }}>
             Remembered your password?{' '}
             <button
               type="button"
@@ -208,18 +204,40 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
   return (
     <>
       <form
-        className="auth-form"
+        className="auth-form auth-form-login"
         onSubmit={handleSubmit}
         noValidate
         aria-label="Log in to your account"
       >
-        {/* Heading */}
+        {/* Heading (No subtitle as requested) */}
         <div className="auth-form-heading-block">
-          <h1 className="auth-form-heading">Welcome back.</h1>
-          <div className="auth-ornamental-rule" aria-hidden="true">
-            <div className="auth-fading-rule" />
-          </div>
+          <h1 className="auth-form-heading" aria-label="Welcome back.">Log in</h1>
         </div>
+
+        {/* Tab switch */}
+        {onSwitchTab && (
+          <div className="auth-tabs-bar" role="group" aria-label="Sign in or Log in">
+            <button
+              type="button"
+              id="tab-login"
+              aria-pressed={activeTab === 'login'}
+              className={`auth-tab-item ${activeTab === 'login' ? 'is-active' : ''}`}
+              onClick={() => onSwitchTab('login')}
+            >
+              Log in
+            </button>
+            <button
+              type="button"
+              id="tab-register"
+              aria-label="Create one"
+              aria-pressed={activeTab === 'register'}
+              className={`auth-tab-item ${activeTab === 'register' ? 'is-active' : ''}`}
+              onClick={() => onSwitchTab('register')}
+            >
+              Sign in
+            </button>
+          </div>
+        )}
 
         {/* Unified Generic Error Message */}
         {genericError && (
@@ -233,10 +251,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
         <div className="auth-fields-stack">
           <FormInput
             id="login-email"
-            label="Email or username"
+            label="Email or username *"
             type="text"
             autoComplete="username"
-            placeholder="Email or username"
+            placeholder="hello@delisas.com"
             value={email}
             onChange={(e) => {
               setEmail(e.target.value)
@@ -248,9 +266,9 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
 
           <PasswordInput
             id="login-password"
-            label="Password"
+            label="Password *"
             autoComplete="current-password"
-            placeholder="••••••••"
+            placeholder="Enter password"
             value={password}
             onChange={(e) => {
               setPassword(e.target.value)
@@ -271,42 +289,33 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToRegister }) => {
               />
               <span>Keep me signed in</span>
             </label>
-            <button
-              type="button"
-              className="auth-link-btn auth-forgot-btn"
-              onClick={() => {
-                setViewMode('forgot')
-                setResetInput(email)
-              }}
-            >
-              Forgot password?
-            </button>
           </div>
         </div>
 
         {/* Primary CTA */}
         <button type="submit" id="btn-login" className="auth-primary-btn" disabled={loading}>
-          {loading ? 'Logging in...' : 'Log In'}
+          {loading ? 'Signing in...' : 'Sign In'}
         </button>
 
-        {/* Social Sign In Options */}
+        {/* Forgot password link below the Log in button */}
+        <div className="auth-forgot-password-wrap">
+          <button
+            type="button"
+            className="auth-link-btn auth-forgot-btn-sub"
+            onClick={() => {
+              setViewMode('forgot')
+              setResetInput(email)
+            }}
+          >
+            Forgot password?
+          </button>
+        </div>
+
+        {/* Circular Social Sign In options below CTA */}
         <SocialSignIn
           mode="login"
           onSelectProvider={handleSelectProvider}
         />
-
-        {/* Switch to Register */}
-        <p className="auth-switch-text">
-          Don't have an account?{' '}
-          <button
-            type="button"
-            className="auth-link-btn"
-            onClick={onSwitchToRegister}
-            id="btn-switch-register"
-          >
-            Create one
-          </button>
-        </p>
       </form>
 
       <AuthToast message={toastMessage} onClose={() => setToastMessage(null)} />

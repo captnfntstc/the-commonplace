@@ -1,30 +1,29 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import {
-  type User,
-  type UserCredential,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  updateProfile,
-  signInWithPopup,
-  getAdditionalUserInfo,
-  signOut,
-  reload,
-  browserLocalPersistence,
-  browserSessionPersistence,
-  setPersistence,
-  verifyBeforeUpdateEmail,
-  deleteUser,
-  EmailAuthProvider,
-  reauthenticateWithCredential,
-  updatePassword,
-  linkWithPopup,
-  unlink,
-} from 'firebase/auth'
-import { appleProvider, auth, googleProvider, isFirebaseConfigured } from '../services/firebase'
 import { supabase, isSupabaseConfigured } from '../services/supabase'
-import { loadUserProfile, reactivateUserAccount, saveUserProfile } from '../services/cloudData'
+import { reactivateUserAccount, saveUserProfile } from '../services/cloudData'
 import { PENDING_SIGNUP_PROFILE_KEY, profileFromAuthUser } from '../features/profiles/accountProfile'
+
+export interface User {
+  uid: string
+  email: string | null
+  displayName: string | null
+  handle?: string | null
+  emailVerified: boolean
+  isAnonymous?: boolean
+  photoURL: string | null
+  metadata?: {
+    creationTime?: string
+  }
+  providerData: Array<{
+    providerId: string
+    uid: string
+    displayName: string | null
+    email: string | null
+    phoneNumber: string | null
+    photoURL: string | null
+  }>
+  getIdToken: (forceRefresh?: boolean) => Promise<string>
+}
 
 function mapSupabaseUserToAuthUser(sbUser: any, sessionToken?: string): User {
   return {
@@ -39,6 +38,9 @@ function mapSupabaseUserToAuthUser(sbUser: any, sessionToken?: string): User {
     emailVerified: Boolean(sbUser.email_confirmed_at),
     isAnonymous: sbUser.is_anonymous || false,
     photoURL: sbUser.user_metadata?.avatar_url || null,
+    metadata: {
+      creationTime: sbUser.created_at || undefined,
+    },
     providerData: (sbUser.identities || []).map((id: any) => ({
       providerId: id.provider === 'google' ? 'google.com' : id.provider === 'apple' ? 'apple.com' : id.provider,
       uid: id.id,
@@ -55,7 +57,7 @@ function mapSupabaseUserToAuthUser(sbUser: any, sessionToken?: string): User {
       }
       return ''
     },
-  } as unknown as User
+  }
 }
 
 interface AuthContextType {
@@ -157,7 +159,6 @@ function clearCommonplaceStorage() {
   keysToRemove.forEach((key) => localStorage.removeItem(key))
 }
 
-// eslint-disable-next-line react-refresh/only-export-components -- The hook and provider intentionally share one context module.
 export const useAuth = () => {
   const context = useContext(AuthContext)
   if (!context) {
@@ -171,7 +172,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
   initialUser,
 }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(initialUser || null)
-  const [loading, setLoading] = useState<boolean>(() => !initialUser && (isSupabaseConfigured || isFirebaseConfigured))
+  const [loading, setLoading] = useState<boolean>(() => !initialUser && isSupabaseConfigured)
   const [, setAuthRefreshVersion] = useState(0)
   const [verificationCooldownUntil, setVerificationCooldownUntil] = useState(() => readVerificationCooldown(initialUser))
   const [verificationClock, setVerificationClock] = useState(Date.now)
@@ -190,14 +191,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
           setCurrentUser(user)
           setVerificationCooldownUntil(readVerificationCooldown(user))
           setLoading(false)
-        } else if (isFirebaseConfigured) {
-          const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
-            if (!mounted) return
-            setCurrentUser(fbUser)
-            setVerificationCooldownUntil(readVerificationCooldown(fbUser))
-            setLoading(false)
-          })
-          return () => unsubscribe()
         } else {
           setLoading(false)
         }
@@ -210,7 +203,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
           setCurrentUser(user)
           setVerificationCooldownUntil(readVerificationCooldown(user))
           setLoading(false)
-        } else if (!isFirebaseConfigured) {
+        } else {
           setCurrentUser(null)
           setLoading(false)
         }
@@ -219,20 +212,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
       return () => {
         mounted = false
         subscription.unsubscribe()
-      }
-    }
-
-    if (isFirebaseConfigured) {
-      const unsubscribe = onAuthStateChanged(auth, (user) => {
-        if (!mounted) return
-        setCurrentUser(user)
-        setVerificationCooldownUntil(readVerificationCooldown(user))
-        setLoading(false)
-      })
-
-      return () => {
-        mounted = false
-        unsubscribe()
       }
     }
 
@@ -250,36 +229,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
   }, [verificationCooldownUntil])
 
   const requireConfig = () => {
-    if (!isSupabaseConfigured && !isFirebaseConfigured) {
+    if (!isSupabaseConfigured) {
       throw new Error('Authentication is not configured. Add credentials to .env.local first.')
     }
   }
-  const requireFirebase = requireConfig
 
-  const login = async (identifier: string, pass: string, keepSignedIn = true) => {
+  const login = async (identifier: string, pass: string, _keepSignedIn = true) => {
     requireConfig()
     const email = await resolveLoginEmail(identifier)
 
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password: pass,
-      })
-      if (!error && data?.user) {
-        const user = mapSupabaseUserToAuthUser(data.user, data.session?.access_token)
-        setCurrentUser(user)
-        await reactivateUserAccount(data.user.id)
-        return
-      }
-      if (error && !isFirebaseConfigured) {
-        throw error
-      }
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password: pass,
+    })
+    if (error) {
+      throw error
     }
-
-    if (isFirebaseConfigured) {
-      await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
-      const credential = await signInWithEmailAndPassword(auth, email, pass)
-      await reactivateUserAccount(credential.user.uid)
+    if (data?.user) {
+      const user = mapSupabaseUserToAuthUser(data.user, data.session?.access_token)
+      setCurrentUser(user)
+      await reactivateUserAccount(data.user.id)
     }
   }
 
@@ -293,105 +262,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
       birthday: birthday?.trim() || '',
     }))
 
-    if (isSupabaseConfigured) {
-      const { data, error } = await supabase.auth.signUp({
-        email: normalizedEmail,
-        password: pass,
-        options: {
-          data: {
-            name: displayName?.trim() || '',
-            handle: handle?.trim().toLowerCase() || '',
-            birthdate: birthday?.trim() || null,
-          },
+    const { data, error } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password: pass,
+      options: {
+        data: {
+          name: displayName?.trim() || '',
+          handle: handle?.trim().toLowerCase() || '',
+          birthdate: birthday?.trim() || null,
         },
-      })
-      if (error && !isFirebaseConfigured) {
-        localStorage.removeItem(PENDING_SIGNUP_PROFILE_KEY)
-        throw error
-      }
-      if (data?.user) {
-        const user = mapSupabaseUserToAuthUser(data.user, data.session?.access_token)
-        if (handle) {
-          await saveUserProfile(
-            data.user.id,
-            profileFromAuthUser(user, displayName, handle, birthday),
-          )
-        }
-        setCurrentUser(user)
-        return
-      }
+      },
+    })
+    if (error) {
+      localStorage.removeItem(PENDING_SIGNUP_PROFILE_KEY)
+      throw error
     }
-
-    if (isFirebaseConfigured) {
-      await setPersistence(auth, browserLocalPersistence)
-      let res: UserCredential
-      try {
-        res = await createUserWithEmailAndPassword(auth, normalizedEmail, pass)
-      } catch (error) {
-        localStorage.removeItem(PENDING_SIGNUP_PROFILE_KEY)
-        throw error
+    if (data?.user) {
+      const user = mapSupabaseUserToAuthUser(data.user, data.session?.access_token)
+      if (handle) {
+        await saveUserProfile(
+          data.user.id,
+          profileFromAuthUser(user as any, displayName, handle, birthday),
+        )
       }
-      try {
-        if (displayName && res.user) {
-          await updateProfile(res.user, { displayName })
-          setAuthRefreshVersion((version) => version + 1)
-        }
-        if (handle) {
-          await saveUserProfile(
-            res.user.uid,
-            profileFromAuthUser(res.user, displayName, handle, birthday),
-          )
-        }
-      } catch (error) {
-        localStorage.removeItem(PENDING_SIGNUP_PROFILE_KEY)
-        await deleteUser(res.user).catch(() => undefined)
-        throw error
-      }
+      setCurrentUser(user)
     }
   }
 
-  const finishSocialLogin = async (
-    credential: UserCredential,
-    providerName: 'Google' | 'Apple',
-    birthday?: string,
-  ) => {
-    const isNewAccount = getAdditionalUserInfo(credential)?.isNewUser === true
-    if (isNewAccount && !birthday) {
-      await deleteUser(credential.user).catch(() => undefined)
-      throw new Error(`New ${providerName} accounts must be created from the registration page with a valid date of birth.`)
-    }
-    if (birthday) {
-      const existingProfile = isNewAccount ? null : await loadUserProfile(credential.user.uid).catch(() => null)
-      await saveUserProfile(
-        credential.user.uid,
-        existingProfile
-          ? { ...existingProfile, birthday: existingProfile.birthday || birthday }
-          : profileFromAuthUser(credential.user, undefined, undefined, birthday),
-      )
-    }
-    await reactivateUserAccount(credential.user.uid)
+  const loginWithGoogle = async (_keepSignedIn = true, _birthday?: string) => {
+    requireConfig()
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+    if (error) throw error
   }
 
-  const loginWithGoogle = async (keepSignedIn = true, birthday?: string) => {
-    requireFirebase()
-    await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
-    const credential = await signInWithPopup(auth, googleProvider)
-    await finishSocialLogin(credential, 'Google', birthday)
-  }
-
-  const loginWithApple = async (keepSignedIn = true, birthday?: string) => {
-    requireFirebase()
-    await setPersistence(auth, keepSignedIn ? browserLocalPersistence : browserSessionPersistence)
-    const credential = await signInWithPopup(auth, appleProvider)
-    await finishSocialLogin(credential, 'Apple', birthday)
+  const loginWithApple = async (_keepSignedIn = true, _birthday?: string) => {
+    requireConfig()
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'apple',
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+    if (error) throw error
   }
 
   const logout = async () => {
     if (isSupabaseConfigured) {
       await supabase.auth.signOut().catch(() => undefined)
-    }
-    if (isFirebaseConfigured) {
-      await signOut(auth).catch(() => undefined)
     }
     setCurrentUser(null)
     clearCommonplaceStorage()
@@ -418,8 +340,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     }
     const payload = await response.json().catch(() => ({})) as { error?: string }
     if (!response.ok) throw new Error(payload.error || 'Unable to deactivate your account.')
-    if (isSupabaseConfigured) await supabase.auth.signOut().catch(() => undefined)
-    if (isFirebaseConfigured) await signOut(auth).catch(() => undefined)
+    await supabase.auth.signOut().catch(() => undefined)
     setCurrentUser(null)
     clearCommonplaceStorage()
     setVerificationCooldownUntil(0)
@@ -441,8 +362,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     }
     const payload = await response.json().catch(() => ({})) as { error?: string }
     if (!response.ok) throw new Error(payload.error || 'Unable to delete your account.')
-    if (isSupabaseConfigured) await supabase.auth.signOut().catch(() => undefined)
-    if (isFirebaseConfigured) await signOut(auth).catch(() => undefined)
+    await supabase.auth.signOut().catch(() => undefined)
     setCurrentUser(null)
     clearCommonplaceStorage()
     setVerificationCooldownUntil(0)
@@ -453,59 +373,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
     if (!currentUser) throw new Error('You need to log in before changing your email.')
     const normalized = newEmail.trim().toLowerCase()
     if (!normalized) throw new Error('Enter a new email address.')
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.auth.updateUser({ email: normalized })
-      if (!error) return
-    }
-    if (isFirebaseConfigured) {
-      await verifyBeforeUpdateEmail(currentUser, normalized, {
-        url: `${window.location.origin}/verify-email`,
-        handleCodeInApp: true,
-      })
-    }
+    const { error } = await supabase.auth.updateUser({ email: normalized })
+    if (error) throw error
   }
 
-  const changePassword = async (currentPassword: string, newPassword: string) => {
+  const changePassword = async (_currentPassword: string, newPassword: string) => {
     if (!currentUser?.email) throw new Error('You need to log in with an email account before changing your password.')
-    if (!currentPassword) throw new Error('Enter your current password.')
     if (newPassword.length < 8) throw new Error('Your new password must be at least 8 characters long.')
-
-    if (isSupabaseConfigured) {
-      const { error } = await supabase.auth.updateUser({ password: newPassword })
-      if (!error) return
-    }
-
-    if (isFirebaseConfigured) {
-      const credential = EmailAuthProvider.credential(currentUser.email, currentPassword)
-      await reauthenticateWithCredential(currentUser, credential)
-      await updatePassword(currentUser, newPassword)
-    }
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) throw error
   }
 
   const setGoogleAccountLinked = async (linked: boolean) => {
-    requireFirebase()
     if (!currentUser) throw new Error('You need to log in before changing linked accounts.')
-    const providers = currentUser.providerData || []
-    const hasGoogle = providers.some(({ providerId }) => providerId === 'google.com')
-    if (linked && !hasGoogle) {
-      await linkWithPopup(currentUser, googleProvider)
-    } else if (!linked && hasGoogle) {
-      if (providers.length <= 1) throw new Error('Add another sign-in method before disconnecting Google.')
-      await unlink(currentUser, 'google.com')
+    if (linked) {
+      await supabase.auth.linkIdentity({ provider: 'google', options: { redirectTo: window.location.origin } })
+    } else {
+      const identity = currentUser.providerData?.find((p) => p.providerId === 'google.com')
+      if (identity) {
+        await supabase.auth.unlinkIdentity({ id: identity.uid } as any)
+      }
     }
     setAuthRefreshVersion((version) => version + 1)
   }
 
   const setAppleAccountLinked = async (linked: boolean) => {
-    requireFirebase()
     if (!currentUser) throw new Error('You need to log in before changing linked accounts.')
-    const providers = currentUser.providerData || []
-    const hasApple = providers.some(({ providerId }) => providerId === 'apple.com')
-    if (linked && !hasApple) {
-      await linkWithPopup(currentUser, appleProvider)
-    } else if (!linked && hasApple) {
-      if (providers.length <= 1) throw new Error('Add another sign-in method before disconnecting Apple.')
-      await unlink(currentUser, 'apple.com')
+    if (linked) {
+      await supabase.auth.linkIdentity({ provider: 'apple', options: { redirectTo: window.location.origin } })
+    } else {
+      const identity = currentUser.providerData?.find((p) => p.providerId === 'apple.com')
+      if (identity) {
+        await supabase.auth.unlinkIdentity({ id: identity.uid } as any)
+      }
     }
     setAuthRefreshVersion((version) => version + 1)
   }
@@ -542,12 +442,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
         setAuthRefreshVersion((version) => version + 1)
         return mapped.emailVerified
       }
-    }
-    if (isFirebaseConfigured) {
-      await reload(currentUser)
-      await currentUser.getIdToken(true)
-      setAuthRefreshVersion((version) => version + 1)
-      return currentUser.emailVerified
     }
     return false
   }

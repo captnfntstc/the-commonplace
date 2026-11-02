@@ -61,7 +61,7 @@ describe('entry persistence recovery', () => {
     expect(loadPendingEntrySync('user-1')).toBeNull()
   })
 
-  it('isolates fallback entries by Firebase account', () => {
+  it('isolates fallback entries by user account', () => {
     saveEntriesToStorage([entry('account-a-entry', '2026-09-04T10:00:00.000Z')], 'account-a')
     saveEntriesToStorage([entry('account-b-entry', '2026-09-04T11:00:00.000Z')], 'account-b')
 

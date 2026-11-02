@@ -1,130 +1,382 @@
 import React from 'react'
+import {
+  Bookmark,
+  BookOpen,
+  Film,
+  Heart,
+  MessageSquare,
+  MoreHorizontal,
+  Music2,
+  Quote,
+  Star,
+} from 'lucide-react'
 
-export const AuthIllustration: React.FC = () => {
+export interface AuthIllustrationProps {
+  accentColor?: string
+}
+
+export const AuthIllustration: React.FC<AuthIllustrationProps> = () => {
   return (
-    <div className="auth-illustration-wrapper" aria-hidden="true">
-      <svg
-        viewBox="0 0 320 380"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        className="auth-illustration-svg"
-      >
-        {/* ── Candle glow (ambient circle behind everything) ── */}
-        <ellipse cx="160" cy="340" rx="90" ry="18" fill="rgba(205,167,116,0.06)" />
+    <div className="auth-sanctuary-showcase" aria-hidden="true">
+      {/* ── Top: Text describing what The Commonplace should be ── */}
+      <div className="auth-sanctuary-intro">
+        <h2 className="auth-sanctuary-title">
+          A sanctuary for thoughts, quotes, and quiet reflections.
+        </h2>
+        <p className="auth-sanctuary-lead">
+          Collect the words that linger. From passages and late-night songs to personal notes, keep what shapes you close.
+        </p>
+      </div>
 
-        {/* ── Stack of books ── */}
-        {/* Book 5 (bottom, widest) */}
-        <rect x="60" y="288" width="200" height="22" rx="3" fill="rgba(205,167,116,0.10)" stroke="rgba(205,167,116,0.22)" strokeWidth="1" />
-        <rect x="60" y="288" width="14" height="22" rx="2" fill="rgba(205,167,116,0.18)" stroke="rgba(205,167,116,0.28)" strokeWidth="1" />
-        <line x1="82" y1="295" x2="82" y2="303" stroke="rgba(205,167,116,0.18)" strokeWidth="1" />
+      {/* ── Bottom: Tilted Cards Streaming Downward & Overflowing at the Bottom ── */}
+      <div className="auth-feed-fade-container">
+        {/* Soft fade overlay at top of cards stream */}
+        <div className="auth-feed-top-fade-mask" />
 
-        {/* Book 4 */}
-        <rect x="70" y="264" width="184" height="24" rx="3" fill="rgba(205,167,116,0.08)" stroke="rgba(205,167,116,0.20)" strokeWidth="1" />
-        <rect x="70" y="264" width="12" height="24" rx="2" fill="rgba(205,167,116,0.15)" stroke="rgba(205,167,116,0.24)" strokeWidth="1" />
-        <line x1="90" y1="272" x2="90" y2="280" stroke="rgba(205,167,116,0.16)" strokeWidth="1" />
+        <div className="auth-feed-grid-overflow">
+          {/* ── Column 1 ── */}
+          <div className="auth-feed-col">
+            {/* Card 1: Taylor Swift - The Outside */}
+            <article className="auth-feed-card">
+              <div className="auth-fcard-top">
+                <div className="auth-fcard-user">
+                  <span className="auth-fcard-avatar" style={{ background: '#dcfce7', color: '#16a34a' }}>
+                    CB
+                  </span>
+                  <div className="auth-fcard-user-names">
+                    <span className="auth-fcard-name">Clara Bennett</span>
+                    <span className="auth-fcard-handle">@clarabennett</span>
+                  </div>
+                </div>
+                <div className="auth-fcard-meta">
+                  <span className="auth-fcard-time">8d</span>
+                  <Music2 size={13} className="auth-fcard-type-icon" />
+                </div>
+              </div>
 
-        {/* Book 3 */}
-        <rect x="78" y="237" width="168" height="27" rx="3" fill="rgba(205,167,116,0.12)" stroke="rgba(205,167,116,0.26)" strokeWidth="1" />
-        <rect x="78" y="237" width="16" height="27" rx="2" fill="rgba(205,167,116,0.22)" stroke="rgba(205,167,116,0.32)" strokeWidth="1" />
-        {/* small title lines */}
-        <line x1="104" y1="246" x2="220" y2="246" stroke="rgba(205,167,116,0.14)" strokeWidth="1" />
-        <line x1="104" y1="252" x2="190" y2="252" stroke="rgba(205,167,116,0.10)" strokeWidth="1" />
+              <div className="auth-fcard-body">
+                <div className="auth-fcard-art">
+                  <img
+                    src="/covers/taylor-swift-outside.jpg"
+                    alt="Taylor Swift cover"
+                    className="auth-fcard-cover-img"
+                    loading="eager"
+                  />
+                </div>
+                <div className="auth-fcard-info">
+                  <div className="auth-fcard-stars">
+                    {[...Array(5)].map((_, i) => (
+                      <Star key={i} size={11} fill="#f5b74c" color="#f5b74c" />
+                    ))}
+                  </div>
+                  <h4 className="auth-fcard-title">The Outside</h4>
+                  <p className="auth-fcard-creator">Taylor Swift</p>
+                  <div className="auth-fcard-badge-row">
+                    <span className="auth-fcard-badge">COUNTRY</span>
+                  </div>
+                  <p className="auth-fcard-sub">Taylor Swift (Bonus Track Version)</p>
+                </div>
+              </div>
 
-        {/* Book 2 */}
-        <rect x="84" y="208" width="152" height="29" rx="3" fill="rgba(205,167,116,0.09)" stroke="rgba(205,167,116,0.22)" strokeWidth="1" />
-        <rect x="84" y="208" width="14" height="29" rx="2" fill="rgba(205,167,116,0.18)" stroke="rgba(205,167,116,0.28)" strokeWidth="1" />
-        <line x1="108" y1="219" x2="218" y2="219" stroke="rgba(205,167,116,0.12)" strokeWidth="1" />
-        <line x1="108" y1="225" x2="196" y2="225" stroke="rgba(205,167,116,0.09)" strokeWidth="1" />
+              <div className="auth-fcard-passage">
+                <span className="auth-fcard-quote-bar" />
+                <p className="auth-fcard-quote-text">
+                  <span className="auth-fcard-quote-mark">&#x201C;</span>
+                  So, how can I ever try to be better? Nobody ever let's me in
+                </p>
+              </div>
 
-        {/* Book 1 (top, smaller) */}
-        <rect x="94" y="184" width="132" height="24" rx="3" fill="rgba(205,167,116,0.13)" stroke="rgba(205,167,116,0.28)" strokeWidth="1" />
-        <rect x="94" y="184" width="12" height="24" rx="2" fill="rgba(205,167,116,0.24)" stroke="rgba(205,167,116,0.36)" strokeWidth="1" />
-        <line x1="116" y1="192" x2="208" y2="192" stroke="rgba(205,167,116,0.16)" strokeWidth="1" />
-        <line x1="116" y1="198" x2="188" y2="198" stroke="rgba(205,167,116,0.12)" strokeWidth="1" />
+              <div className="auth-fcard-footer">
+                <div className="auth-fcard-stats">
+                  <span><Heart size={13} /> 18</span>
+                  <span><MessageSquare size={13} /> 3</span>
+                  <span><Bookmark size={13} /></span>
+                </div>
+                <MoreHorizontal size={14} className="auth-fcard-more" />
+              </div>
+            </article>
 
-        {/* ── Bookmark ribbon ── */}
-        <path
-          d="M202 184 L202 155 L215 155 L215 184 L208.5 178 Z"
-          fill="rgba(205,167,116,0.14)"
-          stroke="rgba(205,167,116,0.28)"
-          strokeWidth="1"
-          strokeLinejoin="round"
-        />
+            {/* Card 2: Movie - Interstellar */}
+            <article className="auth-feed-card">
+              <div className="auth-fcard-top">
+                <div className="auth-fcard-user">
+                  <span className="auth-fcard-avatar" style={{ background: '#e0e7ff', color: '#4338ca' }}>
+                    JV
+                  </span>
+                  <div className="auth-fcard-user-names">
+                    <span className="auth-fcard-name">Julian Vance</span>
+                    <span className="auth-fcard-handle">@julianvance</span>
+                  </div>
+                </div>
+                <div className="auth-fcard-meta">
+                  <span className="auth-fcard-time">1mo</span>
+                  <Film size={13} className="auth-fcard-type-icon" />
+                </div>
+              </div>
 
-        {/* ── Open notebook ── */}
-        <path
-          d="M90 155 Q90 142 104 142 L160 142 L160 180 L90 180 Z"
-          fill="rgba(205,167,116,0.07)"
-          stroke="rgba(205,167,116,0.20)"
-          strokeWidth="1"
-        />
-        <path
-          d="M160 142 L216 142 Q230 142 230 155 L230 180 L160 180 Z"
-          fill="rgba(205,167,116,0.10)"
-          stroke="rgba(205,167,116,0.22)"
-          strokeWidth="1"
-        />
-        {/* Notebook spine */}
-        <line x1="160" y1="142" x2="160" y2="180" stroke="rgba(205,167,116,0.28)" strokeWidth="1.5" />
-        {/* Ruled lines left page */}
-        <line x1="104" y1="151" x2="154" y2="151" stroke="rgba(205,167,116,0.12)" strokeWidth="0.8" />
-        <line x1="104" y1="158" x2="154" y2="158" stroke="rgba(205,167,116,0.10)" strokeWidth="0.8" />
-        <line x1="104" y1="165" x2="154" y2="165" stroke="rgba(205,167,116,0.12)" strokeWidth="0.8" />
-        <line x1="104" y1="172" x2="140" y2="172" stroke="rgba(205,167,116,0.08)" strokeWidth="0.8" />
-        {/* Ruled lines right page */}
-        <line x1="168" y1="151" x2="222" y2="151" stroke="rgba(205,167,116,0.12)" strokeWidth="0.8" />
-        <line x1="168" y1="158" x2="222" y2="158" stroke="rgba(205,167,116,0.10)" strokeWidth="0.8" />
-        <line x1="168" y1="165" x2="210" y2="165" stroke="rgba(205,167,116,0.12)" strokeWidth="0.8" />
+              <div className="auth-fcard-body">
+                <div className="auth-fcard-art">
+                  <img
+                    src="/covers/interstellar.jpg"
+                    alt="Interstellar cover"
+                    className="auth-fcard-cover-img"
+                    loading="eager"
+                  />
+                </div>
+                <div className="auth-fcard-info">
+                  <div className="auth-fcard-stars">
+                    {[...Array(5)].map((_, i) => (
+                      <Star key={i} size={11} fill="#f5b74c" color="#f5b74c" />
+                    ))}
+                  </div>
+                  <h4 className="auth-fcard-title">Interstellar</h4>
+                  <p className="auth-fcard-creator">Christopher Nolan · 2014</p>
+                  <div className="auth-fcard-badge-row">
+                    <span className="auth-fcard-badge">SCI-FI</span>
+                  </div>
+                  <p className="auth-fcard-sub">Paramount Pictures</p>
+                </div>
+              </div>
 
-        {/* ── Fountain pen resting diagonally ── */}
-        <g transform="rotate(-28, 160, 130)">
-          {/* Barrel */}
-          <rect x="114" y="94" width="92" height="9" rx="4.5" fill="rgba(205,167,116,0.16)" stroke="rgba(205,167,116,0.32)" strokeWidth="1" />
-          {/* Cap join ring */}
-          <rect x="114" y="95" width="14" height="7" rx="3.5" fill="rgba(205,167,116,0.26)" stroke="rgba(205,167,116,0.38)" strokeWidth="1" />
-          {/* Nib */}
-          <path d="M206 98.5 L218 96 L218 101 Z" fill="rgba(205,167,116,0.32)" stroke="rgba(205,167,116,0.42)" strokeWidth="0.8" />
-          {/* Clip */}
-          <rect x="118" y="93" width="2" height="11" rx="1" fill="rgba(205,167,116,0.28)" />
-        </g>
+              <div className="auth-fcard-passage">
+                <span className="auth-fcard-quote-bar" />
+                <p className="auth-fcard-quote-text">
+                  <span className="auth-fcard-quote-mark">&#x201C;</span>
+                  We used to look up at the sky and wonder at our place in the stars. Now we just look down and worry about our place in the dirt.
+                </p>
+              </div>
 
-        {/* ── Small pressed leaf (decorative) ── */}
-        <ellipse cx="245" cy="200" rx="12" ry="6" transform="rotate(-40, 245, 200)" fill="rgba(205,167,116,0.10)" stroke="rgba(205,167,116,0.20)" strokeWidth="0.8" />
-        <line x1="238" y1="204" x2="252" y2="196" stroke="rgba(205,167,116,0.18)" strokeWidth="0.7" />
-        <line x1="240" y1="202" x2="244" y2="198" stroke="rgba(205,167,116,0.12)" strokeWidth="0.6" />
-        <line x1="248" y1="199" x2="250" y2="195" stroke="rgba(205,167,116,0.12)" strokeWidth="0.6" />
+              <div className="auth-fcard-footer">
+                <div className="auth-fcard-stats">
+                  <span><Heart size={13} /> 92</span>
+                  <span><MessageSquare size={13} /> 17</span>
+                  <span><Bookmark size={13} /></span>
+                </div>
+                <MoreHorizontal size={14} className="auth-fcard-more" />
+              </div>
+            </article>
 
-        {/* ── Small paperclip ── */}
-        <path
-          d="M75 165 Q68 165 68 172 Q68 179 75 179 L82 179 L82 168 Q82 163 77 163 Q72 163 72 168 L72 176"
-          stroke="rgba(205,167,116,0.22)"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          fill="none"
-        />
+            {/* Card 3: Book - The Reptile Room */}
+            <article className="auth-feed-card">
+              <div className="auth-fcard-top">
+                <div className="auth-fcard-user">
+                  <span className="auth-fcard-avatar" style={{ background: '#fef3c7', color: '#b45309' }}>
+                    ML
+                  </span>
+                  <div className="auth-fcard-user-names">
+                    <span className="auth-fcard-name">Maya Lin</span>
+                    <span className="auth-fcard-handle">@mayalin</span>
+                  </div>
+                </div>
+                <div className="auth-fcard-meta">
+                  <span className="auth-fcard-time">2mo</span>
+                  <BookOpen size={13} className="auth-fcard-type-icon" />
+                </div>
+              </div>
 
-        {/* ── Candle ── */}
-        <rect x="147" y="98" width="26" height="44" rx="3" fill="rgba(205,167,116,0.10)" stroke="rgba(205,167,116,0.22)" strokeWidth="1" />
-        {/* Wax drip */}
-        <path d="M147 112 Q140 115 141 122 L147 122 Z" fill="rgba(205,167,116,0.08)" stroke="rgba(205,167,116,0.16)" strokeWidth="0.8" />
-        {/* Wick */}
-        <line x1="160" y1="98" x2="160" y2="88" stroke="rgba(205,167,116,0.30)" strokeWidth="1.2" strokeLinecap="round" />
-        {/* Flame outer */}
-        <path
-          d="M160 88 Q156 80 158 72 Q160 64 162 72 Q164 80 160 88 Z"
-          fill="rgba(205,167,116,0.18)"
-          stroke="rgba(205,167,116,0.32)"
-          strokeWidth="0.8"
-        />
-        {/* Flame inner glow */}
-        <path
-          d="M160 85 Q158 80 159 75 Q160 70 161 75 Q162 80 160 85 Z"
-          fill="rgba(205,167,116,0.28)"
-        />
-        {/* Candle holder saucer */}
-        <ellipse cx="160" cy="142" rx="20" ry="5" fill="rgba(205,167,116,0.14)" stroke="rgba(205,167,116,0.26)" strokeWidth="1" />
-        <rect x="148" y="138" width="24" height="6" rx="2" fill="rgba(205,167,116,0.12)" stroke="rgba(205,167,116,0.22)" strokeWidth="1" />
-      </svg>
+              <div className="auth-fcard-body">
+                <div className="auth-fcard-art auth-fcard-art--book">
+                  <img
+                    src="/covers/the-reptile-room.jpg"
+                    alt="The Reptile Room cover"
+                    className="auth-fcard-cover-img"
+                    loading="eager"
+                  />
+                </div>
+                <div className="auth-fcard-info">
+                  <div className="auth-fcard-stars">
+                    {[...Array(5)].map((_, i) => (
+                      <Star key={i} size={11} fill="#f5b74c" color="#f5b74c" />
+                    ))}
+                  </div>
+                  <h4 className="auth-fcard-title">The Reptile Room</h4>
+                  <p className="auth-fcard-creator">Lemony Snicket</p>
+                  <div className="auth-fcard-badge-row">
+                    <span className="auth-fcard-badge">JUVENILE FICTION</span>
+                  </div>
+                  <p className="auth-fcard-sub">A Series of Unfortunate Events #2</p>
+                </div>
+              </div>
+
+              <div className="auth-fcard-passage">
+                <span className="auth-fcard-quote-bar" />
+                <p className="auth-fcard-quote-text">
+                  <span className="auth-fcard-quote-mark">&#x201C;</span>
+                  If you have ever lost someone very important to you, then you know already that everything looks different afterwards.
+                </p>
+              </div>
+
+              <div className="auth-fcard-footer">
+                <div className="auth-fcard-stats">
+                  <span><Heart size={13} /> 45</span>
+                  <span><MessageSquare size={13} /> 8</span>
+                  <span><Bookmark size={13} /></span>
+                </div>
+                <MoreHorizontal size={14} className="auth-fcard-more" />
+              </div>
+            </article>
+          </div>
+
+          {/* ── Column 2 (Offset / Featuring Noah Kahan) ── */}
+          <div className="auth-feed-col auth-feed-col--offset">
+            {/* Card 4: NOAH KAHAN - THE GREAT DIVIDE (Highlighted with active red border) */}
+            <article className="auth-feed-card auth-feed-card--active">
+              <div className="auth-fcard-top">
+                <div className="auth-fcard-user">
+                  <span className="auth-fcard-avatar" style={{ background: '#fce7f3', color: '#be185d' }}>
+                    LM
+                  </span>
+                  <div className="auth-fcard-user-names">
+                    <span className="auth-fcard-name">Liam Montgomery</span>
+                    <span className="auth-fcard-handle">@liammontgomery</span>
+                  </div>
+                </div>
+                <div className="auth-fcard-meta">
+                  <span className="auth-fcard-time">1mo</span>
+                  <Music2 size={13} className="auth-fcard-type-icon" />
+                </div>
+              </div>
+
+              <div className="auth-fcard-body">
+                <div className="auth-fcard-art">
+                  <img
+                    src="/covers/noah-kahan-great-divide.jpg"
+                    alt="Noah Kahan - The Great Divide cover"
+                    className="auth-fcard-cover-img"
+                    loading="eager"
+                  />
+                </div>
+                <div className="auth-fcard-info">
+                  <div className="auth-fcard-stars">
+                    {[...Array(5)].map((_, i) => (
+                      <Star key={i} size={11} fill="#f5b74c" color="#f5b74c" />
+                    ))}
+                  </div>
+                  <h4 className="auth-fcard-title">A Few Of Your Own</h4>
+                  <p className="auth-fcard-creator">Noah Kahan</p>
+                  <div className="auth-fcard-badge-row">
+                    <span className="auth-fcard-badge">ALTERNATIVE</span>
+                  </div>
+                  <p className="auth-fcard-sub">The Great Divide: The Last Of The Bugs</p>
+                </div>
+              </div>
+
+              <div className="auth-fcard-passage">
+                <span className="auth-fcard-quote-bar" />
+                <p className="auth-fcard-quote-text">
+                  <span className="auth-fcard-quote-mark">&#x201C;</span>
+                  I was high when I met you, life was something to get through. Pictureframe in your bedroom of the one man that left you.
+                </p>
+              </div>
+
+              <div className="auth-fcard-footer">
+                <div className="auth-fcard-stats">
+                  <span><Heart size={13} fill="#f05353" color="#f05353" /> 134</span>
+                  <span><MessageSquare size={13} /> 28</span>
+                  <span><Bookmark size={13} fill="#c8a26a" color="#c8a26a" /></span>
+                </div>
+                <MoreHorizontal size={14} className="auth-fcard-more" />
+              </div>
+            </article>
+
+            {/* Card 5: Olivia Rodrigo - GUTS */}
+            <article className="auth-feed-card">
+              <div className="auth-fcard-top">
+                <div className="auth-fcard-user">
+                  <span className="auth-fcard-avatar" style={{ background: '#fae8ff', color: '#a21caf' }}>
+                    SR
+                  </span>
+                  <div className="auth-fcard-user-names">
+                    <span className="auth-fcard-name">Sofia Reyes</span>
+                    <span className="auth-fcard-handle">@sofiareyes</span>
+                  </div>
+                </div>
+                <div className="auth-fcard-meta">
+                  <span className="auth-fcard-time">2w</span>
+                  <Music2 size={13} className="auth-fcard-type-icon" />
+                </div>
+              </div>
+
+              <div className="auth-fcard-body">
+                <div className="auth-fcard-art">
+                  <img
+                    src="/covers/olivia-rodrigo-guts.jpg"
+                    alt="Olivia Rodrigo cover"
+                    className="auth-fcard-cover-img"
+                    loading="eager"
+                  />
+                </div>
+                <div className="auth-fcard-info">
+                  <div className="auth-fcard-stars">
+                    {[...Array(5)].map((_, i) => (
+                      <Star key={i} size={11} fill="#f5b74c" color="#f5b74c" />
+                    ))}
+                  </div>
+                  <h4 className="auth-fcard-title">vampire</h4>
+                  <p className="auth-fcard-creator">Olivia Rodrigo</p>
+                  <div className="auth-fcard-badge-row">
+                    <span className="auth-fcard-badge">POP</span>
+                  </div>
+                  <p className="auth-fcard-sub">GUTS, Geffen Records</p>
+                </div>
+              </div>
+
+              <div className="auth-fcard-passage">
+                <span className="auth-fcard-quote-bar" />
+                <p className="auth-fcard-quote-text">
+                  <span className="auth-fcard-quote-mark">&#x201C;</span>
+                  How do you lie without flinching? How do you look at the person you broke and sleep peaceful at night?
+                </p>
+              </div>
+
+              <div className="auth-fcard-footer">
+                <div className="auth-fcard-stats">
+                  <span><Heart size={13} /> 81</span>
+                  <span><MessageSquare size={13} /> 12</span>
+                  <span><Bookmark size={13} /></span>
+                </div>
+                <MoreHorizontal size={14} className="auth-fcard-more" />
+              </div>
+            </article>
+
+            {/* Card 6: Standalone Quote */}
+            <article className="auth-feed-card">
+              <div className="auth-fcard-top">
+                <div className="auth-fcard-user">
+                  <span className="auth-fcard-avatar" style={{ background: '#ede0d4', color: '#7f5539' }}>
+                    ER
+                  </span>
+                  <div className="auth-fcard-user-names">
+                    <span className="auth-fcard-name">Elena Rostova</span>
+                    <span className="auth-fcard-handle">@elena_r</span>
+                  </div>
+                </div>
+                <div className="auth-fcard-meta">
+                  <span className="auth-fcard-time">3w</span>
+                  <Quote size={13} className="auth-fcard-type-icon" />
+                </div>
+              </div>
+
+              <div className="auth-fcard-passage auth-fcard-passage--full">
+                <span className="auth-fcard-quote-bar" />
+                <p className="auth-fcard-quote-text">
+                  <span className="auth-fcard-quote-mark">&#x201C;</span>
+                  Dwell on the beauty of life. Watch the stars, and see yourself running with them.
+                </p>
+              </div>
+
+              <div className="auth-fcard-footer">
+                <div className="auth-fcard-stats">
+                  <span><Heart size={13} /> 160</span>
+                  <span><MessageSquare size={13} /> 22</span>
+                  <span><Bookmark size={13} /></span>
+                </div>
+                <MoreHorizontal size={14} className="auth-fcard-more" />
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

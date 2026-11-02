@@ -1,6 +1,5 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AuthHeader } from '../components/auth/AuthHeader'
 import { AuthCard } from '../components/auth/AuthCard'
 import { LoginForm } from '../components/auth/LoginForm'
 
@@ -10,25 +9,34 @@ interface LoginPageProps {
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onSwitchToRegister }) => {
   const navigate = useNavigate()
-  const handleSwitch = () => {
-    if (onSwitchToRegister) {
-      onSwitchToRegister()
-    } else {
-      navigate('/register')
+
+  const handleSwitchTab = (tab: 'login' | 'register') => {
+    if (tab === 'register') {
+      if (onSwitchToRegister) {
+        onSwitchToRegister()
+      } else {
+        navigate('/register')
+      }
     }
   }
 
   return (
-    <div className="auth-page">
-      <AuthHeader />
+    <div className="auth-page sunrise-auth-page">
       <main className="auth-main">
         <div className="auth-container">
           <AuthCard
-            formPanel={<LoginForm onSwitchToRegister={handleSwitch} />}
+            activeTab="login"
+            onSwitchTab={handleSwitchTab}
+            formPanel={
+              <LoginForm
+                activeTab="login"
+                onSwitchTab={handleSwitchTab}
+                onSwitchToRegister={() => handleSwitchTab('register')}
+              />
+            }
           />
         </div>
       </main>
     </div>
   )
 }
-

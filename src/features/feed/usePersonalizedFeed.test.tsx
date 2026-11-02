@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import type { User } from 'firebase/auth'
+import type { User } from '../../context/AuthContext'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FeedCategory, FeedItem } from '../../services/feed'
 

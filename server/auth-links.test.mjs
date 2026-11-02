@@ -36,7 +36,7 @@ test('renders an aligned branded verification email without an external logo dep
   assert.match(html, /alt="The Commonplace\."/)
 })
 
-test('requires an authenticated Firebase session before generating a short link', async () => {
+test('requires an authenticated session before generating a short link', async () => {
   const request = {
     method: 'POST',
     url: '/api/auth/verification-links',
@@ -48,7 +48,7 @@ test('requires an authenticated Firebase session before generating a short link'
   )
 })
 
-test('requires an authenticated Firebase session before deleting an account', async () => {
+test('requires an authenticated session before deleting an account', async () => {
   const request = Readable.from([])
   Object.assign(request, {
     method: 'DELETE',
@@ -61,7 +61,7 @@ test('requires an authenticated Firebase session before deleting an account', as
   )
 })
 
-test('requires an authenticated Firebase session before deactivating an account', async () => {
+test('requires an authenticated session before deactivating an account', async () => {
   const request = Readable.from([JSON.stringify({
     reason: 'taking_a_break',
     returnPlan: 'seven_days',
@@ -117,7 +117,7 @@ test('accepts only bounded URL-safe auth action tokens', () => {
   assert.equal(authLinkInternals.validActionToken('a'.repeat(65)), false)
 })
 
-test('returns an opaque invalid result for malformed reset tokens without accessing Firebase', async () => {
+test('returns an opaque invalid result for malformed reset tokens without database access', async () => {
   const request = Readable.from([JSON.stringify({ token: 'short' })])
   Object.assign(request, {
     method: 'POST',

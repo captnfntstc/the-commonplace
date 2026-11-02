@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Entry } from '../features/entries/model'
 import type { UserProfileState } from '../types/userProfile'
-import { serverTimestamp } from 'firebase/firestore'
 import {
   isAccountCurrentlyDeactivated,
   mergeMigrationSnapshots,
@@ -10,8 +9,12 @@ import {
   type UserCloudSnapshot,
 } from './cloudData'
 
+class CustomField {
+  type = 'custom'
+}
+
 const profile: UserProfileState = {
-  firstName: 'Pat',
+  firstName: 'Patrick',
   lastName: '',
   showFullName: false,
   handle: 'pat',
@@ -132,17 +135,17 @@ describe('withoutUndefined', () => {
     })
   })
 
-  it('preserves FieldValue instances like serverTimestamp without converting them to plain objects', () => {
-    const timestamp = serverTimestamp()
+  it('preserves custom class instances without converting them to plain objects', () => {
+    const custom = new CustomField()
     const input = {
       handle: 'johnappleseed',
       empty: undefined,
-      createdAt: timestamp,
+      createdAt: custom,
     }
     const result = withoutUndefined(input)
     expect(result.handle).toBe('johnappleseed')
     expect(result.empty).toBeUndefined()
-    expect(result.createdAt).toBe(timestamp)
+    expect(result.createdAt).toBe(custom)
   })
 })
 

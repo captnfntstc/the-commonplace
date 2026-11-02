@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { User } from 'firebase/auth'
+import type { User } from '../../context/AuthContext'
 import type { Entry } from '../entries/model'
 import { subscribeMutualFollowIds } from '../../services/cloudData'
 import {

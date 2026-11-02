@@ -14,18 +14,8 @@ export default defineConfig(({ mode }) => {
         codeSplitting: {
           groups: [
             {
-              name: 'firebase-auth',
-              test: /node_modules[\\/]@firebase[\\/]auth/,
-              priority: 30,
-            },
-            {
-              name: 'firebase-firestore',
-              test: /node_modules[\\/]@firebase[\\/]firestore/,
-              priority: 30,
-            },
-            {
-              name: 'firebase-core',
-              test: /node_modules[\\/](?:firebase|@firebase)[\\/]/,
+              name: 'supabase-core',
+              test: /node_modules[\\/]@supabase[\\/]/,
               priority: 20,
             },
             {

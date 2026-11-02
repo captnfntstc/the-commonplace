@@ -1,4 +1,4 @@
-import type { User } from 'firebase/auth'
+import type { User } from '../context/AuthContext'
 import type { Entry, EntryType } from '../features/entries/model'
 
 export type FeedCategory = EntryType | 'all'
