@@ -25,10 +25,10 @@ describe('Appearance settings store', () => {
     resetAppearanceSettings()
   })
 
-  it('defaults new accounts to the default dark look', () => {
-    expect(DEFAULT_APPEARANCE_SETTINGS.theme).toBe('dark')
-    expect(getAppearanceSettings().theme).toBe('dark')
-    expect(getThemeOption('dark').name).toBe('Espresso')
+  it('defaults new accounts to the default Sunrise look', () => {
+    expect(DEFAULT_APPEARANCE_SETTINGS.theme).toBe('white')
+    expect(getAppearanceSettings().theme).toBe('white')
+    expect(getThemeOption('white').name).toBe('Sunrise')
   })
 
   it('applies the official fixed typography sitewide with quotes locked to Source Serif 4', () => {
@@ -128,7 +128,7 @@ describe('Appearance settings store', () => {
     expect(normalizeStoredTheme('light')).toBe('white')
     expect(normalizeStoredTheme('white')).toBe('white')
     expect(normalizeStoredTheme('dark')).toBe('dark')
-    expect(normalizeStoredTheme('unknown')).toBe('dark')
+    expect(normalizeStoredTheme('unknown')).toBe('white')
 
     window.localStorage.setItem(
       APPEARANCE_SETTINGS_STORAGE_KEY,
@@ -155,13 +155,13 @@ describe('Appearance settings store', () => {
     expect(stored.theme).toBe('white-gold')
   })
 
-  it('resets to the default dark look and clears storage', () => {
+  it('resets to the default Sunrise look and clears storage', () => {
     updateAppearanceSettings({ theme: 'white-cobalt' })
     resetAppearanceSettings()
 
-    expect(getAppearanceSettings().theme).toBe('dark')
-    expect(document.documentElement.dataset.theme).toBe('dark')
-    expect(document.documentElement.classList.contains('theme-dark')).toBe(true)
+    expect(getAppearanceSettings().theme).toBe('white')
+    expect(document.documentElement.dataset.theme).toBe('white')
+    expect(document.documentElement.classList.contains('theme-white')).toBe(true)
     expect(window.localStorage.getItem(APPEARANCE_SETTINGS_STORAGE_KEY)).toBeNull()
   })
 })

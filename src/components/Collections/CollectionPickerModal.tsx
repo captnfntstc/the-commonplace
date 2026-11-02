@@ -145,7 +145,7 @@ export function CollectionPickerModal({ handle, userId = null, item, onClose }: 
           saveProfileCollections(handle, nextCollections)
         }
       })
-      .catch((error) => console.error('Unable to load collections from Firebase.', error))
+      .catch((error) => console.error('Unable to load collections from Supabase.', error))
     return () => {
       cancelled = true
     }
@@ -160,7 +160,7 @@ export function CollectionPickerModal({ handle, userId = null, item, onClose }: 
           setCollections(savedCollections)
           saveProfileCollections(handle, savedCollections)
         })
-        .catch((error) => console.error('Unable to sync collections to Firebase.', error))
+        .catch((error) => console.error('Unable to sync collections to Supabase.', error))
     }
   }
 

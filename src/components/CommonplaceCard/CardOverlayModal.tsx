@@ -101,6 +101,10 @@ interface CommentItem {
   replies: ReplyItem[]
 }
 
+type CommentDeleteTarget =
+  | { kind: 'comment'; comment: CommentItem }
+  | { kind: 'reply'; commentId: string; reply: ReplyItem }
+
 interface ReplyTarget {
   commentId: string
   interactionId: string
@@ -352,7 +356,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   const [reportToast, setReportToast] = useState<string | null>(null)
   const [postReportOpen, setPostReportOpen] = useState(false)
   const [interactionReportTarget, setInteractionReportTarget] = useState<InteractionReportTarget | null>(null)
-  const [commentDeleteTarget, setCommentDeleteTarget] = useState<CommentItem | null>(null)
+  const [commentDeleteTarget, setCommentDeleteTarget] = useState<CommentDeleteTarget | null>(null)
   const [commentDeletePending, setCommentDeletePending] = useState(false)
   const [commentDeleteError, setCommentDeleteError] = useState<string | null>(null)
   const closeCommentDeleteDialog = () => {
@@ -381,7 +385,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
           }))
         setCommentState({ entryId: activeEntryId, items: visibleItems })
       })
-      .catch((error) => console.error('Unable to load comments from Firebase.', error))
+      .catch((error) => console.error('Unable to load comments from Supabase.', error))
     return () => {
       cancelled = true
     }
@@ -491,7 +495,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
     setComments((prev) => [...prev, item])
     if (cloudUserId) {
       void createPostComment(entry.id, cloudUserId, item, entry.title)
-        .catch((error) => console.error('Unable to save comment to Firebase.', error))
+        .catch((error) => console.error('Unable to save comment to Supabase.', error))
     }
     setNewCommentText('')
     if (commentInputRef.current) {
@@ -523,7 +527,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
     )
     if (cloudUserId) {
       void createPostReply(entry.id, commentId, cloudUserId, reply)
-        .catch((error) => console.error('Unable to save reply to Firebase.', error))
+        .catch((error) => console.error('Unable to save reply to Supabase.', error))
     }
     setReplyTexts((prev) => ({ ...prev, [commentId]: '' }))
     setReplyingToId(null)
@@ -553,7 +557,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
     )
     if (cloudUserId) {
       void togglePostCommentLike(entry.id, commentId, cloudUserId, nextLiked)
-        .catch((error) => console.error('Unable to sync comment like to Firebase.', error))
+        .catch((error) => console.error('Unable to sync comment like to Supabase.', error))
     }
   }
 
@@ -583,7 +587,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
     )
     if (cloudUserId) {
       void togglePostReplyLike(entry.id, commentId, replyId, cloudUserId, nextLiked)
-        .catch((error) => console.error('Unable to sync reply like to Firebase.', error))
+        .catch((error) => console.error('Unable to sync reply like to Supabase.', error))
     }
   }
 
@@ -591,28 +595,51 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
     const comment = comments.find((item) => item.id === commentId)
     if (!comment || !canDeleteInteraction(comment, cloudUserId, currentUserHandle, isEntryOwner)) return
     setCommentDeleteError(null)
-    setCommentDeleteTarget(comment)
+    setCommentDeleteTarget({ kind: 'comment', comment })
   }
 
   const confirmDeleteComment = async () => {
     if (!commentDeleteTarget || commentDeletePending) return
-    const comment = comments.find((item) => item.id === commentDeleteTarget.id)
-    if (!comment || !canDeleteInteraction(comment, cloudUserId, currentUserHandle, isEntryOwner)) {
-      setCommentDeleteTarget(null)
-      return
-    }
 
     setCommentDeletePending(true)
     setCommentDeleteError(null)
     try {
-      if (cloudUserId) {
-        await deletePostComment(entry.id, comment.id, cloudUserId)
+      if (commentDeleteTarget.kind === 'comment') {
+        const comment = comments.find((item) => item.id === commentDeleteTarget.comment.id)
+        if (!comment || !canDeleteInteraction(comment, cloudUserId, currentUserHandle, isEntryOwner)) {
+          setCommentDeleteTarget(null)
+          return
+        }
+        if (cloudUserId) {
+          await deletePostComment(entry.id, comment.id, cloudUserId)
+        }
+        setComments((previous) => previous.filter((item) => item.id !== comment.id))
+      } else {
+        const { commentId, reply } = commentDeleteTarget
+        const currentReply = comments
+          .find((item) => item.id === commentId)
+          ?.replies.find((item) => item.id === reply.id)
+        if (!currentReply || !canDeleteInteraction(currentReply, cloudUserId, currentUserHandle, isEntryOwner)) {
+          setCommentDeleteTarget(null)
+          return
+        }
+        if (cloudUserId) {
+          await deletePostReply(entry.id, commentId, reply.id, cloudUserId)
+        }
+        setComments((previous) => previous.map((comment) => (
+          comment.id === commentId
+            ? { ...comment, replies: comment.replies.filter((item) => item.id !== reply.id) }
+            : comment
+        )))
       }
-      setComments((previous) => previous.filter((item) => item.id !== comment.id))
       setCommentDeleteTarget(null)
     } catch (error) {
-      console.error('Unable to delete comment from Firebase.', error)
-      setCommentDeleteError('We couldn\'t delete your comment. Please try again.')
+      console.error('Unable to delete interaction from Supabase.', error)
+      setCommentDeleteError(
+        commentDeleteTarget.kind === 'comment'
+          ? 'We couldn\'t delete your comment. Please try again.'
+          : 'We couldn\'t delete your reply. Please try again.',
+      )
     } finally {
       setCommentDeletePending(false)
     }
@@ -621,21 +648,8 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   const handleDeleteReply = (commentId: string, replyId: string) => {
     const reply = comments.find((item) => item.id === commentId)?.replies.find((item) => item.id === replyId)
     if (!reply || !canDeleteInteraction(reply, cloudUserId, currentUserHandle, isEntryOwner)) return
-    if (!window.confirm('Delete this reply?')) return
-    const removeReply = () => setComments((prev) =>
-      prev.map((comment) =>
-        comment.id === commentId
-          ? { ...comment, replies: comment.replies.filter((item) => item.id !== replyId) }
-          : comment
-      )
-    )
-    if (!cloudUserId) {
-      removeReply()
-      return
-    }
-    void deletePostReply(entry.id, commentId, replyId, cloudUserId)
-      .then(removeReply)
-      .catch((error) => console.error('Unable to delete reply from Firebase.', error))
+    setCommentDeleteError(null)
+    setCommentDeleteTarget({ kind: 'reply', commentId, reply })
   }
 
   const sortedComments = sortOrder === 'newest' ? [...comments].reverse() : comments
@@ -1388,9 +1402,13 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                 <span className="comment-delete-icon" aria-hidden="true">
                   <Trash2 />
                 </span>
-                <h2 id="comment-delete-title">Delete this comment?</h2>
+                <h2 id="comment-delete-title">
+                  {commentDeleteTarget.kind === 'comment' ? 'Delete this comment?' : 'Delete this reply?'}
+                </h2>
                 <p id="comment-delete-description">
-                  This comment will be permanently removed from the discussion. This action cannot be undone.
+                  {commentDeleteTarget.kind === 'comment'
+                    ? 'This comment will be permanently removed from the discussion. This action cannot be undone.'
+                    : 'This reply will be permanently removed from the discussion. This action cannot be undone.'}
                 </p>
                 {commentDeleteError && <p className="comment-delete-error" role="alert">{commentDeleteError}</p>}
                 <div className="comment-delete-actions">
@@ -1403,7 +1421,9 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                     onClick={() => void confirmDeleteComment()}
                     disabled={commentDeletePending}
                   >
-                    {commentDeletePending ? 'Deleting…' : 'Delete comment'}
+                    {commentDeletePending
+                      ? 'Deleting…'
+                      : commentDeleteTarget.kind === 'comment' ? 'Delete comment' : 'Delete reply'}
                   </button>
                 </div>
               </motion.div>

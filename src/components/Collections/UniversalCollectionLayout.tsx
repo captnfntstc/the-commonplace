@@ -37,6 +37,7 @@ import { useNavigate } from 'react-router-dom'
 import type { Entry, EntryType } from '../../features/entries/model'
 import { getGradientHeroBannerStyle } from '../../utils/collectionCovers'
 import { searchTokensMatch } from '../../utils/text'
+import { detectImageLuminance } from '../../utils/imageLuminance'
 import { CollectionCommentsSection } from './CollectionCommentsSection'
 import { ShareMenuDialog, type ShareTargetInfo } from '../Share/ShareMenuDialog'
 import { showToast } from '../../utils/toast'
@@ -141,6 +142,17 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const prevEditingRef = useRef(isEditingInline)
   const prevItemsRef = useRef(items)
+  const [badgeThemeMap, setBadgeThemeMap] = useState<Record<string, 'dark' | 'light'>>({})
+
+  useEffect(() => {
+    orderedItems.forEach((entry) => {
+      if (entry.coverUrl) {
+        detectImageLuminance(entry.coverUrl, (theme) => {
+          setBadgeThemeMap((prev) => (prev[entry.id] === theme ? prev : { ...prev, [entry.id]: theme }))
+        })
+      }
+    })
+  }, [orderedItems])
 
   useEffect(() => {
     const isEnteringEdit = isEditingInline && !prevEditingRef.current
@@ -358,7 +370,9 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
     return getGradientHeroBannerStyle(currentGradientVariant, items)
   }, [isContainerGradient, currentGradientVariant, items])
 
-  const isGradientLight = isContainerGradient && (currentGradientVariant === 3 || currentGradientVariant === 4)
+  const hasGradientItems = items.length > 0
+  const isGradientLight = isContainerGradient && hasGradientItems && (currentGradientVariant === 3 || currentGradientVariant === 4)
+  const isGradientDark = isContainerGradient && (!hasGradientItems || currentGradientVariant === 1 || currentGradientVariant === 2)
   const showCoverColumn = !isContainerGradient || isEditingInline
 
   const creatorDisplay = creatorName?.trim() ? creatorName : creatorHandle
@@ -451,7 +465,7 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
 
       {/* ── Universal Hero Banner (Website color palette, no red outline!) ── */}
       <section
-        className={`universal-hero ${isContainerGradient ? 'is-gradient-bg' : ''} ${isGradientLight ? 'is-gradient-light' : ''}`}
+        className={`universal-hero ${isContainerGradient ? 'is-gradient-bg' : ''} ${isGradientLight ? 'is-gradient-light' : ''} ${isGradientDark ? 'is-gradient-dark' : ''}`}
         style={gradientHeroStyle}
       >
         {/* Square Cover Artwork Column: hidden for gradients unless editing so users can change their cover */}
@@ -924,14 +938,48 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                         {/* Artwork Stage: contains the clipped artwork + unclipped card action ellipsis */}
                         <div className="universal-entity-art-stage">
                           {/* Media Artwork (No container box!) */}
-                          <div className={`universal-entity-art ${isSquareArtwork ? 'is-square' : 'is-poster'}`}>
+                          <div className={`universal-entity-art ${isSquareArtwork ? 'is-square' : 'is-poster'} ${badgeThemeMap[entry.id] ? `is-${badgeThemeMap[entry.id]}-bg` : ''}`}>
                             {entry.coverUrl ? (
-                              <img src={entry.coverUrl} alt={entry.title} className="universal-entity-img" loading="lazy" draggable={false} />
+                              <img
+                                src={entry.coverUrl}
+                                alt={entry.title}
+                                className="universal-entity-img"
+                                loading="lazy"
+                                draggable={false}
+                                onLoad={(e) => {
+                                  const img = e.currentTarget
+                                  try {
+                                    const canvas = document.createElement('canvas')
+                                    canvas.width = 16
+                                    canvas.height = 16
+                                    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+                                    if (!ctx) return
+                                    const sampleW = Math.max(1, Math.round((img.naturalWidth || 100) * 0.35))
+                                    const sampleH = Math.max(1, Math.round((img.naturalHeight || 100) * 0.25))
+                                    ctx.drawImage(img, 0, 0, sampleW, sampleH, 0, 0, 16, 16)
+                                    const { data } = ctx.getImageData(0, 0, 16, 16)
+                                    let total = 0
+                                    let count = 0
+                                    for (let i = 0; i < data.length; i += 4) {
+                                      if (data[i + 3] > 64) {
+                                        total += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]
+                                        count++
+                                      }
+                                    }
+                                    if (count > 0) {
+                                      const theme: 'dark' | 'light' = total / count < 135 ? 'dark' : 'light'
+                                      setBadgeThemeMap((prev) => (prev[entry.id] === theme ? prev : { ...prev, [entry.id]: theme }))
+                                    }
+                                  } catch {
+                                    // CORS blocked canvas access - handled by fallback
+                                  }
+                                }}
+                              />
                             ) : (
                               <div className="universal-entity-fallback">{renderTypeIcon(entry.type, 30)}</div>
                             )}
 
-                            <span className="universal-entity-type-badge">
+                            <span className={`universal-entity-type-badge ${badgeThemeMap[entry.id] ? `is-${badgeThemeMap[entry.id]}-bg` : ''}`}>
                               {renderTypeIcon(entry.type, 11)}
                               <span>{label}</span>
                             </span>

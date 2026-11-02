@@ -241,9 +241,9 @@ export interface AppearanceSettings {
 // every user's saved selection while the stored shape narrows to `theme` only.
 export const APPEARANCE_SETTINGS_STORAGE_KEY = 'the-commonplace.dev-settings.v5'
 
-// New accounts (and fresh browsers) start on the default dark look (Espresso).
+// New accounts (and fresh browsers) start on the default Sunrise look.
 export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
-  theme: 'dark',
+  theme: 'white',
 }
 
 const listeners = new Set<() => void>()

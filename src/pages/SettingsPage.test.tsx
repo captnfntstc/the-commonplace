@@ -116,9 +116,9 @@ describe('SettingsPage Redesign & Content Updates', () => {
     expect(darkEvergreen).toBeDefined()
     expect(darkMidnight).toBeDefined()
 
-    // Default is dark mode (Espresso)
-    expect(getAppearanceSettings().theme).toBe('dark')
-    expect(darkEspresso.getAttribute('aria-checked')).toBe('true')
+    // Default is Sunrise (white)
+    expect(getAppearanceSettings().theme).toBe('white')
+    expect(lightSunrise.getAttribute('aria-checked')).toBe('true')
 
     // Switch to Matcha (light pairing)
     fireEvent.click(lightMatcha)

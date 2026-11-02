@@ -225,7 +225,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setVerificationNotice(`Verification email sent to ${currentEmail}.`)
     } catch (error: unknown) {
       setVerificationNotice(
-        (error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to send verification email.',
+        (error as Error)?.message || 'Unable to send verification email.',
       )
     } finally {
       setVerificationLoading(null)
@@ -254,7 +254,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setEmailEditorOpen(false)
     } catch (error) {
       setEmailChangeError(
-        (error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to start the email change.',
+        (error as Error)?.message || 'Unable to start the email change.',
       )
     } finally {
       setEmailChangeLoading(false)
@@ -485,7 +485,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setLinkedAccountNotice(`${provider?.name || 'Account'} ${shouldConnect ? 'connected' : 'disconnected'} successfully.`)
     } catch (error) {
       setAccountStatuses((prev) => ({ ...prev, [id]: current }))
-      setLinkedAccountError((error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to update this linked account.')
+      setLinkedAccountError((error as Error)?.message || 'Unable to update this linked account.')
     }
   }
 
@@ -522,7 +522,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setConfirmPassword('')
       setTimeout(() => setPasswordNotice(''), 3000)
     } catch (error) {
-      const message = (error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to update your password.'
+      const message = (error as Error)?.message || 'Unable to update your password.'
       setPasswordError(/credential|password is invalid/i.test(message) ? 'Your current password is incorrect.' : message)
     } finally {
       setPasswordLoading(false)
@@ -2090,7 +2090,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         <div className="modal-backdrop" onClick={() => !deactivationLoading && setDeactivationDialogOpen(false)}>
           <form
             ref={deactivationDialogRef}
-            className="settings-modal settings-deactivation-dialog"
+            className="settings-modal settings-deactivation-dialog confirm-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="deactivation-title"
@@ -2190,7 +2190,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         <div className="modal-backdrop" onClick={() => !deleteLoading && setDeleteDialogOpen(false)}>
           <div
             ref={deleteDialogRef}
-            className="settings-modal settings-delete-account-dialog"
+            className="settings-modal settings-delete-account-dialog confirm-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="delete-account-title"

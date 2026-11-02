@@ -329,7 +329,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           saveProfileCollections(userProfile.handle, ownedCollections)
         }
       })
-      .catch((error) => console.error('Unable to load collections from Firebase.', error))
+      .catch((error) => console.error('Unable to load collections from Supabase.', error))
     return () => {
       cancelled = true
     }
@@ -346,7 +346,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           saveSavedProfileCollections(currentUserHandle, collections)
         }
       })
-      .catch((error) => console.error('Unable to load saved collections from Firebase.', error))
+      .catch((error) => console.error('Unable to load saved collections from Supabase.', error))
     return () => {
       cancelled = true
     }
@@ -360,7 +360,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         setProfileCollections(collections)
         saveProfileCollections(userProfile.handle, collections)
       })
-      .catch((error) => console.error('Unable to sync collections to Firebase.', error))
+      .catch((error) => console.error('Unable to sync collections to Supabase.', error))
   }
 
   const persistSavedCollections = (nextCollections: ProfileCollection[]) => {
@@ -371,7 +371,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
         setViewerSavedProfileCollections(collections)
         saveSavedProfileCollections(currentUserHandle, collections)
       })
-      .catch((error) => console.error('Unable to sync saved collections to Firebase.', error))
+      .catch((error) => console.error('Unable to sync saved collections to Supabase.', error))
   }
 
   // ── Bookmark press animation ────────────────────────────────────────────────
@@ -405,6 +405,11 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   // ── Follow modal ────────────────────────────────────────────────────────────
   const [activeFollowModal, setActiveFollowModal] = useState<'followers' | 'following' | null>(null)
+  const [followSearch, setFollowSearch] = useState('')
+  const closeFollowModal = () => {
+    setActiveFollowModal(null)
+    setFollowSearch('')
+  }
   const collectionEditDialogRef = useAccessibleDialog<HTMLElement>({
     open: collectionComposerOpen && collectionComposerMode === 'edit',
     onClose: handleRequestCloseCollectionComposer,
@@ -446,7 +451,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   })
   const followDialogRef = useAccessibleDialog<HTMLDivElement>({
     open: Boolean(activeFollowModal),
-    onClose: () => setActiveFollowModal(null),
+    onClose: closeFollowModal,
   })
 
   // ── Inline Profile Editing State ───────────────────────────────────────────
@@ -503,7 +508,6 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     const saved = await persistProfileChanges()
     if (saved) setIsInlineProfileEditing(false)
   }
-  const [followSearch, setFollowSearch] = useState('')
   const [profileFollowLists, setProfileFollowLists] = useState<{
     followers: PublicAccountIdentity[]
     following: PublicAccountIdentity[]
@@ -554,6 +558,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       (p) => p.name.toLowerCase().includes(q) || p.handle.toLowerCase().includes(q)
     )
   }, [activeFollowList, followSearch])
+
+  const canViewFollowLists = Boolean(userProfile.showFollowLists) || isOwnProfile
+  const showFollowSearch = canViewFollowLists && activeFollowList.length > 0
 
   // ── Counts (switches dynamically based on catalogMode) ───────────────────────
   const displayedProfileCollections = collectionsCreatedByProfile(
@@ -1455,7 +1462,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
           className={`profile-page-banner ${isOwnProfile && onUpdateProfile ? 'is-inline-editable' : ''} ${userProfile.coverUrl ? 'has-custom-cover' : 'is-default-cover'}`}
           style={{
             backgroundImage: userProfile.coverUrl
-              ? `linear-gradient(135deg, rgba(var(--accent-rgb), 0.18), rgba(0, 0, 0, 0.52)), url('${userProfile.coverUrl}')`
+              ? `url('${userProfile.coverUrl}')`
               : undefined,
           }}
         >
@@ -3353,7 +3360,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       {/* ── Followers / Following Modal ── */}
       <AnimatePresence>
         {activeFollowModal && (
-          <div className="modal-backdrop" onClick={() => setActiveFollowModal(null)}>
+          <div className="modal-backdrop" onClick={closeFollowModal}>
             <motion.div
               ref={followDialogRef}
               className="follow-modal"
@@ -3361,191 +3368,238 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               aria-modal="true"
               aria-labelledby="follow-modal-title"
               tabIndex={-1}
-              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              initial={{ opacity: 0, scale: 0.97, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              exit={{ opacity: 0, scale: 0.97, y: 8 }}
               transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Modal header with tab switcher */}
-              <div className="follow-modal-header">
-                <div id="follow-modal-title" className="follow-modal-tabs" role="tablist" aria-label="Profile connections" onKeyDown={handleTabListKeyDown}>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={activeFollowModal === 'followers'}
-                    tabIndex={activeFollowModal === 'followers' ? 0 : -1}
-                    className={`follow-modal-tab ${activeFollowModal === 'followers' ? 'active' : ''}`}
-                    onClick={() => { setActiveFollowModal('followers'); setFollowSearch('') }}
-                  >
-                    Followers
-                    <span className="follow-tab-count">{dynamicFollowersList.length}</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={activeFollowModal === 'following'}
-                    tabIndex={activeFollowModal === 'following' ? 0 : -1}
-                    className={`follow-modal-tab ${activeFollowModal === 'following' ? 'active' : ''}`}
-                    onClick={() => { setActiveFollowModal('following'); setFollowSearch('') }}
-                  >
-                    Following
-                    <span className="follow-tab-count">{dynamicFollowingList.length}</span>
-                  </button>
+              <header className="follow-modal-header">
+                <div className="follow-modal-heading">
+                  <h2 id="follow-modal-title" className="follow-modal-title">Connections</h2>
+                  <p className="follow-modal-subtitle">@{userProfile.handle.replace(/^@/, '')}</p>
                 </div>
                 <button
                   type="button"
                   className="follow-modal-close"
-                  onClick={() => setActiveFollowModal(null)}
-                  aria-label="Close"
+                  onClick={closeFollowModal}
+                  aria-label="Close connections"
                 >
-                  <X size={16} />
+                  <X size={16} aria-hidden="true" />
+                </button>
+              </header>
+
+              <div
+                className="follow-modal-tabs"
+                role="tablist"
+                aria-label="Profile connections"
+                onKeyDown={handleTabListKeyDown}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeFollowModal === 'followers'}
+                  tabIndex={activeFollowModal === 'followers' ? 0 : -1}
+                  className={`follow-modal-tab ${activeFollowModal === 'followers' ? 'active' : ''}`}
+                  onClick={() => { setActiveFollowModal('followers'); setFollowSearch('') }}
+                >
+                  <span>Followers</span>
+                  <span className="follow-tab-count">{dynamicFollowersList.length}</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeFollowModal === 'following'}
+                  tabIndex={activeFollowModal === 'following' ? 0 : -1}
+                  className={`follow-modal-tab ${activeFollowModal === 'following' ? 'active' : ''}`}
+                  onClick={() => { setActiveFollowModal('following'); setFollowSearch('') }}
+                >
+                  <span>Following</span>
+                  <span className="follow-tab-count">{dynamicFollowingList.length}</span>
                 </button>
               </div>
 
-              {/* Search within follow list */}
-              <div className="follow-modal-search">
-                <Search size={14} />
-                <input
-                  type="text"
-                  placeholder={`Search ${activeFollowModal}…`}
-                  value={followSearch}
-                  onChange={(e) => setFollowSearch(e.target.value)}
-                  className="follow-search-input"
-                  autoFocus
-                />
-                {followSearch && (
-                  <button type="button" onClick={() => setFollowSearch('')} className="follow-search-clear">
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-
-              {/* List */}
-              {!userProfile.showFollowLists && !isOwnProfile ? (
-                <div className="follow-modal-locked">
-                  <Lock size={24} opacity={0.5} />
-                  <p>Followers and Following lists are hidden by this user.</p>
+              {showFollowSearch && (
+                <div className="follow-modal-search">
+                  <Search size={15} aria-hidden="true" />
+                  <input
+                    type="text"
+                    placeholder={`Search ${activeFollowModal}…`}
+                    value={followSearch}
+                    onChange={(e) => setFollowSearch(e.target.value)}
+                    className="follow-search-input"
+                    aria-label={`Search ${activeFollowModal}`}
+                  />
+                  {followSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setFollowSearch('')}
+                      className="follow-search-clear"
+                      aria-label="Clear search"
+                    >
+                      <X size={12} aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
-              ) : (
-                <div className="follow-modal-list">
-                  {filteredFollowList.length === 0 ? (
-                    <div className="follow-modal-empty">
-                      <p>No results for "{followSearch}"</p>
+              )}
+
+              <div className="follow-modal-body">
+                {!canViewFollowLists ? (
+                  <div className="follow-empty-state">
+                    <span className="follow-empty-icon">
+                      <Lock size={22} aria-hidden="true" />
+                    </span>
+                    <h3>Connections are private</h3>
+                    <p>
+                      @{userProfile.handle.replace(/^@/, '')} has chosen not to share their
+                      followers or following list.
+                    </p>
+                  </div>
+                ) : filteredFollowList.length === 0 ? (
+                  followSearch.trim() ? (
+                    <div className="follow-empty-state">
+                      <span className="follow-empty-icon">
+                        <Search size={22} aria-hidden="true" />
+                      </span>
+                      <h3>No matches found</h3>
+                      <p>
+                        Nothing matched “{followSearch.trim()}”. Try a different name or handle.
+                      </p>
+                      <button
+                        type="button"
+                        className="follow-empty-action"
+                        onClick={() => setFollowSearch('')}
+                      >
+                        Clear search
+                      </button>
                     </div>
                   ) : (
-                    filteredFollowList.map((person) => (
-                      <div
-                        key={person.id}
-                        className="follow-person-row"
-                        style={{ cursor: onSelectUserProfile ? 'pointer' : 'default' }}
-                        onClick={() => {
-                          if (onSelectUserProfile) {
-                            onSelectUserProfile(person.handle)
-                            setActiveFollowModal(null)
-                          }
-                        }}
-                      >
-                        <div className="follow-person-avatar-wrapper">
-                          {person.avatar ? (
-                            <img
-                              src={person.avatar}
-                              alt={person.name}
-                              className="follow-person-avatar-img"
-                              referrerPolicy="no-referrer"
-                            />
-                          ) : (
-                            <User aria-hidden="true" />
-                          )}
-                        </div>
-                        <div className="follow-person-info">
-                          {(() => {
-                            const cleanHandle = person.handle.replace(/^@/, '')
-                            const cleanName = (person.name || '').trim()
-                            const hasDistinctName = Boolean(
-                              cleanName &&
-                              cleanName.toLowerCase() !== `@${cleanHandle.toLowerCase()}` &&
-                              cleanName.toLowerCase() !== cleanHandle.toLowerCase()
-                            )
+                    <div className="follow-empty-state">
+                      <span className="follow-empty-icon">
+                        {activeFollowModal === 'followers'
+                          ? <Users size={22} aria-hidden="true" />
+                          : <UserPlus size={22} aria-hidden="true" />}
+                      </span>
+                      <h3>
+                        {activeFollowModal === 'followers'
+                          ? 'No followers yet'
+                          : 'Not following anyone yet'}
+                      </h3>
+                      <p>
+                        {activeFollowModal === 'followers'
+                          ? (isOwnProfile
+                            ? 'When people follow you, they’ll appear here.'
+                            : 'When people follow this reader, they’ll appear here.')
+                          : (isOwnProfile
+                            ? 'Accounts you follow will appear here.'
+                            : 'Accounts this reader follows will appear here.')}
+                      </p>
+                    </div>
+                  )
+                ) : (
+                  <div className="follow-modal-list" role="list">
+                    {filteredFollowList.map((person) => {
+                      const cleanHandle = person.handle.replace(/^@/, '')
+                      const cleanName = (person.name || '').trim()
+                      const hasDistinctName = Boolean(
+                        cleanName &&
+                        cleanName.toLowerCase() !== `@${cleanHandle.toLowerCase()}` &&
+                        cleanName.toLowerCase() !== cleanHandle.toLowerCase()
+                      )
+                      const isPersonFollowing = followedUserHandles.includes(person.handle)
+                      const isPersonRequested = followRequestedHandles.includes(person.handle)
+                      const isCurrentUser = person.handle === (currentUserProfile?.handle || 'jimboii')
+                      const displayHandle = cleanName || `@${cleanHandle}`
 
-                            return hasDistinctName ? (
-                              <>
+                      return (
+                        <div key={person.id} className="follow-person-row" role="listitem">
+                          <button
+                            type="button"
+                            className="follow-person-profile"
+                            onClick={() => {
+                              if (!onSelectUserProfile) return
+                              onSelectUserProfile(person.handle)
+                              closeFollowModal()
+                            }}
+                            disabled={!onSelectUserProfile}
+                          >
+                            <span className="follow-person-avatar-wrapper">
+                              {person.avatar ? (
+                                <img
+                                  src={person.avatar}
+                                  alt=""
+                                  className="follow-person-avatar-img"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <User aria-hidden="true" />
+                              )}
+                            </span>
+                            <span className="follow-person-info">
+                              {hasDistinctName ? (
+                                <>
+                                  <span className="follow-person-name">
+                                    <span>{cleanName}</span>
+                                    {person.isPrivate && <Lock size={11} aria-hidden="true" />}
+                                  </span>
+                                  <span className="follow-person-meta">@{cleanHandle}</span>
+                                </>
+                              ) : (
                                 <span className="follow-person-name">
-                                  <span>{cleanName}</span>
+                                  <span>@{cleanHandle}</span>
                                   {person.isPrivate && <Lock size={11} aria-hidden="true" />}
                                 </span>
-                                <span className="follow-person-meta">
-                                  @{cleanHandle}
-                                </span>
-                              </>
-                            ) : (
-                              <span className="follow-person-name">
-                                <span>@{cleanHandle}</span>
-                                {person.isPrivate && <Lock size={11} aria-hidden="true" />}
-                              </span>
-                            )
-                          })()}
-                        </div>
-                        <div className="follow-person-actions">
-                          {(() => {
-                            const isPersonFollowing = followedUserHandles.includes(person.handle)
-                            const isPersonRequested = followRequestedHandles.includes(person.handle)
-                            const isCurrentUser = person.handle === (currentUserProfile?.handle || 'jimboii')
+                              )}
+                            </span>
+                          </button>
 
-                            if (isCurrentUser) {
-                              return <span className="follow-you-badge">You</span>
-                            }
-                            if (person.isDeactivated) {
-                              return <span className="follow-you-badge">Unavailable</span>
-                            }
-                            if (isPersonFollowing) {
-                              return (
-                                <button
-                                  type="button"
-                                  className="follow-person-btn follow-btn-primary is-following"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    onToggleFollowUser?.(person.handle)
-                                  }}
-                                  title="Click to unfollow"
-                                >
-                                  <UserCheck size={13} />
-                                  <span>Following</span>
-                                </button>
-                              )
-                            }
-                            if (isPersonRequested) {
-                              return (
-                                <button
-                                  type="button"
-                                  className="follow-person-btn follow-btn-secondary"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    onToggleFollowRequest?.(person.handle)
-                                  }}
-                                  title="Click to cancel request"
-                                >
-                                  <UserCheck size={13} />
-                                  <span>Requested</span>
-                                </button>
-                              )
-                            }
-                            if (person.isPrivate) {
-                              return (
-                                <button
-                                  type="button"
-                                  className="follow-person-btn follow-btn-primary"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    onToggleFollowRequest?.(person.handle)
-                                  }}
-                                >
-                                  <UserPlus size={13} />
-                                  <span>Request</span>
-                                </button>
-                              )
-                            }
-                            return (
+                          <div className="follow-person-actions">
+                            {isCurrentUser ? (
+                              <span className="follow-you-badge">You</span>
+                            ) : person.isDeactivated ? (
+                              <span className="follow-you-badge">Unavailable</span>
+                            ) : isPersonFollowing ? (
+                              <button
+                                type="button"
+                                className="follow-person-btn follow-btn-primary is-following"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onToggleFollowUser?.(person.handle)
+                                }}
+                                title="Click to unfollow"
+                                aria-label={`Unfollow ${displayHandle}`}
+                              >
+                                <UserCheck size={13} aria-hidden="true" />
+                                <span>Following</span>
+                              </button>
+                            ) : isPersonRequested ? (
+                              <button
+                                type="button"
+                                className="follow-person-btn follow-btn-secondary"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onToggleFollowRequest?.(person.handle)
+                                }}
+                                title="Click to cancel request"
+                                aria-label={`Cancel follow request to ${displayHandle}`}
+                              >
+                                <UserCheck size={13} aria-hidden="true" />
+                                <span>Requested</span>
+                              </button>
+                            ) : person.isPrivate ? (
+                              <button
+                                type="button"
+                                className="follow-person-btn follow-btn-primary"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onToggleFollowRequest?.(person.handle)
+                                }}
+                                aria-label={`Request to follow ${displayHandle}`}
+                              >
+                                <UserPlus size={13} aria-hidden="true" />
+                                <span>Request</span>
+                              </button>
+                            ) : (
                               <button
                                 type="button"
                                 className="follow-person-btn follow-btn-primary"
@@ -3553,18 +3607,34 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                                   e.stopPropagation()
                                   onToggleFollowUser?.(person.handle)
                                 }}
+                                aria-label={`Follow ${displayHandle}`}
                               >
-                                <UserPlus size={13} />
+                                <UserPlus size={13} aria-hidden="true" />
                                 <span>Follow</span>
                               </button>
-                            )
-                          })()}
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <footer className="follow-modal-footer">
+                <span aria-live="polite">
+                  {!canViewFollowLists
+                    ? `Hidden by @${userProfile.handle.replace(/^@/, '')}`
+                    : followSearch.trim()
+                      ? `${filteredFollowList.length} of ${activeFollowList.length} shown`
+                      : activeFollowModal === 'followers'
+                        ? `${activeFollowList.length} ${activeFollowList.length === 1 ? 'follower' : 'followers'}`
+                        : `${activeFollowList.length} ${activeFollowList.length === 1 ? 'account' : 'accounts'}`}
+                </span>
+                <span className="follow-modal-footer-hint" aria-hidden="true">
+                  <kbd>Esc</kbd> to close
+                </span>
+              </footer>
             </motion.div>
           </div>
         )}

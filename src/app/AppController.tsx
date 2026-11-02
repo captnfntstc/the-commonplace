@@ -231,7 +231,7 @@ function initialViewFromPath(pathname: string): ActiveView {
 }
 
 function entrySyncErrorMessage(error: unknown) {
-  const message = (error as Error)?.message?.replace(/^Firebase:\s*/i, '').trim()
+  const message = (error as Error)?.message?.trim()
   return `Something went wrong. Error: ${message || 'Unable to publish the post.'}`
 }
 
@@ -299,7 +299,7 @@ function queueCloudSavedEntryChange(userId: string, entryId: string, saved: bool
       if (!result.queued) clearPendingSavedEntryChange(userId, entryId, saved)
     })
     .catch((error) => {
-      console.error('Unable to sync saved entry to Firebase; it will retry next time.', error)
+      console.error('Unable to sync saved entry to Supabase; it will retry next time.', error)
     })
   pendingSavedEntryWrites.set(queueKey, current)
   void current.finally(() => {
@@ -359,6 +359,8 @@ function loadLocalUserProfile(user?: AuthProfileSource | null) {
     const profile = stored
       ? { ...EMPTY_USER_PROFILE, ...JSON.parse(stored) } as UserProfileState
       : EMPTY_USER_PROFILE
+    if (profile.avatarUrl?.startsWith('firestore-media:')) profile.avatarUrl = ''
+    if (profile.coverUrl?.startsWith('firestore-media:')) profile.coverUrl = ''
     if (!user) return profile
     const isSyntheticGhostHandle = Boolean(user.uid && profile.handle?.endsWith(`_${user.uid.toLowerCase().slice(-6)}`))
     if (isSyntheticGhostHandle) {
@@ -467,7 +469,7 @@ export default function AppController() {
   const currentUserDisplayName = currentUser?.displayName
   const currentUserEmail = currentUser?.email
   const currentUserPhotoUrl = currentUser?.photoURL
-  const currentUserCreationTime = currentUser?.metadata?.creationTime
+  const currentUserCreationTime = currentUser?.metadata?.creationTime || undefined
   const authProfile = useMemo<AuthProfileSource | null>(() => currentUserId ? {
     uid: currentUserId,
     displayName: currentUserDisplayName,
@@ -906,7 +908,7 @@ export default function AppController() {
       })
       .catch((error) => {
         if (!cancelled) setCloudExternalProfile(null)
-        console.error('Unable to load the public Firebase profile.', error)
+        console.error('Unable to load the public profile.', error)
       })
     return () => {
       cancelled = true
@@ -986,7 +988,7 @@ export default function AppController() {
         entryTitle: target?.title || 'Untitled entry',
         dedupeKey: `post-like:${id}`,
       }).catch((error) => {
-        console.error('Unable to sync post like to Firebase.', error)
+        console.error('Unable to sync post like to Supabase.', error)
         setPostEngagements((previous) => ({
           ...previous,
           [id]: previousEngagement || { likeCount: 0, commentCount: 0, isLiked: wasLiked },
@@ -1026,7 +1028,7 @@ export default function AppController() {
             commentsDisabled: next.includes(id),
             dedupeKey: `post-commenting:${id}`,
           }).catch((error) => {
-          console.error('Unable to sync comment settings to Firebase.', error)
+          console.error('Unable to sync comment settings to Supabase.', error)
         })
       }
       return next
@@ -1060,7 +1062,7 @@ export default function AppController() {
       setBannerEmailNotice(`Sent to ${currentUser?.email ?? 'your email'}.`)
     } catch (error: unknown) {
       setBannerEmailNotice(
-        (error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Could not send verification email.',
+        (error as Error)?.message || 'Could not send verification email.',
       )
     } finally {
       setBannerSendingEmail(false)
@@ -1628,7 +1630,7 @@ export default function AppController() {
         })
           .then(() => undefined)
           .catch((error) => {
-            console.error('Unable to sync follow relationship to Firebase.', error)
+            console.error('Unable to sync follow relationship to Supabase.', error)
             setAppFeedback({ kind: 'error', message: 'The follow change could not be saved. Please try again.' })
           })
       }
@@ -1654,7 +1656,7 @@ export default function AppController() {
           requested: next.includes(clean),
           dedupeKey: `follow-request:${clean}`,
         }).catch((error) => {
-          console.error('Unable to sync follow request to Firebase.', error)
+          console.error('Unable to sync follow request to Supabase.', error)
         })
       }
       return next
@@ -1900,7 +1902,7 @@ export default function AppController() {
                 setAppFeedback({ kind: 'success', message: 'Posted successfully.' })
               }
             })
-            .catch((error) => console.error('Unable to recover local posts in Firebase; they will retry next time.', error))
+            .catch((error) => console.error('Unable to recover local posts in Supabase; they will retry next time.', error))
         }
 
         const cleanupNeeded = resetLegacyAccount
@@ -1916,11 +1918,11 @@ export default function AppController() {
             saveUserCloudState(cloudUserId, cloudStateCleanup),
             saveUserCollections(cloudUserId, 'created', cleanCreatedCollections),
             saveUserCollections(cloudUserId, 'saved', cleanSavedCollections),
-          ]).catch((error) => console.error('Unable to remove legacy demo data from Firebase.', error))
+          ]).catch((error) => console.error('Unable to remove legacy demo data from Supabase.', error))
         }
       })
       .catch((error) => {
-        console.error('Unable to hydrate Firebase data; continuing with local data.', error)
+        console.error('Unable to hydrate Supabase data; continuing with local data.', error)
         cloudHydratedUserRef.current = null
       })
       .finally(() => {
@@ -1943,7 +1945,7 @@ export default function AppController() {
       patch,
       dedupeKey: `cloud-state:${Object.keys(patch).sort().join(',')}`,
     }).catch((error) => {
-      console.error('Unable to sync account state to Firebase.', error)
+      console.error('Unable to sync account state to Supabase.', error)
     })
   }
 
@@ -2269,7 +2271,7 @@ export default function AppController() {
           clearPendingEntrySync(cloudUserId, pending.token)
         })
         .catch((error) => {
-          console.error('Unable to sync posts to Firebase; they will retry next time.', error)
+          console.error('Unable to sync posts to Supabase; they will retry next time.', error)
           if (publishedEntryId) {
             setAppFeedback(isConnectionError(error)
               ? {
@@ -2326,7 +2328,7 @@ export default function AppController() {
       setProfileMenuOpen(false)
       navigate('/login')
     } catch (error) {
-      setLogoutError((error as Error)?.message?.replace(/^Firebase:\s*/, '') || 'Unable to sign out. Please try again.')
+      setLogoutError((error as Error)?.message || 'Unable to sign out. Please try again.')
     } finally {
       setLogoutLoading(false)
     }

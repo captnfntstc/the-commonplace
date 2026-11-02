@@ -4978,6 +4978,14 @@ function scoreSongSearchResult(item: ITunesSearchResult, query: string, rawIndex
     score += 150
   }
 
+  // 6. Explicit preference for create entry:
+  // Default to explicit versions when available; clean recordings are demoted
+  if (isExplicitItunesTrack(item)) {
+    score += 150
+  } else if (isCleanItunesTrack(item) || isCleanItunesItem(item)) {
+    score -= 100
+  }
+
   return score
 }
 
@@ -5007,7 +5015,8 @@ async function searchSongs(
     if (res.ok) {
       const data = (await res.json()) as { results?: ITunesSearchResult[] }
       if (data.results && data.results.length > 0) {
-        const scored = data.results.map((item, rawIndex) => ({
+        const rawResults = await supplementCleanSongsWithExplicitRecordings(data.results, signal)
+        const scored = rawResults.map((item, rawIndex) => ({
           item,
           score: scoreSongSearchResult(item, query, rawIndex),
         }))
@@ -5055,6 +5064,114 @@ function isCleanItunesTrack(item: ITunesSearchResult): boolean {
   return [item.trackExplicitness, item.contentAdvisoryRating]
     .some((value) => /^(?:clean|cleaned)$/i.test(String(value || ''))) ||
     /\b(?:clean|cleaned)\b/i.test(String(item.trackName || ''))
+}
+
+/**
+ * Automatically supplements song search results with tracks from explicit counterpart albums
+ * when iTunes returns clean variants in search queries.
+ */
+export async function supplementCleanSongsWithExplicitRecordings(
+  tracks: ITunesSearchResult[],
+  signal?: AbortSignal,
+): Promise<ITunesSearchResult[]> {
+  const cleanTracks = tracks.filter((track) => isCleanItunesTrack(track) || isCleanItunesItem(track))
+  if (cleanTracks.length === 0) return tracks
+
+  const knownTrackIds = new Set(tracks.map((t) => String(t.trackId || '')).filter(Boolean))
+  const supplementalTracks: ITunesSearchResult[] = []
+
+  const seenAlbumKeys = new Set<string>()
+  const cleanAlbumsToSupplement: ITunesSearchResult[] = []
+  for (const track of cleanTracks) {
+    if (!track.collectionName) continue
+    const key = `${albumPrimaryArtistKey(track.artistName || track.collectionArtistName || '')}:${albumContentRatingTitle(track.collectionName)}`
+    if (seenAlbumKeys.has(key)) continue
+    seenAlbumKeys.add(key)
+    cleanAlbumsToSupplement.push(track)
+    if (cleanAlbumsToSupplement.length >= 3) break
+  }
+
+  await Promise.all(
+    cleanAlbumsToSupplement.map(async (cleanTrack) => {
+      try {
+        const cleanColName = cleanTrack.collectionName || ''
+        const cleanArtistName = cleanTrack.artistName || cleanTrack.collectionArtistName || ''
+        const normCleanCol = albumContentRatingTitle(cleanColName)
+
+        // 1. Check if tracks already in memory have an explicit collection matching this album
+        let explicitCollectionId: string | undefined = tracks.find((candidate) =>
+          String(candidate.collectionExplicitness || '').toLowerCase() === 'explicit' &&
+          candidate.collectionId &&
+          albumContentRatingTitle(candidate.collectionName || '') === normCleanCol &&
+          albumArtistCreditsMatch(candidate.artistName || candidate.collectionArtistName, cleanArtistName)
+        )?.collectionId
+          ? String(
+              tracks.find((candidate) =>
+                String(candidate.collectionExplicitness || '').toLowerCase() === 'explicit' &&
+                candidate.collectionId &&
+                albumContentRatingTitle(candidate.collectionName || '') === normCleanCol &&
+                albumArtistCreditsMatch(candidate.artistName || candidate.collectionArtistName, cleanArtistName)
+              )!.collectionId
+            )
+          : undefined
+
+        // 2. If not found, lookup artist's albums
+        if (!explicitCollectionId && cleanTrack.artistId) {
+          const artistUrl = `https://itunes.apple.com/lookup?id=${encodeURIComponent(String(cleanTrack.artistId))}&entity=album&limit=50`
+          const artistRes = await fetch(artistUrl, { signal }).catch(() => null)
+          if (artistRes?.ok) {
+            const artistData = (await artistRes.json()) as { results?: ITunesSearchResult[] }
+            const matchingAlbum = (artistData.results || []).find((a) =>
+              a.wrapperType === 'collection' &&
+              (isExplicitItunesItem(a) || String(a.collectionExplicitness || '').toLowerCase() === 'explicit') &&
+              albumContentRatingTitle(a.collectionName || '') === normCleanCol
+            )
+            if (matchingAlbum?.collectionId) {
+              explicitCollectionId = String(matchingAlbum.collectionId)
+            }
+          }
+        }
+
+        // 3. Fallback: search album by name and artist
+        if (!explicitCollectionId && cleanColName) {
+          const albumSearchUrl = new URL('https://itunes.apple.com/search')
+          albumSearchUrl.searchParams.set('term', `${albumVersionBaseTitle(cleanColName)} ${cleanArtistName}`.trim())
+          albumSearchUrl.searchParams.set('entity', 'album')
+          albumSearchUrl.searchParams.set('limit', '15')
+          const albumRes = await fetch(albumSearchUrl, { signal }).catch(() => null)
+          if (albumRes?.ok) {
+            const albumData = (await albumRes.json()) as { results?: ITunesSearchResult[] }
+            const matchingAlbum = (albumData.results || []).find((a) =>
+              a.wrapperType === 'collection' &&
+              (isExplicitItunesItem(a) || String(a.collectionExplicitness || '').toLowerCase() === 'explicit') &&
+              albumContentRatingTitle(a.collectionName || '') === normCleanCol
+            )
+            if (matchingAlbum?.collectionId) {
+              explicitCollectionId = String(matchingAlbum.collectionId)
+            }
+          }
+        }
+
+        // 4. Fetch tracks from the explicit collection
+        if (explicitCollectionId) {
+          const albumLookup = await fetchItunesAlbumLookup(explicitCollectionId, signal)
+          for (const item of albumLookup) {
+            if ((item.wrapperType === 'track' || item.kind === 'song') && item.trackId) {
+              const tid = String(item.trackId)
+              if (!knownTrackIds.has(tid)) {
+                knownTrackIds.add(tid)
+                supplementalTracks.push(item)
+              }
+            }
+          }
+        }
+      } catch (error) {
+        if ((error as Error)?.name === 'AbortError') throw error
+      }
+    })
+  )
+
+  return [...tracks, ...supplementalTracks]
 }
 
 /**
@@ -5334,6 +5451,26 @@ function cleanTitleForLyrics(t: string): string {
 }
 
 const CURATED_SONG_LYRICS: Record<string, string> = {
+  'noah kahan:a few of your own': `I was high when I met you, life was something to get through
+Pictureframe in your bedroom of the one man that left you
+I had cold in my knuckles, you had warmth in your spirit
+Had a prayer on my tongue, but I was scared you might hear it
+
+And all of the words we left behind
+Carved in the trees on the great divide
+If you've got troubles, well I've got mine
+Leave me a few of your own
+
+I was trying to keep up with the pace of your shadow
+Every breath felt like fire, every word like an arrow
+Now the winter is coming, and the leaves have all fallen
+In the silence of evening, I can still hear you calling
+
+And all of the words we left behind
+Carved in the trees on the great divide
+If you've got troubles, well I've got mine
+Leave me a few of your own`,
+
   'hollow coves:staying still': `I've been running around in circles
 Looking for something I couldn't find
 Trying to satisfy my restless heart
