@@ -697,7 +697,7 @@ const TrackRow: React.FC<{
           ...(resolvedExplicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
         ],
         communityRating: {
-          average: 4.8,
+          average: 0,
           count: 0,
           distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
         },
@@ -954,7 +954,7 @@ const MostQuotedSongCard: React.FC<{
         ...(resolvedYear ? [{ label: 'Release Year', value: resolvedYear }] : []),
       ],
       communityRating: {
-        average: 4.8,
+        average: 0,
         count: 0,
         distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
       },

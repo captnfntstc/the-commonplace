@@ -902,7 +902,7 @@ describe('universal media profile related content', () => {
         { label: 'Genre', value: 'Pop' },
         { label: 'Track Count', value: '13 Tracks' },
       ],
-      communityRating: { average: 4.8, count: 25, distribution: { 5: 20, 4: 5, 3: 0, 2: 0, 1: 0 } },
+      communityRating: { average: 0, count: 0, distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } },
       primaryCollection: {
         title: 'Tracks',
         items: [

@@ -328,7 +328,7 @@ export const ActivityPage: React.FC<ActivityPageProps> = ({
         type: (item.type as any) || 'book',
         provider: 'Manual',
         providerId: item.id,
-        rating: 5,
+        rating: 0,
         coverTone: 'gold',
         coverUrl: item.coverUrl,
         favoritePassage: '',

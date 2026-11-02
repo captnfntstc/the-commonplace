@@ -28,9 +28,9 @@ const theLastSignal: UniversalMediaEntity = {
     { label: 'Release Year', value: '2026' },
   ],
   communityRating: {
-    average: 4.6,
-    count: 184,
-    distribution: { 5: 68, 4: 23, 3: 7, 2: 2, 1: 0 },
+    average: 0,
+    count: 0,
+    distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
   },
   primaryCollection: {
     title: 'Cast',

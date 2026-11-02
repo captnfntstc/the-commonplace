@@ -140,7 +140,7 @@ export function metadataResultToUniversalEntity(entity: { id: string; metadataRe
       ...(result.explicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
     ]),
     communityRating: {
-      average: 4.7,
+      average: 0,
       count: 0,
       distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
     },

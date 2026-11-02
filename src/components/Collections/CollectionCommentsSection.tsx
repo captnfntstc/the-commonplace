@@ -77,44 +77,15 @@ function loadStoredComments(collectionId: string): CollectionComment[] {
     const raw = localStorage.getItem(getStorageKey(collectionId))
     if (raw) {
       const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed)) return parsed
+      if (Array.isArray(parsed)) {
+        return parsed.filter((c: CollectionComment) => !c.id.startsWith('seed-'))
+      }
     }
   } catch (err) {
     console.error('Failed to parse collection comments', err)
   }
 
-  // Initial seed comments
-  return [
-    {
-      id: `seed-1-${collectionId}`,
-      collectionId,
-      authorName: 'captnfntstc',
-      authorHandle: 'captnfntstc',
-      text: 'Such a curated and thoughtful collection. Love the pacing between the films and records here.',
-      createdAt: Date.now() - 1000 * 60 * 60 * 36,
-      likesCount: 3,
-      replies: [
-        {
-          id: `seed-r1-${collectionId}`,
-          authorName: 'The Commonplace Admin',
-          authorHandle: 'tcpadmin',
-          text: 'Completely agree, the sequence has incredible rhythm.',
-          createdAt: Date.now() - 1000 * 60 * 60 * 18,
-          likesCount: 1,
-        },
-      ],
-    },
-    {
-      id: `seed-2-${collectionId}`,
-      collectionId,
-      authorName: 'The Commonplace Admin',
-      authorHandle: 'tcpadmin',
-      text: 'Verified selection. Great commonplace notebook curation.',
-      createdAt: Date.now() - 1000 * 60 * 60 * 6,
-      likesCount: 2,
-      replies: [],
-    },
-  ]
+  return []
 }
 
 function saveStoredComments(collectionId: string, comments: CollectionComment[]) {

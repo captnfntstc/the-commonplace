@@ -1716,7 +1716,6 @@ export async function fetchItunesDiscography(
             subtitle: `${category.toUpperCase()} · ${year}`,
             artworkUrl: cover,
             artist: effectiveArtist,
-            rating: 4.9,
             year,
             genre: album.primaryGenreName || undefined,
             category,
@@ -1959,7 +1958,6 @@ export async function fetchItunesAlbumDetails(
         rank: song.trackNumber || idx + 1,
         title: song.trackName,
         subtitle: `${mins}:${secs} · Track ${song.trackNumber || idx + 1}`,
-        rating: 4.9,
         explicit: isExplicitItunesTrack(song),
       }
     })
@@ -2784,7 +2782,6 @@ export async function fetchItunesSongAppearances(
             subtitle: [artist, year].filter(Boolean).join(' · ') || 'Album',
             artworkUrl,
             artist,
-            rating: 4.8,
             year,
             genre: item.primaryGenreName,
             category,
