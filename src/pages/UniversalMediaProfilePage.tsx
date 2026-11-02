@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react'
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 import {
@@ -3386,6 +3386,233 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
     }
     return base
   }, [allCurrentChips, collectionItems, displayDescription, entity.type, isPortraitProfile])
+
+  const effectiveArtistName = useMemo(() => {
+    if (entity.type === 'artist' || entity.type === 'human') return entity.name
+    return (
+      allCurrentChips.find((c) => /artist/i.test(c.label))?.value ||
+      entity.metadataChips?.find((c) => /artist/i.test(c.label))?.value ||
+      ''
+    )
+  }, [allCurrentChips, entity.metadataChips, entity.name, entity.type])
+
+  const resolveChipAction = useCallback((chip: MetadataChip): {
+    isClickable: boolean
+    onClick?: () => void
+    ariaLabel?: string
+    title?: string
+  } => {
+    const rawLabel = chip.label.trim().toLowerCase()
+    const value = chip.value.trim()
+    if (!value) return { isClickable: false }
+
+    // Track Count / Tracks -> switches to the current album's tracks tab
+    if (/^(?:track count|tracks)$/i.test(rawLabel)) {
+      const hasTracksTab = tabs.some((t) => t.id === 'top_content')
+      if (hasTracksTab) {
+        return {
+          isClickable: true,
+          ariaLabel: `View tracks (${value})`,
+          title: `View tracks (${value})`,
+          onClick: () => {
+            setActiveTab('top_content')
+            const tabsContainer = document.querySelector('.media-tabs-container')
+            tabsContainer?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+          },
+        }
+      }
+    }
+
+    // Artist -> navigates to artist profile
+    if (rawLabel === 'artist') {
+      if (onNavigateToEntity && value.toLowerCase() !== 'various artists' && value.toLowerCase() !== 'unknown') {
+        return {
+          isClickable: true,
+          ariaLabel: `View artist profile for ${value}`,
+          title: `View artist profile for ${value}`,
+          onClick: () => {
+            const artistSlug = slug(value)
+            const canonicalHumanId = `human:${artistSlug}`
+            const artistEntity: UniversalMediaEntity = {
+              id: canonicalHumanId,
+              name: value,
+              type: 'human',
+              categoryLabel: 'Artist',
+              artworkUrl: '',
+              description: `Artist profile for ${value}.`,
+              metadataChips: [{ label: 'Profession', value: 'Artist' }],
+              humanProfile: {
+                canonicalId: canonicalHumanId,
+                context: 'artist',
+                primaryProfession: 'musician',
+                professions: ['musician'],
+                occupationLabels: ['Artist'],
+                providerIds: {},
+                capabilities: emptyHumanCapabilities({
+                  topSongs: true,
+                  discography: true,
+                }),
+              },
+              communityRating: { average: 0, count: 0, distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } },
+            }
+            onNavigateToEntity(canonicalHumanId, 'human', artistEntity)
+          },
+        }
+      }
+    }
+
+    // Author -> navigates to author profile
+    if (rawLabel === 'author') {
+      if (onNavigateToEntity && value.toLowerCase() !== 'unknown') {
+        return {
+          isClickable: true,
+          ariaLabel: `View author profile for ${value}`,
+          title: `View author profile for ${value}`,
+          onClick: () => {
+            const authorSlug = slug(value)
+            const canonicalHumanId = `human:${authorSlug}`
+            const authorEntity: UniversalMediaEntity = {
+              id: canonicalHumanId,
+              name: value,
+              type: 'human',
+              categoryLabel: 'Author',
+              artworkUrl: '',
+              description: `Author profile for ${value}.`,
+              metadataChips: [{ label: 'Profession', value: 'Author' }],
+              humanProfile: {
+                canonicalId: canonicalHumanId,
+                context: 'author',
+                primaryProfession: 'author',
+                professions: ['author'],
+                occupationLabels: ['Author'],
+                providerIds: {},
+                capabilities: emptyHumanCapabilities({
+                  publishedWorks: true,
+                  writing: true,
+                }),
+              },
+              communityRating: { average: 0, count: 0, distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } },
+            }
+            onNavigateToEntity(canonicalHumanId, 'human', authorEntity)
+          },
+        }
+      }
+    }
+
+    // Director -> navigates to director profile
+    if (rawLabel === 'director') {
+      if (onNavigateToEntity && value.toLowerCase() !== 'unknown') {
+        return {
+          isClickable: true,
+          ariaLabel: `View director profile for ${value}`,
+          title: `View director profile for ${value}`,
+          onClick: () => {
+            const directorSlug = slug(value)
+            const canonicalHumanId = `human:${directorSlug}`
+            const directorEntity: UniversalMediaEntity = {
+              id: canonicalHumanId,
+              name: value,
+              type: 'human',
+              categoryLabel: 'Director',
+              artworkUrl: '',
+              description: `Director profile for ${value}.`,
+              metadataChips: [{ label: 'Profession', value: 'Director' }],
+              humanProfile: {
+                canonicalId: canonicalHumanId,
+                context: 'director',
+                primaryProfession: 'director',
+                professions: ['director'],
+                occupationLabels: ['Director'],
+                providerIds: {},
+                capabilities: emptyHumanCapabilities({
+                  filmography: true,
+                  directing: true,
+                }),
+              },
+              communityRating: { average: 0, count: 0, distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } },
+            }
+            onNavigateToEntity(canonicalHumanId, 'human', directorEntity)
+          },
+        }
+      }
+    }
+
+    // Creator -> navigates to creator profile
+    if (rawLabel === 'creator') {
+      if (onNavigateToEntity && value.toLowerCase() !== 'unknown') {
+        return {
+          isClickable: true,
+          ariaLabel: `View creator profile for ${value}`,
+          title: `View creator profile for ${value}`,
+          onClick: () => {
+            const creatorSlug = slug(value)
+            const canonicalHumanId = `human:${creatorSlug}`
+            const creatorEntity: UniversalMediaEntity = {
+              id: canonicalHumanId,
+              name: value,
+              type: 'human',
+              categoryLabel: 'Creator',
+              artworkUrl: '',
+              description: `Creator profile for ${value}.`,
+              metadataChips: [{ label: 'Profession', value: 'Creator' }],
+              humanProfile: {
+                canonicalId: canonicalHumanId,
+                context: 'creator',
+                primaryProfession: 'showrunner',
+                professions: ['showrunner'],
+                occupationLabels: ['Creator'],
+                providerIds: {},
+                capabilities: emptyHumanCapabilities({
+                  filmography: true,
+                  creating: true,
+                }),
+              },
+              communityRating: { average: 0, count: 0, distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } },
+            }
+            onNavigateToEntity(canonicalHumanId, 'human', creatorEntity)
+          },
+        }
+      }
+    }
+
+    // Album (or Detail) -> navigates to album profile
+    if (rawLabel === 'album' || rawLabel === 'detail') {
+      if (onNavigateToEntity && value.toLowerCase() !== 'unknown') {
+        return {
+          isClickable: true,
+          ariaLabel: `View album profile for ${value}`,
+          title: `View album profile for ${value}`,
+          onClick: () => {
+            const matchingAppearance = liveSongAppearances?.find(
+              (a) => normalizeMusicEditionTitle(a.title) === normalizeMusicEditionTitle(value),
+            )
+            if (matchingAppearance) {
+              onNavigateToEntity(matchingAppearance.id, 'album')
+              return
+            }
+            const artistName = effectiveArtistName || ''
+            const albumSlug = slug(`${artistName}-${value}`)
+            const albumId = `album:linked:${albumSlug}`
+            const albumEntity: UniversalMediaEntity = {
+              id: albumId,
+              name: value,
+              type: 'album',
+              categoryLabel: 'Album',
+              artworkUrl: entity.artworkUrl || '',
+              description: `${value}${artistName ? ` by ${artistName}` : ''}.`,
+              metadataChips: [
+                ...(artistName ? [{ label: 'Artist', value: artistName }] : []),
+              ],
+              communityRating: { average: 0, count: 0, distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 } },
+            }
+            onNavigateToEntity(albumId, 'album', albumEntity)
+          },
+        }
+      }
+    }
+
+    return { isClickable: false }
+  }, [effectiveArtistName, entity.artworkUrl, liveSongAppearances, onNavigateToEntity, tabs])
   const explicitFromProfile = Boolean(entity.explicit) ||
     Boolean((liveAlbumChips || entity.metadataChips).some((chip) =>
       chip.label.toLowerCase() === 'explicit' && chip.value.toLowerCase() === 'yes',
@@ -3682,12 +3909,30 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
 
             {/* Context-aware Metadata Chips (Entity Information Center Anchor) */}
             <div className={`media-chips-row${entity.type === 'song' ? ' is-single-line' : ''}`}>
-              {chipsToDisplay.map((chip, idx) => (
-                <div key={idx} className="media-metadata-chip">
-                  <span className="chip-label">{chip.label}:</span>
-                  <span className="chip-value">{chip.value}</span>
-                </div>
-              ))}
+              {chipsToDisplay.map((chip, idx) => {
+                const action = resolveChipAction(chip)
+                if (action.isClickable) {
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      className="media-metadata-chip is-interactive"
+                      onClick={action.onClick}
+                      aria-label={action.ariaLabel}
+                      title={action.title}
+                    >
+                      <span className="chip-label">{chip.label}:</span>
+                      <span className="chip-value is-clickable">{chip.value}</span>
+                    </button>
+                  )
+                }
+                return (
+                  <div key={idx} className="media-metadata-chip">
+                    <span className="chip-label">{chip.label}:</span>
+                    <span className="chip-value">{chip.value}</span>
+                  </div>
+                )
+              })}
             </div>
 
             <div className="media-hero-body-block">
@@ -4192,23 +4437,17 @@ export const UniversalMediaProfilePage: React.FC<UniversalMediaProfilePageProps>
             </div>
           ) : (
             <div className="top-content-list">
-              {visibleTopItems.map((item) => {
-                const effectiveArtistName =
-                  entity.type === 'artist' || entity.type === 'human'
-                    ? entity.name
-                    : entity.metadataChips?.find((c) => /artist/i.test(c.label))?.value || ''
-                return (
-                  <TrackRow
-                    key={item.id}
-                    item={item}
-                    artistName={effectiveArtistName}
-                    parentArtworkUrl={entity.type === 'album' ? displayArtwork : entity.artworkUrl}
-                    onNavigateToEntity={onNavigateToEntity}
-                    entityType={topContentEntityType}
-                    useParentArtwork={entity.type === 'album'}
-                  />
-                )
-              })}
+              {visibleTopItems.map((item) => (
+                <TrackRow
+                  key={item.id}
+                  item={item}
+                  artistName={effectiveArtistName}
+                  parentArtworkUrl={entity.type === 'album' ? displayArtwork : entity.artworkUrl}
+                  onNavigateToEntity={onNavigateToEntity}
+                  entityType={topContentEntityType}
+                  useParentArtwork={entity.type === 'album'}
+                />
+              ))}
             </div>
           )}
         </section>

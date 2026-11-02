@@ -886,4 +886,88 @@ describe('universal media profile related content', () => {
     const tileButton = screen.getByRole('button', { name: /Open Amsterdam/i })
     expect(tileButton.querySelector('.media-title-overlay')).toBeNull()
   })
+
+  it('makes artist and track count metadata chips clickable while keeping release year and genre static', async () => {
+    const onNavigateToEntity = vi.fn()
+    const albumWithChips: UniversalMediaEntity = {
+      id: 'album:fixture:guts',
+      name: 'GUTS',
+      type: 'album',
+      categoryLabel: 'Album',
+      artworkUrl: 'https://example.com/guts.jpg',
+      description: 'Album profile for GUTS by Olivia Rodrigo.',
+      metadataChips: [
+        { label: 'Artist', value: 'Olivia Rodrigo' },
+        { label: 'Release Year', value: '2026' },
+        { label: 'Genre', value: 'Pop' },
+        { label: 'Track Count', value: '13 Tracks' },
+      ],
+      communityRating: { average: 4.8, count: 25, distribution: { 5: 20, 4: 5, 3: 0, 2: 0, 1: 0 } },
+      primaryCollection: {
+        title: 'Tracks',
+        items: [
+          { id: 'song:1', rank: 1, title: 'all-american bitch', subtitle: 'Olivia Rodrigo', artworkUrl: '' },
+          { id: 'song:2', rank: 2, title: 'bad idea right?', subtitle: 'Olivia Rodrigo', artworkUrl: '' },
+        ],
+      },
+    }
+
+    render(
+      <UniversalMediaProfilePage
+        entity={albumWithChips}
+        communityEntries={[]}
+        onBack={vi.fn()}
+        onNavigateToEntity={onNavigateToEntity}
+      />,
+    )
+
+    await screen.findByRole('heading', { name: 'GUTS', level: 1 })
+
+    // Check non-clickable chips (Release Year, Genre): they should NOT be buttons
+    const chipsRow = document.querySelector('.media-chips-row')
+    expect(chipsRow).toBeInTheDocument()
+
+    const genreChip = Array.from(chipsRow?.querySelectorAll('.media-metadata-chip') || []).find((c) =>
+      c.querySelector('.chip-label')?.textContent?.includes('Genre'),
+    )
+    expect(genreChip).not.toHaveClass('is-interactive')
+    const genreValue = genreChip?.querySelector('.chip-value')
+    expect(genreValue?.tagName.toLowerCase()).toBe('span')
+    expect(genreValue?.textContent).toBe('Pop')
+
+    const yearChip = Array.from(chipsRow?.querySelectorAll('.media-metadata-chip') || []).find((c) =>
+      c.querySelector('.chip-label')?.textContent?.includes('Release Year'),
+    )
+    expect(yearChip).not.toHaveClass('is-interactive')
+    const yearValue = yearChip?.querySelector('.chip-value')
+    expect(yearValue?.tagName.toLowerCase()).toBe('span')
+    expect(yearValue?.textContent).toBe('2026')
+
+    // Click Artist chip -> navigates to artist profile
+    const artistButton = screen.getByRole('button', { name: /View artist profile for Olivia Rodrigo/i })
+    expect(artistButton).toBeInTheDocument()
+    fireEvent.click(artistButton)
+
+    expect(onNavigateToEntity).toHaveBeenCalledWith(
+      'human:olivia-rodrigo',
+      'human',
+      expect.objectContaining({
+        id: 'human:olivia-rodrigo',
+        name: 'Olivia Rodrigo',
+        type: 'human',
+      }),
+    )
+
+    // Check initial active tab is Overview
+    const tracksTabButton = screen.getByRole('button', { name: 'Tracks' })
+    expect(tracksTabButton).not.toHaveClass('active')
+
+    // Click Track Count chip -> switches to Tracks tab
+    const trackCountButton = screen.getByRole('button', { name: /View tracks \(13 Tracks\)/i })
+    expect(trackCountButton).toBeInTheDocument()
+    fireEvent.click(trackCountButton)
+
+    // The Tracks tab should now be active
+    expect(tracksTabButton).toHaveClass('active')
+  })
 })

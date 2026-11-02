@@ -20758,6 +20758,32 @@ code.detail-value {
   font-size: 13px;
 }
 
+.media-metadata-chip.is-interactive {
+  cursor: pointer;
+  border-radius: 4px;
+  outline: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: opacity 120ms ease;
+}
+
+.media-metadata-chip.is-interactive:hover .chip-value,
+.media-metadata-chip.is-interactive:hover .chip-value.is-clickable {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+.media-metadata-chip.is-interactive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .media-hero-actions {
   display: flex;
   align-items: center;
