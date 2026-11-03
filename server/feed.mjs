@@ -24,6 +24,15 @@ function cleanText(value, maxLength = 100) {
   return String(value || '').trim().toLowerCase().slice(0, maxLength)
 }
 
+function cleanImageUrl(url) {
+  if (!url || typeof url !== 'string') return ''
+  const trimmed = url.trim()
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:') || trimmed.startsWith('/')) {
+    return trimmed
+  }
+  return ''
+}
+
 function cleanMap(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   return Object.fromEntries(Object.entries(value)
@@ -158,11 +167,11 @@ function isDeactivated(profile, now = Date.now()) {
   return !reactivatesAt || now < reactivatesAt
 }
 
-export function canViewFeedCandidate(profile, ownerId, viewerId, mutualIds, now = Date.now()) {
+export function canViewFeedCandidate(profile, ownerId, viewerId, followedIds, now = Date.now()) {
   if (!profile || isDeactivated(profile, now)) return false
   if (ownerId === viewerId) return true
   if (profile.isPrivate !== true) return true
-  return mutualIds.has(ownerId)
+  return followedIds.has(ownerId)
 }
 
 function displayName(profile, handle) {
@@ -255,7 +264,7 @@ async function loadFeedPage(adminDb, viewerId, category, cursor, now = Date.now(
     let reachedWindowLimit = false
     for (const candidate of candidates) {
       const profile = profiles.get(candidate.ownerId)
-      if (!canViewFeedCandidate(profile, candidate.ownerId, viewerId, followContext.mutualIds, now)) continue
+      if (!canViewFeedCandidate(profile, candidate.ownerId, viewerId, followContext.followedIds, now)) continue
       const isOwn = candidate.ownerId === viewerId
       const isPrivate = profile.isPrivate === true
       const handle = cleanText(profile.handle, 20)
@@ -363,15 +372,23 @@ async function loadFeedPageSupabase(supabaseAdmin, viewerId, category, cursor) {
     query = query.lt('created_at', cursor.createdAt)
   }
 
-  const { data: entries, error } = await query
+  const [{ data: entries, error }, { data: followsData }] = await Promise.all([
+    query,
+    viewerId
+      ? supabaseAdmin.from('follows').select('following_id').eq('follower_id', viewerId)
+      : Promise.resolve({ data: [] }),
+  ])
   if (error) throw error
+
+  const followedIds = new Set((followsData || []).map((r) => r.following_id))
 
   const visibleEntries = (entries || []).filter((row) => {
     const profile = row.profiles
     if (!profile || profile.account_status === 'deactivated') return false
     const isOwn = row.owner_id === viewerId
     if (isOwn) return true
-    if (profile.is_private) return false
+    const isFollowed = followedIds.has(row.owner_id)
+    if (profile.is_private && !isFollowed) return false
     return row.visibility !== 'private'
   })
 
@@ -399,23 +416,26 @@ async function loadFeedPageSupabase(supabaseAdmin, viewerId, category, cursor) {
   }
 
   const items = visibleEntries.map((row) => {
+    const meta = row.metadata || {}
     const profile = row.profiles || {}
     const authorName =
       profile.name ||
       (profile.first_name ? `${profile.first_name} ${profile.last_name || ''}`.trim() : '') ||
       profile.handle ||
+      meta.authorName ||
       'reader'
     return {
+      ...meta,
       id: row.id,
       type: row.type,
       title: row.title,
       creator: row.creator || '',
       year: row.year || '',
-      genre: row.genre || '',
+      genre: row.genre || meta.genre || '',
       summary: row.summary || '',
-      coverUrl: row.cover_url || '',
+      coverUrl: cleanImageUrl(row.cover_url) || cleanImageUrl(meta.coverUrl) || '',
       coverTone: row.cover_tone || undefined,
-      artworkUrl: row.artwork_url || '',
+      artworkUrl: cleanImageUrl(row.artwork_url) || cleanImageUrl(meta.artworkUrl) || '',
       rating: row.rating ? Number(row.rating) : 0,
       quote: row.quote || '',
       favoritePassage: row.favorite_passage || '',
@@ -431,9 +451,9 @@ async function loadFeedPageSupabase(supabaseAdmin, viewerId, category, cursor) {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       ownerId: row.owner_id,
-      authorHandle: profile.handle || '',
+      authorHandle: profile.handle || meta.authorHandle || '',
       authorName,
-      authorAvatarUrl: profile.avatar_url || '',
+      authorAvatarUrl: cleanImageUrl(profile.avatar_url) || cleanImageUrl(meta.authorAvatarUrl) || '',
       visibility: row.visibility || 'public',
       engagement: {
         likeCount: likesMap.get(row.id) || 0,

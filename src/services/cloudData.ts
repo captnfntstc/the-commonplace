@@ -25,12 +25,13 @@ function mapSupabaseEntryToClientEntry(row: Record<string, any>): Entry {
     (profile.handle ? `@${profile.handle}` : '')
 
   return {
+    ...meta,
     id: String(row.id),
     type: row.type,
     title: row.title,
     creator: row.creator || '',
     year: row.year || '',
-    genre: row.genre || '',
+    genre: row.genre || meta.genre || '',
     summary: row.summary || '',
     coverUrl: cleanImageUrl(row.cover_url) || cleanImageUrl(meta.coverUrl) || '',
     coverTone: row.cover_tone || undefined,
@@ -52,7 +53,6 @@ function mapSupabaseEntryToClientEntry(row: Record<string, any>): Entry {
     authorHandle: profile.handle || meta.authorHandle || '',
     authorName: authorName || meta.authorName || '',
     authorAvatarUrl: cleanImageUrl(profile.avatar_url) || cleanImageUrl(meta.authorAvatarUrl) || '',
-    ...meta,
   } as Entry
 }
 
@@ -196,7 +196,7 @@ export function canUseCloudData(userId?: string | null) {
   return Boolean(isSupabaseConfigured && userId)
 }
 
-function cleanHandle(value: string) {
+export function cleanHandle(value: string) {
   return value.replace(/^@/, '').trim().toLowerCase()
 }
 
@@ -466,6 +466,34 @@ export function saveUserEntries(
   return current
 }
 
+export async function loadProfileContentViaApi(userIdOrHandle: string): Promise<{
+  isContentLocked: boolean
+  entries: Entry[]
+  collections: ProfileCollection[]
+} | null> {
+  const token = await getSessionAccessToken()
+  const isId = /^[0-9a-f-]{36}$/i.test(userIdOrHandle)
+  const param = isId ? `userId=${encodeURIComponent(userIdOrHandle)}` : `handle=${encodeURIComponent(cleanHandle(userIdOrHandle))}`
+  try {
+    const res = await fetch(`/api/profiles/content?${param}`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    })
+    if (res.ok) {
+      const data = await res.json()
+      return {
+        isContentLocked: Boolean(data.isContentLocked),
+        entries: Array.isArray(data.entries) ? data.entries : [],
+        collections: Array.isArray(data.collections) ? data.collections : [],
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return null
+}
+
 export async function loadUserEntries(userId: string): Promise<Entry[]> {
   if (!canUseCloudData(userId)) return []
 
@@ -475,9 +503,15 @@ export async function loadUserEntries(userId: string): Promise<Entry[]> {
       .select('*, profiles:owner_id (*)')
       .eq('owner_id', userId)
       .order('created_at', { ascending: false })
-    if (!error && data) {
+    if (!error && data && data.length > 0) {
       return data.map((row) => mapSupabaseEntryToClientEntry(row))
     }
+  }
+
+  // Fallback to server endpoint if direct client query returned 0 rows (handles private profiles where viewer is a follower)
+  const serverContent = await loadProfileContentViaApi(userId).catch(() => null)
+  if (serverContent && serverContent.entries.length > 0) {
+    return serverContent.entries
   }
 
   return []
@@ -494,6 +528,22 @@ export async function loadPostEntry(postId: string): Promise<Entry | null> {
       return mapSupabaseEntryToClientEntry(data)
     }
   }
+
+  const token = await getSessionAccessToken()
+  if (token && postId) {
+    try {
+      const res = await fetch(`/api/profiles/entry?id=${encodeURIComponent(postId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const payload = await res.json()
+        if (payload?.entry) return payload.entry
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   return null
 }
 
@@ -545,20 +595,57 @@ export async function loadUserCloudState(userId: string): Promise<UserCloudState
   if (!canUseCloudData(userId)) return DEFAULT_CLOUD_STATE
 
   if (isSupabaseConfigured) {
-    const { data, error } = await supabase
-      .from('user_cloud_state')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle()
+    const [{ data, error }, followsRes, requestsRes] = await Promise.all([
+      supabase.from('user_cloud_state').select('*').eq('user_id', userId).maybeSingle(),
+      supabase.from('follows').select('following_id, target_handle').eq('follower_id', userId),
+      supabase.from('follow_requests').select('target_id').eq('requester_id', userId).eq('status', 'pending'),
+    ])
+
+    const followingIds = (followsRes.data || []).map((r: any) => String(r.following_id || '')).filter(Boolean)
+    const requestTargetIds = (requestsRes.data || []).map((r: any) => String(r.target_id || '')).filter(Boolean)
+
+    const idsToResolve = Array.from(new Set([...followingIds, ...requestTargetIds]))
+    const profileMap = new Map<string, string>()
+    if (idsToResolve.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, handle')
+        .in('id', idsToResolve)
+      if (profiles) {
+        profiles.forEach((p: any) => {
+          if (p.id && p.handle) profileMap.set(p.id, cleanHandle(p.handle))
+        })
+      }
+    }
+
+    const authoritativeFollowing = Array.from(new Set([
+      ...(followsRes.data || []).map((r: any) => cleanHandle(r.target_handle || '')).filter(Boolean),
+      ...followingIds.map((id) => profileMap.get(id) || '').filter(Boolean),
+    ]))
+    const authoritativeRequested = requestTargetIds.map((id) => profileMap.get(id) || '').filter(Boolean)
+
     if (!error && data) {
+      const rawFollowed = Array.isArray(data.followed_user_handles) ? data.followed_user_handles.map(cleanHandle) : []
+      const mergedFollowed = Array.from(new Set([...rawFollowed, ...authoritativeFollowing]))
+      const finalRequested = authoritativeRequested.filter((h) => !mergedFollowed.includes(h))
+
       return {
         likedEntryIds: Array.isArray(data.liked_entry_ids) ? data.liked_entry_ids : [],
         savedEntryIds: Array.isArray(data.saved_entries) ? (data.saved_entries as string[]) : [],
         disabledCommentEntryIds: Array.isArray(data.disabled_comment_entry_ids) ? data.disabled_comment_entry_ids : [],
-        followedUserHandles: Array.isArray(data.followed_user_handles) ? data.followed_user_handles : [],
-        followRequestedHandles: Array.isArray(data.follow_requested_handles) ? data.follow_requested_handles : [],
+        followedUserHandles: mergedFollowed,
+        followRequestedHandles: finalRequested,
         notifications: [],
       }
+    }
+
+    return {
+      likedEntryIds: [],
+      savedEntryIds: [],
+      disabledCommentEntryIds: [],
+      followedUserHandles: authoritativeFollowing,
+      followRequestedHandles: authoritativeRequested.filter((h) => !authoritativeFollowing.includes(h)),
+      notifications: [],
     }
   }
 
@@ -789,6 +876,14 @@ export type ProfileFollowLists = {
   following: PublicAccountIdentity[]
 }
 
+export const FOLLOWS_CHANGED_EVENT = 'the-commonplace:follows-changed'
+
+export function notifyFollowsChanged() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(FOLLOWS_CHANGED_EVENT))
+  }
+}
+
 export function subscribeProfileFollowLists(
   profileHandle: string,
   onChange: (lists: ProfileFollowLists) => void,
@@ -844,7 +939,32 @@ export function subscribeProfileFollowLists(
           void loadLists()
         })
         .subscribe()
-      subscriptions = [() => void supabase.removeChannel(channel)]
+      subscriptions.push(() => void supabase.removeChannel(channel))
+
+      if (typeof window !== 'undefined') {
+        const handleFollowsChanged = () => {
+          if (active) void loadLists()
+        }
+        window.addEventListener(FOLLOWS_CHANGED_EVENT, handleFollowsChanged)
+        subscriptions.push(() => window.removeEventListener(FOLLOWS_CHANGED_EVENT, handleFollowsChanged))
+
+        const intervalId = window.setInterval(() => {
+          if (active) void loadLists()
+        }, 30000)
+        subscriptions.push(() => window.clearInterval(intervalId))
+
+        const handleFocus = () => {
+          if (active && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+            void loadLists()
+          }
+        }
+        window.addEventListener('visibilitychange', handleFocus)
+        window.addEventListener('focus', handleFocus)
+        subscriptions.push(() => {
+          window.removeEventListener('visibilitychange', handleFocus)
+          window.removeEventListener('focus', handleFocus)
+        })
+      }
     }
   }).catch((error) => {
     console.error('Unable to find the profile for follow lists.', error)
@@ -855,6 +975,20 @@ export function subscribeProfileFollowLists(
     active = false
     subscriptions.forEach((unsubscribe) => unsubscribe())
   }
+}
+
+export async function isViewerFollowing(viewerId: string, targetId: string): Promise<boolean> {
+  if (!canUseCloudData(viewerId) || !targetId) return false
+  if (isSupabaseConfigured) {
+    const { data } = await supabase
+      .from('follows')
+      .select('following_id')
+      .eq('follower_id', viewerId)
+      .eq('following_id', targetId)
+      .maybeSingle()
+    return Boolean(data)
+  }
+  return false
 }
 
 export async function hasMutualFollow(viewerId: string, targetId: string) {
@@ -911,8 +1045,8 @@ export async function loadPublicUserByHandle(handle: string, viewerId?: string |
 
     const isViewer = Boolean(viewerId && viewerId === userId)
     const isPrivate = Boolean(profileRow.is_private)
-    const mutualFollow = isViewer || (viewerId ? await hasMutualFollow(viewerId, userId) : false)
-    const isContentLocked = isPrivate && !mutualFollow
+    const isFollower = isViewer || (viewerId ? await isViewerFollowing(viewerId, userId) : false)
+    const isContentLocked = isPrivate && !isFollower
 
     const publicProfile: UserProfileState = {
       firstName: String(profileRow.first_name || ''),
@@ -942,10 +1076,20 @@ export async function loadPublicUserByHandle(handle: string, viewerId?: string |
       }
     }
 
-    const [loadedEntries, collections] = await Promise.all([
+    let [loadedEntries, collections] = await Promise.all([
       loadUserEntries(userId),
       loadUserCollections(userId, 'created').catch(() => []),
     ])
+
+    if (loadedEntries.length === 0 && (isFollower || !isPrivate)) {
+      const serverContent = await loadProfileContentViaApi(userId).catch(() => null)
+      if (serverContent && serverContent.entries.length > 0) {
+        loadedEntries = serverContent.entries
+      }
+      if (serverContent && serverContent.collections.length > 0) {
+        collections = serverContent.collections
+      }
+    }
     const ownedCollections = collectionsCreatedByProfile(collections, publicProfile.handle)
     const entries = loadedEntries.map((entry) => ({
       ...entry,
@@ -1065,6 +1209,7 @@ export async function saveFollowRelationship(
       }
     }
   }
+  notifyFollowsChanged()
 }
 
 export async function loadMutualFollowers(userId: string): Promise<PublicUserSummary[]> {
@@ -1111,17 +1256,12 @@ export function subscribeMutualFollowIds(
     let cancelled = false
     const loadMutuals = async () => {
       try {
-        const [outgoingRes, incomingRes] = await Promise.all([
-          supabase.from('follows').select('following_id').eq('follower_id', userId),
-          supabase.from('follows').select('follower_id').eq('following_id', userId),
-        ])
+        const outgoingRes = await supabase.from('follows').select('following_id').eq('follower_id', userId)
         if (cancelled) return
-        const outgoing = new Set((outgoingRes.data || []).map((r: any) => String(r.following_id || '')).filter(Boolean))
-        const incoming = new Set((incomingRes.data || []).map((r: any) => String(r.follower_id || '')).filter(Boolean))
-        const mutuals = [...outgoing].filter((id) => incoming.has(id))
-        onChange(mutuals)
+        const outgoing = (outgoingRes.data || []).map((r: any) => String(r.following_id || '')).filter(Boolean)
+        onChange(outgoing)
       } catch (err) {
-        console.error('Unable to load mutual follows from Supabase.', err)
+        console.error('Unable to load follows from Supabase.', err)
       }
     }
     void loadMutuals()
@@ -1275,15 +1415,75 @@ export function subscribeUserNotifications(
           .order('created_at', { ascending: false })
         if (cancelled) return
         if (!error && data) {
-          const notifications: AppNotification[] = data.map((row: any) => ({
-            id: row.id,
-            type: row.type,
-            read: Boolean(row.read),
-            createdAt: row.created_at,
-            actorId: row.actor_id,
-            entryId: row.entry_id,
-            commentId: row.comment_id,
-          }))
+          const actorIds = Array.from(new Set(data.map((row: any) => row.actor_id).filter(Boolean)))
+          const entryIds = Array.from(new Set(data.map((row: any) => row.entry_id).filter(Boolean)))
+          const commentIds = Array.from(new Set(data.map((row: any) => row.comment_id).filter(Boolean)))
+
+          const [profilesRes, entriesRes, commentsRes] = await Promise.all([
+            actorIds.length > 0
+              ? supabase.from('profiles').select('id, handle, name, first_name, last_name, avatar_url, show_full_name').in('id', actorIds)
+              : Promise.resolve({ data: [] }),
+            entryIds.length > 0
+              ? supabase.from('entries').select('id, title').in('id', entryIds)
+              : Promise.resolve({ data: [] }),
+            commentIds.length > 0
+              ? supabase.from('entry_comments').select('id, content').in('id', commentIds)
+              : Promise.resolve({ data: [] }),
+          ])
+          if (cancelled) return
+
+          const profileMap = new Map<string, { name: string; handle: string; avatarUrl: string }>()
+          if (profilesRes.data) {
+            profilesRes.data.forEach((p: any) => {
+              const handle = cleanHandle(p.handle || '')
+              const name = p.show_full_name === false
+                ? (String(p.first_name || '').trim() || handle)
+                : (String(p.name || '').trim() || `${String(p.first_name || '')} ${String(p.last_name || '')}`.trim() || handle)
+              profileMap.set(p.id, {
+                name: name || `@${handle}` || 'Someone',
+                handle,
+                avatarUrl: p.avatar_url || '',
+              })
+            })
+          }
+
+          const entryMap = new Map<string, string>()
+          if (entriesRes.data) {
+            entriesRes.data.forEach((e: any) => {
+              if (e.id && e.title) entryMap.set(e.id, e.title)
+            })
+          }
+
+          const commentMap = new Map<string, string>()
+          if (commentsRes.data) {
+            commentsRes.data.forEach((c: any) => {
+              if (c.id && c.content) commentMap.set(c.id, c.content)
+            })
+          }
+
+          const notifications: AppNotification[] = data.map((row: any) => {
+            const actor = row.actor_id ? profileMap.get(row.actor_id) : undefined
+            const effectiveType =
+              row.type === 'follow' && String(row.interaction_id || '').startsWith('follow_request:')
+                ? 'follow_request'
+                : row.type === 'follow' && String(row.interaction_id || '').startsWith('follow_accept:')
+                  ? 'follow_accept'
+                  : row.type
+            return {
+              id: row.id,
+              type: effectiveType,
+              read: Boolean(row.read),
+              createdAt: row.created_at,
+              actorId: row.actor_id,
+              actorName: actor?.name || row.actor_name || undefined,
+              actorHandle: actor?.handle || (row.actor_handle ? cleanHandle(row.actor_handle) : undefined),
+              actorAvatarUrl: actor?.avatarUrl || row.actor_avatar_url || undefined,
+              postId: row.entry_id,
+              entryTitle: (row.entry_id ? entryMap.get(row.entry_id) : undefined) || row.entry_title || undefined,
+              commentSnippet: (row.comment_id ? commentMap.get(row.comment_id) : undefined) || row.comment_snippet || undefined,
+              interactionId: row.interaction_id,
+            }
+          })
           onChange(notifications)
         }
       } catch (err) {
@@ -1295,10 +1495,40 @@ export function subscribeUserNotifications(
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${userId}` }, () => {
         void loadNotifications()
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'follow_requests', filter: `target_id=eq.${userId}` }, () => {
+        void loadNotifications()
+      })
       .subscribe()
+
+    let removeListeners = () => {}
+    if (typeof window !== 'undefined') {
+      const handleFollowsChanged = () => {
+        if (!cancelled) void loadNotifications()
+      }
+      window.addEventListener(FOLLOWS_CHANGED_EVENT, handleFollowsChanged)
+      const intervalId = window.setInterval(() => {
+        if (!cancelled) void loadNotifications()
+      }, 12000)
+      const handleFocus = () => {
+        if (!cancelled && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+          void loadNotifications()
+        }
+      }
+      window.addEventListener('visibilitychange', handleFocus)
+      window.addEventListener('focus', handleFocus)
+
+      removeListeners = () => {
+        window.removeEventListener(FOLLOWS_CHANGED_EVENT, handleFollowsChanged)
+        window.clearInterval(intervalId)
+        window.removeEventListener('visibilitychange', handleFocus)
+        window.removeEventListener('focus', handleFocus)
+      }
+    }
+
     return () => {
       cancelled = true
       void supabase.removeChannel(channel)
+      removeListeners()
     }
   }
 
@@ -1327,19 +1557,375 @@ export async function deleteCloudNotifications(userId: string, notificationIds: 
   }
 }
 
+async function getSessionAccessToken(): Promise<string | null> {
+  if (!isSupabaseConfigured) return null
+  try {
+    const { data } = await supabase.auth.getSession()
+    return data.session?.access_token || null
+  } catch {
+    return null
+  }
+}
+
 export async function saveFollowRequest(requesterId: string, targetHandle: string, requested: boolean) {
   if (!canUseCloudData(requesterId)) return
+  const token = await getSessionAccessToken()
+  if (token) {
+    try {
+      const res = await fetch('/api/follow-requests/request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ targetHandle, requested }),
+      })
+      if (res.ok) {
+        notifyFollowsChanged()
+        return
+      }
+    } catch {
+      // fallback to direct supabase
+    }
+  }
+
   const targetId = await resolveUserIdByHandle(targetHandle)
   if (!targetId) return
   if (!requested) {
     await supabase.from('follow_requests').delete().eq('requester_id', requesterId).eq('target_id', targetId)
+    if (targetId !== requesterId) {
+      try {
+        await supabase
+          .from('notifications')
+          .delete()
+          .eq('recipient_id', targetId)
+          .eq('actor_id', requesterId)
+          .eq('type', 'follow_request')
+      } catch {
+        // ignore notification delete failure
+      }
+    }
   } else {
     await supabase.from('follow_requests').upsert({
       requester_id: requesterId,
       target_id: targetId,
       status: 'pending',
     })
+    if (targetId !== requesterId) {
+      try {
+        await supabase
+          .from('notifications')
+          .delete()
+          .eq('recipient_id', targetId)
+          .eq('actor_id', requesterId)
+          .eq('type', 'follow_request')
+        const { error: notifErr } = await supabase.from('notifications').insert({
+          id: `follow_req_${requesterId}_${Date.now()}`,
+          recipient_id: targetId,
+          actor_id: requesterId,
+          type: 'follow_request',
+          interaction_id: requesterId,
+          read: false,
+          created_at: new Date().toISOString(),
+        })
+        if (notifErr && (notifErr.code === '23514' || notifErr.message?.includes('violates check constraint'))) {
+          await supabase.from('notifications').insert({
+            id: `follow_req_${requesterId}_${Date.now()}`,
+            recipient_id: targetId,
+            actor_id: requesterId,
+            type: 'follow',
+            interaction_id: `follow_request:${requesterId}`,
+            read: false,
+            created_at: new Date().toISOString(),
+          })
+        }
+      } catch {
+        // ignore notification insert failure
+      }
+    }
   }
+  notifyFollowsChanged()
+}
+
+export async function acceptFollowRequest(targetUserId: string, targetHandle: string, requesterHandle: string) {
+  if (!canUseCloudData(targetUserId)) return
+  const token = await getSessionAccessToken()
+  if (token) {
+    try {
+      const res = await fetch('/api/follow-requests/accept', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ requesterHandle, targetHandle }),
+      })
+      if (res.ok) {
+        notifyFollowsChanged()
+        return
+      }
+    } catch {
+      // fallback to direct supabase
+    }
+  }
+
+  const requesterId = await resolveUserIdByHandle(requesterHandle)
+  if (!requesterId) return
+  if (isSupabaseConfigured) {
+    await supabase
+      .from('follow_requests')
+      .delete()
+      .eq('requester_id', requesterId)
+      .eq('target_id', targetUserId)
+
+    await supabase.from('follows').upsert({
+      follower_id: requesterId,
+      following_id: targetUserId,
+      target_handle: cleanHandle(targetHandle),
+    })
+
+    try {
+      await supabase
+        .from('notifications')
+        .delete()
+        .eq('recipient_id', targetUserId)
+        .eq('actor_id', requesterId)
+        .eq('type', 'follow_request')
+    } catch {
+      // ignore
+    }
+
+    try {
+      const { error: notifErr } = await supabase.from('notifications').insert({
+        id: `follow_accept_${targetUserId}_${Date.now()}`,
+        recipient_id: requesterId,
+        actor_id: targetUserId,
+        type: 'follow_accept',
+        interaction_id: targetUserId,
+        read: false,
+        created_at: new Date().toISOString(),
+      })
+      if (notifErr && (notifErr.code === '23514' || notifErr.message?.includes('violates check constraint'))) {
+        await supabase.from('notifications').insert({
+          id: `follow_accept_${targetUserId}_${Date.now()}`,
+          recipient_id: requesterId,
+          actor_id: targetUserId,
+          type: 'follow',
+          interaction_id: `follow_accept:${targetUserId}`,
+          read: false,
+          created_at: new Date().toISOString(),
+        })
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const state = await loadUserCloudState(requesterId)
+      const cleanTarget = cleanHandle(targetHandle)
+      const nextRequested = state.followRequestedHandles.filter((h) => cleanHandle(h) !== cleanTarget)
+      const nextFollowed = Array.from(new Set([...state.followedUserHandles, cleanTarget]))
+      await saveUserCloudState(requesterId, {
+        followRequestedHandles: nextRequested,
+        followedUserHandles: nextFollowed,
+      })
+    } catch (err) {
+      console.error('Error updating requester user_cloud_state in Supabase:', err)
+    }
+  }
+  notifyFollowsChanged()
+}
+
+export async function declineFollowRequest(targetUserId: string, requesterHandle: string) {
+  if (!canUseCloudData(targetUserId)) return
+  const token = await getSessionAccessToken()
+  if (token) {
+    try {
+      const res = await fetch('/api/follow-requests/decline', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ requesterHandle }),
+      })
+      if (res.ok) {
+        notifyFollowsChanged()
+        return
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  const requesterId = await resolveUserIdByHandle(requesterHandle)
+  if (!requesterId) return
+  if (isSupabaseConfigured) {
+    await supabase
+      .from('follow_requests')
+      .delete()
+      .eq('requester_id', requesterId)
+      .eq('target_id', targetUserId)
+
+    try {
+      await supabase
+        .from('notifications')
+        .delete()
+        .eq('recipient_id', targetUserId)
+        .eq('actor_id', requesterId)
+        .eq('type', 'follow_request')
+    } catch {
+      // ignore
+    }
+
+    try {
+      const { data: targetProfile } = await supabase
+        .from('profiles')
+        .select('handle')
+        .eq('id', targetUserId)
+        .maybeSingle()
+      const targetHandle = targetProfile?.handle ? cleanHandle(targetProfile.handle) : ''
+      if (targetHandle) {
+        const state = await loadUserCloudState(requesterId)
+        const nextRequested = state.followRequestedHandles.filter((h) => cleanHandle(h) !== targetHandle)
+        await saveUserCloudState(requesterId, {
+          followRequestedHandles: nextRequested,
+        })
+      }
+    } catch (err) {
+      console.error('Error updating requester user_cloud_state in Supabase on decline:', err)
+    }
+  }
+  notifyFollowsChanged()
+}
+
+export async function loadIncomingFollowRequestHandles(targetUserId: string): Promise<string[]> {
+  if (!canUseCloudData(targetUserId)) return []
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase
+      .from('follow_requests')
+      .select('requester_id')
+      .eq('target_id', targetUserId)
+      .eq('status', 'pending')
+    if (!error && data && data.length > 0) {
+      const requesterIds = data.map((r: any) => r.requester_id).filter(Boolean)
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('handle')
+        .in('id', requesterIds)
+      if (profiles) {
+        return profiles.map((p: any) => cleanHandle(p.handle || '')).filter(Boolean)
+      }
+    }
+  }
+  return []
+}
+
+export function subscribeUserFollowRelationships(
+  userId: string,
+  onChange: (data: { followingHandles: string[]; followerHandles: string[]; requestedHandles: string[] }) => void,
+): Unsubscribe {
+  if (!canUseCloudData(userId)) {
+    onChange({ followingHandles: [], followerHandles: [], requestedHandles: [] })
+    return () => undefined
+  }
+
+  if (isSupabaseConfigured) {
+    let cancelled = false
+    const reload = async () => {
+      try {
+        const [followingRes, followersRes, requestsRes] = await Promise.all([
+          supabase.from('follows').select('following_id, target_handle').eq('follower_id', userId),
+          supabase.from('follows').select('follower_id').eq('following_id', userId),
+          supabase.from('follow_requests').select('target_id').eq('requester_id', userId).eq('status', 'pending'),
+        ])
+        if (cancelled) return
+
+        const followingIds = (followingRes.data || []).map((r: any) => String(r.following_id || '')).filter(Boolean)
+        const followerIds = (followersRes.data || []).map((r: any) => String(r.follower_id || '')).filter(Boolean)
+        const requestTargetIds = (requestsRes.data || []).map((r: any) => String(r.target_id || '')).filter(Boolean)
+
+        const idsToResolve = Array.from(new Set([...followingIds, ...followerIds, ...requestTargetIds]))
+        const profileMap = new Map<string, string>()
+        if (idsToResolve.length > 0) {
+          const { data: profiles } = await supabase
+            .from('profiles')
+            .select('id, handle')
+            .in('id', idsToResolve)
+          if (profiles) {
+            profiles.forEach((p: any) => {
+              if (p.id && p.handle) profileMap.set(p.id, cleanHandle(p.handle))
+            })
+          }
+        }
+
+        const followingHandles = Array.from(new Set([
+          ...(followingRes.data || []).map((r: any) => cleanHandle(r.target_handle || '')).filter(Boolean),
+          ...followingIds.map((id) => profileMap.get(id) || '').filter(Boolean),
+        ]))
+
+        const followerHandles = followerIds
+          .map((id) => profileMap.get(id) || '')
+          .filter(Boolean)
+
+        const requestedHandles = requestTargetIds
+          .map((id) => profileMap.get(id) || '')
+          .filter(Boolean)
+
+        onChange({
+          followingHandles: Array.from(new Set(followingHandles)),
+          followerHandles: Array.from(new Set(followerHandles)),
+          requestedHandles: Array.from(new Set(requestedHandles)),
+        })
+      } catch (err) {
+        console.error('Error loading follow relationships:', err)
+      }
+    }
+
+    void reload()
+
+    const channel = supabase.channel(`user-follow-rel:${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'follows' }, () => {
+        void reload()
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'follow_requests' }, () => {
+        void reload()
+      })
+      .subscribe()
+
+    let removeListeners = () => {}
+    if (typeof window !== 'undefined') {
+      const handleFollowsChanged = () => {
+        if (!cancelled) void reload()
+      }
+      window.addEventListener(FOLLOWS_CHANGED_EVENT, handleFollowsChanged)
+      const intervalId = window.setInterval(() => {
+        if (!cancelled) void reload()
+      }, 30000)
+      const handleFocus = () => {
+        if (!cancelled && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+          void reload()
+        }
+      }
+      window.addEventListener('visibilitychange', handleFocus)
+      window.addEventListener('focus', handleFocus)
+
+      removeListeners = () => {
+        window.removeEventListener(FOLLOWS_CHANGED_EVENT, handleFollowsChanged)
+        window.clearInterval(intervalId)
+        window.removeEventListener('visibilitychange', handleFocus)
+        window.removeEventListener('focus', handleFocus)
+      }
+    }
+
+    return () => {
+      cancelled = true
+      void supabase.removeChannel(channel)
+      removeListeners()
+    }
+  }
+
+  return () => undefined
 }
 
 export async function submitContentReport(reporterId: string, report: ContentReport) {

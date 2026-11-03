@@ -121,17 +121,17 @@ test('invalid or category-mismatched cursors are rejected', () => {
   assert.throws(() => decodeFeedCursor(mismatched, 'film'), /Invalid feed cursor/)
 })
 
-test('private entries require mutual following while own and public entries remain visible', () => {
-  const mutualIds = new Set(['mutual-author'])
-  assert.equal(canViewFeedCandidate({ isPrivate: false }, 'public-author', 'viewer', mutualIds, now), true)
-  assert.equal(canViewFeedCandidate({ isPrivate: true }, 'viewer', 'viewer', mutualIds, now), true)
-  assert.equal(canViewFeedCandidate({ isPrivate: true }, 'mutual-author', 'viewer', mutualIds, now), true)
-  assert.equal(canViewFeedCandidate({ isPrivate: true }, 'one-way-author', 'viewer', mutualIds, now), false)
+test('private entries require following while own and public entries remain visible', () => {
+  const followedIds = new Set(['followed-author'])
+  assert.equal(canViewFeedCandidate({ isPrivate: false }, 'public-author', 'viewer', followedIds, now), true)
+  assert.equal(canViewFeedCandidate({ isPrivate: true }, 'viewer', 'viewer', followedIds, now), true)
+  assert.equal(canViewFeedCandidate({ isPrivate: true }, 'followed-author', 'viewer', followedIds, now), true)
+  assert.equal(canViewFeedCandidate({ isPrivate: true }, 'unfollowed-author', 'viewer', followedIds, now), false)
   assert.equal(canViewFeedCandidate({
     isPrivate: false,
     accountStatus: 'deactivated',
     reactivatesAt: null,
-  }, 'deactivated-author', 'viewer', mutualIds, now), false)
+  }, 'deactivated-author', 'viewer', followedIds, now), false)
 })
 
 test('feed API requires authentication and validates categories', async () => {

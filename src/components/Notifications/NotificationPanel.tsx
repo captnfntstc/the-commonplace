@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Bell, CakeSlice, Heart, MessageSquare, Trophy, UserPlus, Users, X } from 'lucide-react'
+import { Bell, CakeSlice, Heart, MessageSquare, Trophy, UserCheck, UserPlus, Users, X } from 'lucide-react'
 import type { AppNotification as Notification, NotificationType } from '../../types/notification'
 
 interface NotificationPanelProps {
@@ -31,6 +31,7 @@ function NotifIcon({ type }: { type: NotificationType }) {
   if (type === 'like_milestone') return <Trophy size={14} />
   if (type === 'comment' || type === 'reply') return <MessageSquare size={14} />
   if (type === 'follow' || type === 'follow_request') return <UserPlus size={14} />
+  if (type === 'follow_accept') return <UserCheck size={14} />
   if (type === 'friend_recommendation' || type === 'people_you_may_know') return <Users size={14} />
   if (type === 'birthday') return <CakeSlice size={14} />
   return <Bell size={14} />
@@ -40,7 +41,7 @@ function notifColor(type: NotificationType): string {
   if (type === 'like') return '#e57373'
   if (type === 'like_milestone') return '#f5b74c'
   if (type === 'comment' || type === 'reply') return '#7ecfc0'
-  if (type === 'follow' || type === 'follow_request') return '#c9a96e'
+  if (type === 'follow' || type === 'follow_request' || type === 'follow_accept') return '#c9a96e'
   if (type === 'friend_recommendation' || type === 'people_you_may_know') return '#a695c8'
   if (type === 'birthday') return '#e9a8bd'
   return '#c9a96e'
@@ -66,10 +67,11 @@ function notificationGroupKey(notification: Notification) {
   if (notification.type === 'reply') {
     return `reply:${notification.postId || notification.entryTitle || notification.id}:${notification.parentInteractionId || notification.id}`
   }
+  if (notification.type === 'follow' || notification.type === 'follow_request' || notification.type === 'follow_accept') {
+    return `${notification.type}:${notification.actorHandle || notification.actorId || notification.id}`
+  }
   if (
-    notification.type === 'follow'
-    || notification.type === 'follow_request'
-    || notification.type === 'friend_recommendation'
+    notification.type === 'friend_recommendation'
     || notification.type === 'people_you_may_know'
   ) return notification.type
   return `${notification.type}:${notification.id}`
@@ -122,7 +124,9 @@ function notifText(notification: NotificationStack): React.ReactNode {
         ? <><strong>{actors}</strong> replied: <em>&quot;{notification.commentSnippet}&quot;</em></>
         : <><strong>{actors}</strong> replied to your comment on <em>&quot;{notification.entryTitle}&quot;</em></>
     case 'follow_request':
-      return <><strong>{actors}</strong> {notification.stackCount === 1 ? 'sent you a follow request' : 'sent you follow requests'}</>
+      return <><strong>{actors}</strong> requested to follow you</>
+    case 'follow_accept':
+      return <><strong>{actors}</strong> accepted your follow request</>
     case 'follow':
       return <><strong>{actors}</strong> started following you</>
     case 'friend_recommendation':
@@ -177,7 +181,11 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
                 notification.postId
                 && ['like', 'like_milestone', 'comment', 'reply'].includes(notification.type),
               )
-              const opensProfile = notification.type === 'follow' && Boolean(notification.actorHandle)
+              const opensProfile = (
+                notification.type === 'follow'
+                || notification.type === 'follow_request'
+                || notification.type === 'follow_accept'
+              ) && Boolean(notification.actorHandle)
               const isActionable = Boolean(onOpenNotification && (opensPost || opensProfile))
               const openNotification = () => {
                 if (isActionable) onOpenNotification?.(notification)

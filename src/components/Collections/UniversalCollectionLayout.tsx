@@ -104,6 +104,7 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   onDeleteCollection,
   onToggleSave,
   onRemoveItem,
+  onRemoveItems,
   renderCoverArtwork,
   followersCount = 0,
   followingCount = 0,
@@ -120,7 +121,6 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   onToast,
 }) => {
   const photoInputRef = useRef<HTMLInputElement>(null)
-  const [activeCardMenuId, setActiveCardMenuId] = useState<string | null>(null)
 
   const handleNotify = (message: string, type: 'success' | 'error' | 'info' = 'error') => {
     if (onToast) {
@@ -134,6 +134,9 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   const [searchQuery, setSearchQuery] = useState('')
   const [spotlightItemId, setSpotlightItemId] = useState<string | null>(items[0]?.id ?? null)
 
+  // Items marked/selected for batch deletion in edit mode
+  const [markedItemIds, setMarkedItemIds] = useState<Set<string>>(new Set())
+
   // Reordering & sorting state for edit mode
   const [orderedItems, setOrderedItems] = useState<Entry[]>(items)
   const initialOrderRef = useRef<Entry[]>(items)
@@ -143,6 +146,31 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
   const prevEditingRef = useRef(isEditingInline)
   const prevItemsRef = useRef(items)
   const [badgeThemeMap, setBadgeThemeMap] = useState<Record<string, 'dark' | 'light'>>({})
+
+  const toggleMarkItem = (id: string) => {
+    setMarkedItemIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const handleDeleteMarkedItems = () => {
+    if (markedItemIds.size === 0) return
+    const markedEntries = orderedItems.filter((it) => markedItemIds.has(it.id))
+    if (onRemoveItems) {
+      onRemoveItems(markedEntries)
+    } else if (onRemoveItem) {
+      markedEntries.forEach((entry) => onRemoveItem(entry))
+    } else {
+      setOrderedItems((prev) => prev.filter((it) => !markedItemIds.has(it.id)))
+      setMarkedItemIds(new Set())
+    }
+  }
 
   useEffect(() => {
     orderedItems.forEach((entry) => {
@@ -166,10 +194,12 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
       setActiveSort(null)
       setDraggedId(null)
       setDragOverId(null)
+      setMarkedItemIds(new Set())
     } else if (!isEditingInline) {
       setOrderedItems(items)
       initialOrderRef.current = items
       setActiveSort(null)
+      setMarkedItemIds(new Set())
     } else if (itemsChanged) {
       const currentIds = new Set(items.map((it) => it.id))
       setOrderedItems((prev) => {
@@ -179,6 +209,10 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
         return [...remaining, ...added]
       })
       initialOrderRef.current = initialOrderRef.current.filter((it) => currentIds.has(it.id))
+      setMarkedItemIds((prev) => {
+        const next = new Set([...prev].filter((id) => currentIds.has(id)))
+        return next
+      })
     }
   }, [isEditingInline, items])
 
@@ -235,13 +269,6 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [menuOpen])
-
-  useEffect(() => {
-    if (!activeCardMenuId) return
-    const handleClick = () => setActiveCardMenuId(null)
-    window.addEventListener('click', handleClick)
-    return () => window.removeEventListener('click', handleClick)
-  }, [activeCardMenuId])
 
   const handleToggleCommentsDisabled = () => {
     const next = !commentsDisabled
@@ -850,6 +877,28 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                   <Shuffle size={13} aria-hidden="true" />
                   <span>Random</span>
                 </button>
+
+                <div className="universal-edit-sort-divider" aria-hidden="true" />
+
+                <button
+                  type="button"
+                  className={`universal-edit-delete-btn ${markedItemIds.size > 0 ? 'is-active' : 'is-disabled'}`}
+                  disabled={markedItemIds.size === 0}
+                  onClick={handleDeleteMarkedItems}
+                  title={
+                    markedItemIds.size > 0
+                      ? `Delete ${markedItemIds.size} marked item${markedItemIds.size > 1 ? 's' : ''}`
+                      : 'Select items below to delete'
+                  }
+                  aria-label={
+                    markedItemIds.size > 0
+                      ? `Delete ${markedItemIds.size} marked items`
+                      : 'Delete marked items (none selected)'
+                  }
+                >
+                  <Trash2 size={13} aria-hidden="true" />
+                  <span>Delete{markedItemIds.size > 0 ? ` (${markedItemIds.size})` : ''}</span>
+                </button>
               </div>
             )}
 
@@ -886,7 +935,7 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                     return (
                       <article
                         key={entry.id}
-                        className={`universal-media-entity ${isSpotlighted ? 'is-spotlighted' : ''} ${isEditingInline && isSpotlighted ? 'is-featured-edit' : ''} ${isEditingInline ? 'is-editing-mode' : ''} ${draggedId === entry.id ? 'is-dragging' : ''} ${dragOverId === entry.id && draggedId !== entry.id ? 'is-drag-over' : ''}`}
+                        className={`universal-media-entity ${isSpotlighted ? 'is-spotlighted' : ''} ${isEditingInline && isSpotlighted ? 'is-featured-edit' : ''} ${isEditingInline ? 'is-editing-mode' : ''} ${isEditingInline && markedItemIds.has(entry.id) ? 'is-marked' : ''} ${draggedId === entry.id ? 'is-dragging' : ''} ${dragOverId === entry.id && draggedId !== entry.id ? 'is-drag-over' : ''}`}
                         data-id={entry.id}
                         draggable={isEditingInline}
                         onDragStart={(e) => {
@@ -930,12 +979,15 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                           setDragOverId(null)
                         }}
                         onClick={() => {
-                          if (isEditingInline) return
+                          if (isEditingInline) {
+                            toggleMarkItem(entry.id)
+                            return
+                          }
                           setSpotlightItemId(entry.id)
                           handleOpenEntry(entry)
                         }}
                       >
-                        {/* Artwork Stage: contains the clipped artwork + unclipped card action ellipsis */}
+                        {/* Artwork Stage: contains the clipped artwork + unclipped card action buttons */}
                         <div className="universal-entity-art-stage">
                           {/* Media Artwork (No container box!) */}
                           <div className={`universal-entity-art ${isSquareArtwork ? 'is-square' : 'is-poster'} ${badgeThemeMap[entry.id] ? `is-${badgeThemeMap[entry.id]}-bg` : ''}`}>
@@ -983,64 +1035,42 @@ export const UniversalCollectionLayout: React.FC<AlternativeCollectionDetailProp
                               {renderTypeIcon(entry.type, 11)}
                               <span>{label}</span>
                             </span>
-
-                            {/* Featured Item Badge in Edit Mode */}
-                            {isEditingInline && isSpotlighted && (
-                              <span className="universal-featured-ribbon">
-                                <Star size={10} fill="currentColor" aria-hidden="true" />
-                                <span>Featured</span>
-                              </span>
-                            )}
                           </div>
 
-                          {/* Consolidate Remove & Feature on Card Ellipsis (Unclipped) */}
+                          {/* Star button to pick feature item directly */}
                           {isOwnedByCurrentUser && isEditingInline && (
-                            <div className="universal-card-actions-wrap" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                className="universal-card-ellipsis-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setActiveCardMenuId((prev) => (prev === entry.id ? null : entry.id))
-                                }}
-                                title="Item options"
-                                aria-label={`Options for ${entry.title}`}
-                              >
-                                <MoreHorizontal size={14} aria-hidden="true" />
-                              </button>
+                            <button
+                              type="button"
+                              className={`universal-card-star-btn ${isSpotlighted ? 'is-featured' : ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSpotlightItemId(isSpotlighted ? null : entry.id)
+                              }}
+                              title={isSpotlighted ? 'Featured item (click to unfeature)' : 'Set as featured item'}
+                              aria-label={isSpotlighted ? `Unfeature ${entry.title}` : `Feature ${entry.title}`}
+                              aria-pressed={isSpotlighted}
+                            >
+                              <Star size={isSpotlighted ? 12 : 13} fill={isSpotlighted ? '#f59e0b' : 'none'} aria-hidden="true" />
+                              {isSpotlighted && <span className="universal-card-star-label">Featured</span>}
+                            </button>
+                          )}
 
-                              {activeCardMenuId === entry.id && (
-                                <div className="universal-card-menu-dropdown" role="menu">
-                                  <button
-                                    type="button"
-                                    className={`universal-card-menu-item ${isSpotlighted ? 'is-active-feature' : ''}`}
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setSpotlightItemId(entry.id)
-                                      setActiveCardMenuId(null)
-                                    }}
-                                    role="menuitem"
-                                  >
-                                    <Star size={13} fill={isSpotlighted ? 'currentColor' : 'none'} aria-hidden="true" />
-                                    <span>{isSpotlighted ? 'Featured item (Active)' : 'Feature this item'}</span>
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    className="universal-card-menu-item danger"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setActiveCardMenuId(null)
-                                      onRemoveItem?.(entry)
-                                    }}
-                                    role="menuitem"
-                                  >
-                                    <Trash2 size={13} aria-hidden="true" />
-                                    <span>Remove from collection</span>
-                                  </button>
-                                </div>
-                              )}
-                            </div>
+                          {/* Mark button to select item for deletion */}
+                          {isOwnedByCurrentUser && isEditingInline && (
+                            <button
+                              type="button"
+                              className={`universal-card-mark-btn ${markedItemIds.has(entry.id) ? 'is-marked' : ''}`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                toggleMarkItem(entry.id)
+                              }}
+                              title={markedItemIds.has(entry.id) ? 'Unmark item' : 'Mark item for deletion'}
+                              aria-label={markedItemIds.has(entry.id) ? `Unmark ${entry.title}` : `Mark ${entry.title} for deletion`}
+                              aria-checked={markedItemIds.has(entry.id)}
+                              role="checkbox"
+                            >
+                              {markedItemIds.has(entry.id) && <Check size={14} strokeWidth={2.5} aria-hidden="true" />}
+                            </button>
                           )}
                         </div>
 

@@ -5,6 +5,7 @@ export type NotificationType =
   | 'reply'
   | 'follow'
   | 'follow_request'
+  | 'follow_accept'
   | 'friend_recommendation'
   | 'people_you_may_know'
   | 'birthday'

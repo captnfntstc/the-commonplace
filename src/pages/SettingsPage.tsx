@@ -25,6 +25,7 @@ import {
   Cookie,
   Scale,
   Scroll,
+  FolderPlus,
 } from 'lucide-react'
 import {
   APPEARANCE_THEMES,
@@ -212,7 +213,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [showFollowLists, setShowFollowLists] = useState(userProfile.showFollowLists ?? true)
   const [allowComments, setAllowComments] = useState(userProfile.allowComments ?? true)
   const [privateProfile, setPrivateProfile] = useState(userProfile.isPrivate ?? false)
-  const [showSavedActivity, setShowSavedActivity] = useState(userProfile.showSavedActivity ?? false)
+  const [showSavedCatalog, setShowSavedCatalog] = useState(userProfile.showSavedCatalog ?? userProfile.showSavedActivity ?? false)
+  const [showSavedCollections, setShowSavedCollections] = useState(userProfile.showSavedCollections ?? userProfile.showSavedActivity ?? false)
   const [avatarUrl, setAvatarUrl] = useState(userProfile.avatarUrl || '')
   const [savedNotice, setSavedNotice] = useState(false)
   const [saveError, setSaveError] = useState('')
@@ -458,7 +460,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setShowFollowLists(userProfile.showFollowLists ?? true)
     setAllowComments(userProfile.allowComments ?? true)
     setPrivateProfile(userProfile.isPrivate ?? false)
-    setShowSavedActivity(userProfile.showSavedActivity ?? false)
+    setShowSavedCatalog(userProfile.showSavedCatalog ?? userProfile.showSavedActivity ?? false)
+    setShowSavedCollections(userProfile.showSavedCollections ?? userProfile.showSavedActivity ?? false)
     setAvatarUrl(userProfile.avatarUrl || '')
   }, [userProfile])
 
@@ -542,7 +545,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     showFollowLists !== (userProfile.showFollowLists ?? true) ||
     allowComments !== (userProfile.allowComments ?? true) ||
     privateProfile !== (userProfile.isPrivate ?? false) ||
-    showSavedActivity !== (userProfile.showSavedActivity ?? false) ||
+    showSavedCatalog !== (userProfile.showSavedCatalog ?? userProfile.showSavedActivity ?? false) ||
+    showSavedCollections !== (userProfile.showSavedCollections ?? userProfile.showSavedActivity ?? false) ||
     avatarUrl !== (userProfile.avatarUrl || '')
 
   // 14-Day Cooldown Calculation
@@ -574,7 +578,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setShowFollowLists(userProfile.showFollowLists ?? true)
     setAllowComments(userProfile.allowComments ?? true)
     setPrivateProfile(userProfile.isPrivate ?? false)
-    setShowSavedActivity(userProfile.showSavedActivity ?? false)
+    setShowSavedCatalog(userProfile.showSavedCatalog ?? userProfile.showSavedActivity ?? false)
+    setShowSavedCollections(userProfile.showSavedCollections ?? userProfile.showSavedActivity ?? false)
     setAvatarUrl(userProfile.avatarUrl || '')
   }
 
@@ -609,7 +614,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       showFollowLists,
       allowComments,
       isPrivate: privateProfile,
-      showSavedActivity,
+      showSavedCatalog,
+      showSavedCollections,
+      showSavedActivity: showSavedCatalog || showSavedCollections,
       location: userProfile.location || '',
       website: userProfile.website || '',
       curatorRole: userProfile.curatorRole || '',
@@ -1348,22 +1355,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <div className="settings-card">
                   <SettingsField
                     label="Display Name"
-                    helperText={
-                      <span>
-                        Preview: <strong>{computedDisplayName}</strong> • Shown at the top of your public profile and discussions.
-                      </span>
-                    }
                     htmlFor="privacy-display-name"
                   >
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      <input
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      <div
                         id="privacy-display-name"
-                        type="text"
-                        className="dark-setting-input"
-                        value={computedDisplayName}
-                        readOnly
-                        style={{ opacity: 0.85, cursor: 'default' }}
-                      />
+                        className="settings-name-preview-box"
+                        aria-label="Display name preview"
+                      >
+                        <span className="settings-name-preview-text">{computedDisplayName}</span>
+                        <span className="settings-name-preview-badge">Preview</span>
+                      </div>
                       <SettingsToggle
                         label="Display Full Name"
                         description="Include your last name in public displays alongside your @handle."
@@ -1398,13 +1400,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 description="Choose whether visitors can browse the things you have saved."
                 icon={Bookmark}
               >
-                <div className="settings-card">
+                <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <SettingsToggle
-                    label="Show Saved Catalog & Collections"
-                    description="Display a Saved tab on your public profile. This is hidden by default and does not affect what you can see yourself."
-                    checked={showSavedActivity}
-                    onChange={setShowSavedActivity}
+                    label="Show Saved Catalog"
+                    description="Display your saved entries on your public profile. This is hidden by default and does not affect what you can see yourself."
+                    checked={showSavedCatalog}
+                    onChange={setShowSavedCatalog}
                     icon={Bookmark}
+                  />
+                  <SettingsToggle
+                    label="Show Saved Collections"
+                    description="Display your saved collections on your public profile. This is hidden by default and does not affect what you can see yourself."
+                    checked={showSavedCollections}
+                    onChange={setShowSavedCollections}
+                    icon={FolderPlus}
                   />
                 </div>
               </SettingsSection>
@@ -1591,8 +1600,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 icon={HardDrive}
               >
                 <div className="settings-card">
-                  <div className="settings-danger-row" style={{ padding: 0 }}>
-                    <div className="settings-danger-info">
+                  <div className="settings-danger-row" style={{ padding: 0, gap: '20px' }}>
+                    <div className="settings-danger-info" style={{ minWidth: 0, flex: '1 1 auto' }}>
                       <strong className="settings-danger-title" style={{ color: 'var(--text-strong)' }}>
                         Purge Local Device Cache
                       </strong>
@@ -1603,6 +1612,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     <button
                       type="button"
                       className="secondary-action-btn"
+                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
                       onClick={handleClearLocalCache}
                     >
                       <HardDrive aria-hidden="true" />

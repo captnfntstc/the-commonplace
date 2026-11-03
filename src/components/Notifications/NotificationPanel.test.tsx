@@ -162,6 +162,66 @@ describe('NotificationPanel stacks', () => {
     }))
   })
 
+  it('shows a follow request notification and opens the requester profile', () => {
+    const onOpenNotification = vi.fn()
+    const notification: AppNotification = {
+      id: 'follow-req-pat',
+      type: 'follow_request',
+      read: false,
+      createdAt: '2026-09-02T00:00:04.000Z',
+      actorId: 'pat-id',
+      actorName: 'Pat Rojas',
+      actorHandle: 'patpatrojas',
+    }
+
+    render(
+      <NotificationPanel
+        notifications={[notification]}
+        onMarkAllRead={vi.fn()}
+        onClearAll={vi.fn()}
+        onDismiss={vi.fn()}
+        onOpenNotification={onOpenNotification}
+      />,
+    )
+
+    expect(screen.getByText(/requested to follow you/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open profile for Pat Rojas' }))
+    expect(onOpenNotification).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'follow_request',
+      actorHandle: 'patpatrojas',
+    }))
+  })
+
+  it('shows an accepted follow request notification and opens the user profile', () => {
+    const onOpenNotification = vi.fn()
+    const notification: AppNotification = {
+      id: 'follow-accept-pat',
+      type: 'follow_accept',
+      read: false,
+      createdAt: '2026-09-02T00:00:05.000Z',
+      actorId: 'pat-id',
+      actorName: 'Pat Rojas',
+      actorHandle: 'patpatrojas',
+    }
+
+    render(
+      <NotificationPanel
+        notifications={[notification]}
+        onMarkAllRead={vi.fn()}
+        onClearAll={vi.fn()}
+        onDismiss={vi.fn()}
+        onOpenNotification={onOpenNotification}
+      />,
+    )
+
+    expect(screen.getByText(/accepted your follow request/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open profile for Pat Rojas' }))
+    expect(onOpenNotification).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'follow_accept',
+      actorHandle: 'patpatrojas',
+    }))
+  })
+
   it('does not open a notification when its dismiss button is clicked', () => {
     const onOpenNotification = vi.fn()
     const onDismiss = vi.fn()

@@ -2946,6 +2946,52 @@
   font-weight: 600;
 }
 
+.universal-edit-sort-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--divider);
+  margin: 0 4px;
+}
+
+.universal-edit-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-family: inherit;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 140ms ease;
+  border: 1px solid transparent;
+}
+
+.universal-edit-delete-btn.is-disabled,
+.universal-edit-delete-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  color: var(--secondary);
+  background: transparent;
+  border-color: transparent;
+  pointer-events: none;
+}
+
+.universal-edit-delete-btn.is-active {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.35);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.universal-edit-delete-btn.is-active:hover {
+  color: #ffffff;
+  background: rgba(239, 68, 68, 0.88);
+  border-color: rgba(239, 68, 68, 0.95);
+  box-shadow: 0 2px 10px rgba(239, 68, 68, 0.35);
+}
+
 /* Cover toolbar: photo dot thumbnail and hover overlay */
 .collection-cover-dot.photo-dot.is-empty-placeholder {
   border: 1.5px dashed rgba(var(--accent-rgb), 0.45) !important;
@@ -3042,87 +3088,100 @@
   width: 100%;
 }
 
-/* Card ellipsis actions wrap (consolidating Remove and Feature) */
-.universal-card-actions-wrap {
+/* Star button to pick feature item directly */
+.universal-card-star-btn {
   position: absolute;
-  bottom: 8px;
+  top: 8px;
   right: 8px;
   z-index: 20;
-}
-
-.universal-card-ellipsis-btn {
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: rgba(18, 14, 11, 0.88);
-  border: 1px solid var(--divider);
-  color: var(--text-strong);
+  background: rgba(18, 14, 11, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--secondary);
   backdrop-filter: blur(8px);
   cursor: pointer;
   transition: all 140ms ease;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
-.universal-card-ellipsis-btn:hover {
+.universal-card-star-btn:hover {
   background: rgba(30, 24, 18, 0.95);
-  border-color: var(--accent);
-  color: var(--text-strong);
+  border-color: #f59e0b;
+  color: #f59e0b;
   transform: scale(1.08);
 }
 
-.universal-card-menu-dropdown {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  right: 0;
-  min-width: 195px;
-  background: var(--card);
-  border: 1px solid rgba(var(--accent-rgb), 0.3);
-  border-radius: 12px;
-  padding: 5px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7), 0 0 16px rgba(var(--accent-rgb), 0.15);
-  backdrop-filter: blur(14px);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  z-index: 25;
-  animation: tcpFadeIn 140ms ease;
+.universal-card-star-btn.is-featured {
+  width: auto;
+  padding: 0 10px 0 8px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.22);
+  border-color: rgba(245, 158, 11, 0.85);
+  color: #f59e0b;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.35);
 }
 
-.universal-card-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: transparent;
-  border: 0;
-  color: var(--text-strong);
-  font-size: 12px;
-  font-weight: 500;
-  text-align: left;
-  cursor: pointer;
-  transition: background 140ms ease, color 140ms ease;
+.universal-card-star-btn.is-featured:hover {
+  background: rgba(245, 158, 11, 0.35);
+  border-color: #f59e0b;
+  transform: scale(1.04);
 }
 
-.universal-card-menu-item:hover {
-  background: var(--tint-strong);
-}
-
-.universal-card-menu-item.is-active-feature {
-  color: var(--accent);
+.universal-card-star-label {
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f59e0b;
 }
 
-.universal-card-menu-item.danger {
-  color: #f87171;
+/* Mark button to select items for deletion */
+.universal-card-mark-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(18, 14, 11, 0.78);
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  color: transparent;
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: all 140ms ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
-.universal-card-menu-item.danger:hover {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+.universal-card-mark-btn:hover {
+  border-color: var(--accent);
+  background: rgba(30, 24, 18, 0.95);
+  transform: scale(1.08);
+}
+
+.universal-card-mark-btn.is-marked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.45);
+}
+
+.universal-card-mark-btn.is-marked:hover {
+  filter: brightness(1.1);
+  transform: scale(1.08);
+}
+
+/* Card selected/marked state */
+.universal-media-entity.is-marked {
+  outline: 2.5px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .universal-entity-art.is-square {

@@ -201,7 +201,7 @@ create table if not exists public.notifications (
   id text primary key,
   recipient_id uuid references public.profiles(id) on delete cascade not null,
   actor_id uuid references public.profiles(id) on delete cascade not null,
-  type text not null check (type in ('follow', 'like', 'comment', 'reply', 'birthday')),
+  type text not null check (type in ('follow', 'follow_request', 'follow_accept', 'like', 'comment', 'reply', 'birthday')),
   interaction_id text default '',
   entry_id text references public.entries(id) on delete cascade,
   comment_id text,
@@ -238,7 +238,7 @@ returns boolean language sql security definer set search_path = public stable as
   );
 $$;
 
--- Profile Content Readability Helper
+-- Profile Content Readability Helper (Owner, Public, or Follower)
 create or replace function public.can_read_profile_content(target_user_id uuid)
 returns boolean language sql security definer set search_path = public stable as $$
   select auth.uid() = target_user_id
@@ -248,7 +248,10 @@ returns boolean language sql security definer set search_path = public stable as
         and p.account_status = 'active'
         and (
           p.is_private = false
-          or public.is_mutual_follow(auth.uid(), target_user_id)
+          or exists (
+            select 1 from public.follows
+            where follower_id = auth.uid() and following_id = target_user_id
+          )
         )
     );
 $$;
@@ -365,6 +368,12 @@ create policy "Users can follow other accounts"
         where requester_id = auth.uid() and target_id = following_id and status = 'accepted'
       )
     )
+  );
+
+create policy "Target can accept follow requests into follows"
+  on public.follows for insert
+  with check (
+    auth.uid() = following_id
   );
 
 create policy "Users can unfollow accounts"
@@ -503,3 +512,8 @@ create policy "Users manage their own collections"
 create policy "Authenticated users can submit reports"
   on public.reports for insert
   with check (auth.uid() = reporter_id);
+
+-- Enable Realtime for follows, follow_requests, and notifications
+alter publication supabase_realtime add table public.follows;
+alter publication supabase_realtime add table public.follow_requests;
+alter publication supabase_realtime add table public.notifications;

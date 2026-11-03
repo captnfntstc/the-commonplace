@@ -133,18 +133,24 @@ import {
   type EntryType,
 } from '../features/entries/model'
 import {
+  acceptFollowRequest,
   canUseCloudData,
+  cleanHandle,
+  declineFollowRequest,
+  loadIncomingFollowRequestHandles,
   loadPostEntry,
   loadPublicFeedEntries,
   loadPublicAccountIdentityByHandle,
   loadPublicUserByHandle,
   loadOrMigrateUserCollections,
   loadOrMigrateUserData,
+  notifyFollowsChanged,
   saveUserCollections,
   saveUserCloudState,
   saveUserEntries,
   saveUserProfile,
   subscribePostEngagements,
+  subscribeUserFollowRelationships,
   subscribeUserNotifications,
   type PostEngagement,
   type PublicUserData,
@@ -884,7 +890,8 @@ export default function AppController() {
   const [userProfile, setUserProfile] = useState<UserProfileState>(() => loadLocalUserProfile(currentUser))
   const [cloudExternalProfile, setCloudExternalProfile] = useState<{
     handle: string
-    data: PublicUserData
+    data: PublicUserData | null
+    notFound?: boolean
   } | null>(null)
 
   useEffect(() => {
@@ -894,26 +901,6 @@ export default function AppController() {
     setUserProfile(accountProfile)
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(accountProfile))
   }, [currentUser, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, userProfile])
-
-  useEffect(() => {
-    const handle = selectedProfileHandle
-    if (!handle || handle === userProfile.handle) {
-      setCloudExternalProfile(null)
-      return
-    }
-    let cancelled = false
-    void loadPublicUserByHandle(handle, cloudUserId)
-      .then((data) => {
-        if (!cancelled) setCloudExternalProfile(data ? { handle, data } : null)
-      })
-      .catch((error) => {
-        if (!cancelled) setCloudExternalProfile(null)
-        console.error('Unable to load the public profile.', error)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [cloudUserId, selectedProfileHandle, userProfile.handle])
 
   const persistUserProfile = async (updated: UserProfileState) => {
     setUserProfile(updated)
@@ -1613,6 +1600,38 @@ export default function AppController() {
     return loadStoredHandles('the-commonplace.following-users')
   })
 
+  useEffect(() => {
+    const handle = selectedProfileHandle
+    if (!handle || cleanHandle(handle) === cleanHandle(userProfile.handle)) {
+      setCloudExternalProfile(null)
+      return
+    }
+    let cancelled = false
+    void loadPublicUserByHandle(handle, cloudUserId)
+      .then((data) => {
+        if (!cancelled) {
+          setCloudExternalProfile({
+            handle,
+            data: data || null,
+            notFound: !data,
+          })
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setCloudExternalProfile({
+            handle,
+            data: null,
+            notFound: true,
+          })
+        }
+        console.error('Unable to load the public profile.', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [cloudUserId, selectedProfileHandle, userProfile.handle, followedUserHandles])
+
   const toggleFollowUser = (handle: string) => {
     const clean = handle.replace(/^@/, '')
     setFollowedUserHandles((prev) => {
@@ -1628,12 +1647,15 @@ export default function AppController() {
           actor: { name: userProfileName, handle: userProfile.handle },
           dedupeKey: `follow:${clean}`,
         })
-          .then(() => undefined)
+          .then(() => {
+            notifyFollowsChanged()
+          })
           .catch((error) => {
             console.error('Unable to sync follow relationship to Supabase.', error)
             setAppFeedback({ kind: 'error', message: 'The follow change could not be saved. Please try again.' })
           })
       }
+      notifyFollowsChanged()
       return next
     })
   }
@@ -1655,10 +1677,15 @@ export default function AppController() {
           targetHandle: clean,
           requested: next.includes(clean),
           dedupeKey: `follow-request:${clean}`,
-        }).catch((error) => {
-          console.error('Unable to sync follow request to Supabase.', error)
         })
+          .then(() => {
+            notifyFollowsChanged()
+          })
+          .catch((error) => {
+            console.error('Unable to sync follow request to Supabase.', error)
+          })
       }
+      notifyFollowsChanged()
       return next
     })
   }
@@ -2009,6 +2036,110 @@ export default function AppController() {
     }
   }
 
+  const [incomingFollowRequestedHandles, setIncomingFollowRequestedHandles] = useState<string[]>([])
+  const [followerUserHandles, setFollowerUserHandles] = useState<string[]>([])
+
+  useEffect(() => {
+    if (!cloudUserId || homeDataStatus !== 'ready') return undefined
+    return subscribeUserFollowRelationships(cloudUserId, ({ followingHandles, followerHandles, requestedHandles }) => {
+      const cleanFollowing = new Set(followingHandles.map(cleanHandle))
+      const followingList = Array.from(cleanFollowing)
+      setFollowedUserHandles(followingList)
+      localStorage.setItem('the-commonplace.followed-users', JSON.stringify(followingList))
+
+      setFollowRequestedHandles(() => {
+        const validRequested = requestedHandles.filter((h) => !cleanFollowing.has(cleanHandle(h)))
+        localStorage.setItem('the-commonplace.follow-requests', JSON.stringify(validRequested))
+        return validRequested
+      })
+      setFollowerUserHandles(followerHandles.map(cleanHandle))
+    })
+  }, [cloudUserId, homeDataStatus])
+
+  useEffect(() => {
+    const acceptedNotifs = notifications.filter((n) => n.type === 'follow_accept' && n.actorHandle)
+    if (acceptedNotifs.length > 0) {
+      acceptedNotifs.forEach((n) => {
+        const clean = cleanHandle(n.actorHandle || '')
+        if (!clean) return
+        setFollowedUserHandles((prev) => {
+          if (prev.includes(clean)) return prev
+          const next = [...prev, clean]
+          localStorage.setItem('the-commonplace.followed-users', JSON.stringify(next))
+          persistCloudState({ followedUserHandles: next })
+          return next
+        })
+        setFollowRequestedHandles((prev) => {
+          if (!prev.includes(clean)) return prev
+          const next = prev.filter((h) => cleanHandle(h) !== clean)
+          localStorage.setItem('the-commonplace.follow-requests', JSON.stringify(next))
+          persistCloudState({ followRequestedHandles: next })
+          return next
+        })
+      })
+    }
+  }, [notifications])
+
+  useEffect(() => {
+    const notifHandles = notifications
+      .filter((n) => n.type === 'follow_request')
+      .map((n) => cleanHandle(n.actorHandle || ''))
+      .filter(Boolean)
+    setIncomingFollowRequestedHandles((prev) => {
+      const merged = Array.from(new Set([...prev, ...notifHandles]))
+      if (merged.length === prev.length && merged.every((h, i) => h === prev[i])) return prev
+      return merged
+    })
+  }, [notifications])
+
+  useEffect(() => {
+    if (!cloudUserId) return
+    void loadIncomingFollowRequestHandles(cloudUserId).then((handles) => {
+      if (handles.length > 0) {
+        setIncomingFollowRequestedHandles((prev) => Array.from(new Set([...prev, ...handles])))
+      }
+    }).catch(() => undefined)
+  }, [cloudUserId])
+
+  const handleAcceptFollowRequest = async (requesterHandle: string) => {
+    const clean = cleanHandle(requesterHandle)
+    setIncomingFollowRequestedHandles((prev) => prev.filter((h) => h !== clean))
+    setFollowerUserHandles((prev) => Array.from(new Set([...prev, clean])))
+    notifyFollowsChanged()
+    const matchingNotifs = notifications.filter(
+      (n) => n.type === 'follow_request' && (cleanHandle(n.actorHandle || '') === clean || n.actorId === clean),
+    )
+    if (matchingNotifs.length > 0) {
+      dismissNotification(matchingNotifs.map((n) => n.id))
+    }
+    if (cloudUserId) {
+      await acceptFollowRequest(cloudUserId, userProfile.handle, clean).catch((err) => {
+        console.error('Failed to accept follow request', err)
+      })
+    }
+    notifyFollowsChanged()
+    setAppFeedback({ kind: 'success', message: `Accepted follow request from @${clean}` })
+  }
+
+  const handleDeclineFollowRequest = async (requesterHandle: string) => {
+    const clean = cleanHandle(requesterHandle)
+    setIncomingFollowRequestedHandles((prev) => prev.filter((h) => h !== clean))
+    notifyFollowsChanged()
+    const matchingNotifs = notifications.filter(
+      (n) => n.type === 'follow_request' && (cleanHandle(n.actorHandle || '') === clean || n.actorId === clean),
+    )
+    if (matchingNotifs.length > 0) {
+      dismissNotification(matchingNotifs.map((n) => n.id))
+    }
+    if (cloudUserId) {
+      await declineFollowRequest(cloudUserId, clean).catch((err) => {
+        console.error('Failed to decline follow request', err)
+      })
+    }
+    notifyFollowsChanged()
+    setAppFeedback({ kind: 'success', message: `Declined follow request from @${clean}` })
+  }
+
   const ownProfileEntries = useMemo(() => entries.map((e) => ({
       ...e,
       ownerId: cloudUserId || e.ownerId,
@@ -2047,7 +2178,7 @@ export default function AppController() {
     }
 
     const availableEntry = allHomepageEntries.find(({ id }) => id === selectedReadingEntryId)
-      || cloudExternalProfile?.data.entries.find(({ id }) => id === selectedReadingEntryId)
+      || cloudExternalProfile?.data?.entries.find(({ id }) => id === selectedReadingEntryId)
     if (availableEntry) {
       setOverlayEntry(availableEntry)
       setReadingEntryStatus('ready')
@@ -2109,7 +2240,7 @@ export default function AppController() {
   ), [cloudUserId, homepagePostIds])
 
   const handleOpenNotification = (notification: AppNotification) => {
-    if (notification.type === 'follow' && notification.actorHandle) {
+    if ((notification.type === 'follow' || notification.type === 'follow_request' || notification.type === 'follow_accept') && notification.actorHandle) {
       notificationOpenRequestRef.current = notification.id
       setOverlayEntry(null)
       setOverlayNotificationFocus(null)
@@ -2141,7 +2272,7 @@ export default function AppController() {
     navigate(`/entries/${routeSegment(postId)}`)
 
     const availableEntry = allHomepageEntries.find(({ id }) => id === postId)
-      || cloudExternalProfile?.data.entries.find(({ id }) => id === postId)
+      || cloudExternalProfile?.data?.entries.find(({ id }) => id === postId)
     if (availableEntry) {
       setOverlayEntry(availableEntry)
       setReadingEntryStatus('ready')
@@ -2179,6 +2310,18 @@ export default function AppController() {
     () => new Set(personalizedFeed.mutualFollowIds),
     [personalizedFeed.mutualFollowIds],
   )
+  const homeGenreMap = useMemo(() => {
+    const all = [...entries, ...personalizedFeed.items, ...publicFeedEntries]
+    const map = new Map<string, string>()
+    for (const e of all) {
+      const g = (e.genre || '').trim()
+      if (!g) continue
+      if (e.providerId) map.set(`${e.type}:${e.providerId}`, g)
+      if (e.title && e.creator) map.set(`${e.type}:${e.title.trim().toLowerCase()}:${e.creator.trim().toLowerCase()}`, g)
+      if (e.title) map.set(`${e.type}:${e.title.trim().toLowerCase()}`, g)
+    }
+    return map
+  }, [entries, personalizedFeed.items, publicFeedEntries])
 
   const masonryLayout = useMasonryLayout(
     gridRef,
@@ -2709,6 +2852,7 @@ export default function AppController() {
     const artist = getChip(/artist|creator|author|director|studio/i)
     const album = getChip(/album|series|publisher/i)
     const year = getChip(/year|release/i)
+    const genre = getChip(/^genres?$/i) || getChip(/genre/i) || (entity as any).genre || (entity as any).genres?.[0] || ''
 
     const mappedType: EntryType = (['book', 'movie', 'tv', 'song', 'album', 'game', 'podcast'].includes(entity.type)
       ? entity.type
@@ -2724,6 +2868,7 @@ export default function AppController() {
         provider: album || entity.categoryLabel,
         providerId: entity.providerId || entity.id,
         year,
+        genre,
         coverUrl: artworkUrl,
         summary: entity.description,
         explicit: entity.explicit || metadataChips.some((chip) =>
@@ -2958,20 +3103,61 @@ export default function AppController() {
   }
 
   if (activeView === 'profile') {
-    const isViewingOwn = selectedProfileHandle === null || selectedProfileHandle === userProfile.handle
+    const isViewingOwn = selectedProfileHandle === null || cleanHandle(selectedProfileHandle) === cleanHandle(userProfile.handle)
+    const isExternalProfileLoading = !isViewingOwn && (
+      !cloudExternalProfile || cleanHandle(cloudExternalProfile.handle) !== cleanHandle(selectedProfileHandle || '')
+    )
+
+    if (isExternalProfileLoading) {
+      return (
+        <>
+          {renderGlobalHeader()}
+          <main className="page-wrapper profile-page-wrapper route-profile-skeleton" aria-label="Loading profile" aria-busy="true">
+            <div className="profile-page-container">
+              <div className="skeleton-box route-profile-banner" />
+              <div className="route-profile-identity">
+                <span className="skeleton-box route-profile-avatar" />
+                <span className="route-profile-copy">
+                  <span className="skeleton-box is-name" />
+                  <span className="skeleton-box is-handle" />
+                  <span className="skeleton-box is-bio" />
+                </span>
+              </div>
+              <div className="route-profile-stats">
+                {Array.from({ length: 4 }, (_, index) => <span className="skeleton-box" key={index} />)}
+              </div>
+              <div className="route-profile-tabs">
+                {Array.from({ length: 4 }, (_, index) => <span className="skeleton-box" key={index} />)}
+              </div>
+              <CardSkeletonGrid count={4} label="Loading profile entries" />
+            </div>
+          </main>
+          {renderEmailVerificationPrompt()}
+        </>
+      )
+    }
+
+    const isExternalNotFound = !isViewingOwn && Boolean(cloudExternalProfile?.notFound)
     const externalProfileData = isViewingOwn
       ? undefined
-      : cloudExternalProfile?.handle === selectedProfileHandle
-        ? cloudExternalProfile.data
-        : undefined
+      : cloudExternalProfile?.data
     const currentProfileData = isViewingOwn
       ? { profile: userProfile, entries: ownProfileEntries }
-      : externalProfileData || emptyPublicProfile(selectedProfileHandle || '')
-    const externalSavedIsVisible = externalProfileData?.profile.showSavedActivity === true
+      : isExternalNotFound
+        ? {
+            profile: {
+              ...emptyPublicProfile(selectedProfileHandle || '').profile,
+              accountStatus: 'deactivated' as const,
+            },
+            entries: [],
+          }
+        : externalProfileData || emptyPublicProfile(selectedProfileHandle || '')
+    const externalSavedCatalogIsVisible = (externalProfileData?.profile.showSavedCatalog ?? externalProfileData?.profile.showSavedActivity) === true
+    const externalSavedCollectionsIsVisible = (externalProfileData?.profile.showSavedCollections ?? externalProfileData?.profile.showSavedActivity) === true
     const catalogSavedEntryIds = isViewingOwn
       ? savedEntryIds
-      : externalSavedIsVisible ? externalProfileData?.savedEntryIds ?? [] : []
-    const publicSavedCollections = externalSavedIsVisible ? externalProfileData?.savedCollections ?? [] : []
+      : externalSavedCatalogIsVisible ? externalProfileData?.savedEntryIds ?? [] : []
+    const publicSavedCollections = externalSavedCollectionsIsVisible ? externalProfileData?.savedCollections ?? [] : []
 
     return (
       <>
@@ -3009,11 +3195,15 @@ export default function AppController() {
           isOwnProfile={isViewingOwn}
           onSelectUserProfile={handleOpenUserProfile}
           followedUserHandles={followedUserHandles}
+          followerUserHandles={followerUserHandles}
           onToggleFollowUser={toggleFollowUser}
           currentUserProfile={userProfile}
           cloudUserId={cloudUserId}
           followRequestedHandles={followRequestedHandles}
           onToggleFollowRequest={toggleFollowRequest}
+          incomingFollowRequestedHandles={incomingFollowRequestedHandles}
+          onAcceptFollowRequest={handleAcceptFollowRequest}
+          onDeclineFollowRequest={handleDeclineFollowRequest}
           initialCollectionId={selectedProfileCollectionId}
           onOpenCollectionPage={(collectionId) => {
             setSelectedProfileCollectionId(collectionId)
@@ -3423,6 +3613,21 @@ export default function AppController() {
             const isOwnEntry = Boolean(cloudUserId && entry.ownerId === cloudUserId)
               || ownedEntryIds.has(entry.id)
             const engagement = postEngagements[entry.id]
+            const resolvedAvatar = entry.authorAvatarUrl || (
+              (entry.authorHandle && userProfile.handle && entry.authorHandle.toLowerCase().replace(/^@/, '') === userProfile.handle.toLowerCase().replace(/^@/, ''))
+                ? userProfile.avatarUrl
+                : ''
+            )
+            const resolvedGenre = entry.genre || (
+              (entry.providerId && homeGenreMap.get(`${entry.type}:${entry.providerId}`))
+              || (entry.title && entry.creator && homeGenreMap.get(`${entry.type}:${entry.title.trim().toLowerCase()}:${entry.creator.trim().toLowerCase()}`))
+              || (entry.title && homeGenreMap.get(`${entry.type}:${entry.title.trim().toLowerCase()}`))
+              || ''
+            )
+            const cardEntry = (resolvedAvatar !== entry.authorAvatarUrl || (resolvedGenre && !entry.genre))
+              ? { ...entry, authorAvatarUrl: resolvedAvatar || entry.authorAvatarUrl, genre: resolvedGenre || entry.genre }
+              : entry
+
             return (
               <div
                 key={entry.id}
@@ -3440,16 +3645,16 @@ export default function AppController() {
                 } : { width: '100%', marginBottom: 14 }}
               >
                 <Card
-                  entry={entry}
+                  entry={cardEntry}
                   expanded={expandedCardId === entry.id}
                   onDelete={isOwnEntry ? () => promptDeleteEntry(entry.id) : undefined}
-                  onEdit={isOwnEntry ? () => openComposer(entry) : undefined}
+                  onEdit={isOwnEntry ? () => openComposer(cardEntry) : undefined}
                   onToggle={() => toggleCardExpanded(entry.id)}
-                  onExpandOverlay={() => openEntryOverlay(entry)}
+                  onExpandOverlay={() => openEntryOverlay(cardEntry)}
                   onOpenProfile={() => handleOpenUserProfile(entry.authorHandle)}
-                  onOpenMedia={() => handleOpenCollectionMedia(entry)}
+                  onOpenMedia={() => handleOpenCollectionMedia(cardEntry)}
                   onOpenCreator={entry.type === 'game' ? undefined : (creatorName) => handleOpenEntryCreator(entry, creatorName)}
-                  onOpenAlbum={entry.type === 'song' ? () => handleOpenEntryAlbum(entry) : undefined}
+                  onOpenAlbum={entry.type === 'song' ? () => handleOpenEntryAlbum(cardEntry) : undefined}
                   typeIcon={typeMeta.Icon}
                   typeLabel={typeMeta.label}
                   isLiked={engagement?.isLiked ?? likedEntryIds.includes(entry.id)}

@@ -9,6 +9,7 @@ import { handleIdentityApiRequest } from './server/identities.mjs'
 import { handleOpenLibraryApiRequest } from './server/openlibrary.mjs'
 import { handleAuthApiRequest } from './server/auth-links.mjs'
 import { handleFeedApiRequest } from './server/feed.mjs'
+import { handleFollowRequestsApiRequest } from './server/follows.mjs'
 
 const root = fileURLToPath(new URL('.', import.meta.url))
 const distRoot = join(root, 'dist')
@@ -51,6 +52,18 @@ createServer(async (request, response) => {
   try {
     if (request.url?.startsWith('/api/auth/')) {
       const payload = await handleAuthApiRequest(request)
+      if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
+      return sendJson(response, 200, payload, 'no-store')
+    }
+
+    if (request.url?.startsWith('/api/follow-requests/')) {
+      const payload = await handleFollowRequestsApiRequest(request)
+      if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
+      return sendJson(response, 200, payload, 'no-store')
+    }
+
+    if (request.url?.startsWith('/api/profiles/')) {
+      const payload = await handleFollowRequestsApiRequest(request)
       if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
       return sendJson(response, 200, payload, 'no-store')
     }

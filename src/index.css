@@ -1129,6 +1129,109 @@ body.theme-white::selection,
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
 }
 
+[data-theme="white"] .profile-report-btn,
+.theme-white .profile-report-btn,
+[data-theme="light"] .profile-report-btn,
+.theme-light .profile-report-btn {
+  background: #ffffff !important;
+  border: 1px solid #d4d4d8 !important;
+  color: #52525b !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+}
+
+[data-theme="white"] .profile-report-btn svg,
+[data-theme="white"] .profile-report-btn span,
+.theme-white .profile-report-btn svg,
+.theme-white .profile-report-btn span,
+[data-theme="light"] .profile-report-btn svg,
+[data-theme="light"] .profile-report-btn span,
+.theme-light .profile-report-btn svg,
+.theme-light .profile-report-btn span {
+  color: #52525b !important;
+}
+
+[data-theme="white"] .profile-report-btn:hover,
+.theme-white .profile-report-btn:hover,
+[data-theme="light"] .profile-report-btn:hover,
+.theme-light .profile-report-btn:hover {
+  background: #fee2e2 !important;
+  border-color: #fca5a5 !important;
+  color: #dc2626 !important;
+}
+
+[data-theme="white"] .profile-report-btn:hover svg,
+[data-theme="white"] .profile-report-btn:hover span,
+.theme-white .profile-report-btn:hover svg,
+.theme-white .profile-report-btn:hover span,
+[data-theme="light"] .profile-report-btn:hover svg,
+[data-theme="light"] .profile-report-btn:hover span,
+.theme-light .profile-report-btn:hover svg,
+.theme-light .profile-report-btn:hover span {
+  color: #dc2626 !important;
+}
+
+[data-theme="white"] .edit-profile-btn.is-following,
+.theme-white .edit-profile-btn.is-following,
+[data-theme="light"] .edit-profile-btn.is-following,
+.theme-light .edit-profile-btn.is-following {
+  background: #ffffff !important;
+  border: 1px solid #d4d4d8 !important;
+  color: #18181b !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+}
+
+[data-theme="white"] .edit-profile-btn.is-following svg,
+[data-theme="white"] .edit-profile-btn.is-following span,
+.theme-white .edit-profile-btn.is-following svg,
+.theme-white .edit-profile-btn.is-following span,
+[data-theme="light"] .edit-profile-btn.is-following svg,
+[data-theme="light"] .edit-profile-btn.is-following span,
+.theme-light .edit-profile-btn.is-following svg,
+.theme-light .edit-profile-btn.is-following span {
+  color: #18181b !important;
+}
+
+[data-theme="white"] .edit-profile-btn.is-following:hover,
+.theme-white .edit-profile-btn.is-following:hover,
+[data-theme="light"] .edit-profile-btn.is-following:hover,
+.theme-light .edit-profile-btn.is-following:hover {
+  background: #fee2e2 !important;
+  border-color: #fca5a5 !important;
+  color: #dc2626 !important;
+}
+
+[data-theme="white"] .edit-profile-btn.is-following:hover svg,
+[data-theme="white"] .edit-profile-btn.is-following:hover span,
+.theme-white .edit-profile-btn.is-following:hover svg,
+.theme-white .edit-profile-btn.is-following:hover span,
+[data-theme="light"] .edit-profile-btn.is-following:hover svg,
+[data-theme="light"] .edit-profile-btn.is-following:hover span,
+.theme-light .edit-profile-btn.is-following:hover svg,
+.theme-light .edit-profile-btn.is-following:hover span {
+  color: #dc2626 !important;
+}
+
+[data-theme="white"] .edit-profile-btn.is-requested,
+.theme-white .edit-profile-btn.is-requested,
+[data-theme="light"] .edit-profile-btn.is-requested,
+.theme-light .edit-profile-btn.is-requested {
+  background: #fef3c7 !important;
+  border: 1px solid #fcd34d !important;
+  color: #b45309 !important;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.12) !important;
+}
+
+[data-theme="white"] .edit-profile-btn.is-requested svg,
+[data-theme="white"] .edit-profile-btn.is-requested span,
+.theme-white .edit-profile-btn.is-requested svg,
+.theme-white .edit-profile-btn.is-requested span,
+[data-theme="light"] .edit-profile-btn.is-requested svg,
+[data-theme="light"] .edit-profile-btn.is-requested span,
+.theme-light .edit-profile-btn.is-requested svg,
+.theme-light .edit-profile-btn.is-requested span {
+  color: #b45309 !important;
+}
+
 [data-theme="white"] .profile-inline-cover-edit:hover,
 .theme-white .profile-inline-cover-edit:hover {
   background: #09090b !important;

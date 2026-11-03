@@ -5,6 +5,7 @@ import { handleIdentityApiRequest } from './identities.mjs'
 import { handleOpenLibraryApiRequest } from './openlibrary.mjs'
 import { handleAuthApiRequest } from './auth-links.mjs'
 import { handleFeedApiRequest } from './feed.mjs'
+import { handleFollowRequestsApiRequest } from './follows.mjs'
 
 export function createIgdbDevPlugin(env) {
   return {
@@ -42,6 +43,44 @@ export function createIgdbDevPlugin(env) {
             response.end(JSON.stringify({
               error: error instanceof Error ? error.message : 'Unexpected authentication error.',
               retryAfter: Number(error?.retryAfter) || undefined,
+            }))
+          }
+          return
+        }
+
+        if (request.url?.startsWith('/api/follow-requests/')) {
+          try {
+            const payload = await handleFollowRequestsApiRequest(request, env)
+            if (!payload) return next()
+            response.statusCode = 200
+            response.setHeader('Content-Type', 'application/json; charset=utf-8')
+            response.setHeader('Cache-Control', 'no-store')
+            response.end(JSON.stringify(payload))
+          } catch (error) {
+            response.statusCode = Number(error?.statusCode) || 500
+            response.setHeader('Content-Type', 'application/json; charset=utf-8')
+            response.setHeader('Cache-Control', 'no-store')
+            response.end(JSON.stringify({
+              error: error instanceof Error ? error.message : 'Unexpected follow request error.',
+            }))
+          }
+          return
+        }
+
+        if (request.url?.startsWith('/api/profiles/')) {
+          try {
+            const payload = await handleFollowRequestsApiRequest(request, env)
+            if (!payload) return next()
+            response.statusCode = 200
+            response.setHeader('Content-Type', 'application/json; charset=utf-8')
+            response.setHeader('Cache-Control', 'no-store')
+            response.end(JSON.stringify(payload))
+          } catch (error) {
+            response.statusCode = Number(error?.statusCode) || 500
+            response.setHeader('Content-Type', 'application/json; charset=utf-8')
+            response.setHeader('Cache-Control', 'no-store')
+            response.end(JSON.stringify({
+              error: error instanceof Error ? error.message : 'Unexpected profile content error.',
             }))
           }
           return

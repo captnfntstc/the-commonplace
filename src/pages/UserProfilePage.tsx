@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft,
   AlertTriangle,
+  UserX,
   User,
   Search,
   X,
@@ -15,6 +16,7 @@ import {
   Lock,
   UserCheck,
   UserPlus,
+  UserMinus,
   Users,
   Calendar,
   FolderHeart,
@@ -130,6 +132,10 @@ interface UserProfilePageProps {
   cloudUserId?: string | null
   followRequestedHandles?: string[]
   onToggleFollowRequest?: (handle: string) => void
+  incomingFollowRequestedHandles?: string[]
+  onAcceptFollowRequest?: (handle: string) => Promise<void> | void
+  onDeclineFollowRequest?: (handle: string) => Promise<void> | void
+  followerUserHandles?: string[]
   initialCollectionId?: string | null
   onOpenCollectionPage?: (collectionId: string) => void
   onCloseCollectionPage?: () => void
@@ -141,6 +147,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   onHome,
   showLocalNavigation = true,
   entries,
+  popularDemandEntries = [],
   savedCatalogEntries = entries,
   savedEntryIds = [],
   catalogSavedEntryIds = savedEntryIds,
@@ -172,18 +179,53 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   cloudUserId = null,
   followRequestedHandles = [],
   onToggleFollowRequest,
+  incomingFollowRequestedHandles = [],
+  onAcceptFollowRequest,
+  onDeclineFollowRequest,
+  followerUserHandles = [],
   initialCollectionId = null,
   onOpenCollectionPage,
   onCloseCollectionPage,
   privateContentLocked,
 }) => {
   // ── External profile follow & private state ──────────────────────────────
-  const isFollowingUser = followedUserHandles.includes(userProfile.handle)
-  const isFollowRequested = followRequestedHandles.includes(userProfile.handle)
+  const cleanCurrentHandle = userProfile.handle.replace(/^@/, '')
+  const cleanLoggedInHandle = currentUserProfile?.handle ? currentUserProfile.handle.replace(/^@/, '') : ''
+  const isFollowingUser = followedUserHandles.includes(cleanCurrentHandle) || followedUserHandles.includes(`@${cleanCurrentHandle}`)
+  const isFollowRequested = followRequestedHandles.includes(cleanCurrentHandle) || followRequestedHandles.includes(`@${cleanCurrentHandle}`)
   const isPrivateProfile = Boolean(userProfile.isPrivate)
-  const isLockedPrivate = privateContentLocked
-    ?? (!isOwnProfile && isPrivateProfile && !isFollowingUser)
-  const canViewSavedActivity = isOwnProfile || userProfile.showSavedActivity === true
+  const [incomingRequestHandled, setIncomingRequestHandled] = useState<'accepted' | 'declined' | null>(null)
+  const [isRespondingToRequest, setIsRespondingToRequest] = useState(false)
+
+  const hasIncomingFollowRequest = incomingRequestHandled === null && (
+    incomingFollowRequestedHandles.includes(cleanCurrentHandle) ||
+    incomingFollowRequestedHandles.includes(`@${cleanCurrentHandle}`)
+  )
+
+  const handleAcceptIncomingRequest = async () => {
+    if (isRespondingToRequest) return
+    setIsRespondingToRequest(true)
+    try {
+      setIncomingRequestHandled('accepted')
+      await onAcceptFollowRequest?.(cleanCurrentHandle)
+    } finally {
+      setIsRespondingToRequest(false)
+    }
+  }
+
+  const handleDeclineIncomingRequest = async () => {
+    if (isRespondingToRequest) return
+    setIsRespondingToRequest(true)
+    try {
+      setIncomingRequestHandled('declined')
+      await onDeclineFollowRequest?.(cleanCurrentHandle)
+    } finally {
+      setIsRespondingToRequest(false)
+    }
+  }
+  const isLockedPrivate = !isOwnProfile && isPrivateProfile && (!isFollowingUser || privateContentLocked === true)
+  const canViewSavedCatalog = isOwnProfile || (userProfile.showSavedCatalog ?? userProfile.showSavedActivity ?? false) === true
+  const canViewSavedCollections = isOwnProfile || (userProfile.showSavedCollections ?? userProfile.showSavedActivity ?? false) === true
   const inlineAvatarInputRef = useRef<HTMLInputElement>(null)
   const inlineCoverInputRef = useRef<HTMLInputElement>(null)
   const [inlineAvatarCropImage, setInlineAvatarCropImage] = useState('')
@@ -299,7 +341,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const [collectionRemovalTarget, setCollectionRemovalTarget] = useState<ProfileCollectionItem | null>(null)
   const [collectionDuplicateTarget, setCollectionDuplicateTarget] = useState<ProfileCollectionItem | null>(null)
   const [collectionInlineEditing, setCollectionInlineEditing] = useState(false)
-  const [collectionInlineRemovalTarget, setCollectionInlineRemovalTarget] = useState<CardEntry | null>(null)
+  const [collectionInlineRemovalTargets, setCollectionInlineRemovalTargets] = useState<CardEntry[] | null>(null)
+  const [unfollowConfirmTarget, setUnfollowConfirmTarget] = useState<{ handle: string; name?: string; avatarUrl?: string } | null>(null)
   const [collectionDeleteTarget, setCollectionDeleteTarget] = useState<ProfileCollection | null>(null)
   const [collectionCardMenuId, setCollectionCardMenuId] = useState<string | null>(null)
   const [collectionCardMenuCopiedId, setCollectionCardMenuCopiedId] = useState<string | null>(null)
@@ -438,8 +481,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     onClose: () => setCollectionDeleteTarget(null),
   })
   const inlineRemovalDialogRef = useAccessibleDialog<HTMLDivElement>({
-    open: Boolean(collectionInlineRemovalTarget),
-    onClose: () => setCollectionInlineRemovalTarget(null),
+    open: Boolean(collectionInlineRemovalTargets && collectionInlineRemovalTargets.length > 0),
+    onClose: () => setCollectionInlineRemovalTargets(null),
   })
   const collectionRemovalDialogRef = useAccessibleDialog<HTMLDivElement>({
     open: Boolean(collectionRemovalTarget),
@@ -452,6 +495,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const followDialogRef = useAccessibleDialog<HTMLDivElement>({
     open: Boolean(activeFollowModal),
     onClose: closeFollowModal,
+  })
+  const unfollowConfirmDialogRef = useAccessibleDialog<HTMLDivElement>({
+    open: Boolean(unfollowConfirmTarget),
+    onClose: () => setUnfollowConfirmTarget(null),
   })
 
   // ── Inline Profile Editing State ───────────────────────────────────────────
@@ -513,10 +560,84 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     following: PublicAccountIdentity[]
   }>({ followers: [], following: [] })
 
+  const applyOptimisticFollow = (
+    handle: string,
+    following: boolean,
+    name?: string,
+    avatarUrl?: string,
+    isPrivate?: boolean,
+  ) => {
+    const cleanTarget = handle.replace(/^@/, '')
+    setProfileFollowLists((prev) => {
+      if (!isOwnProfile && cleanTarget === cleanCurrentHandle) {
+        if (!following) {
+          return {
+            ...prev,
+            followers: prev.followers.filter(
+              (f) => f.handle.replace(/^@/, '') !== cleanLoggedInHandle && (cloudUserId ? f.uid !== cloudUserId : true),
+            ),
+          }
+        } else {
+          const exists = prev.followers.some(
+            (f) => f.handle.replace(/^@/, '') === cleanLoggedInHandle || (cloudUserId && f.uid === cloudUserId),
+          )
+          if (exists) return prev
+          const selfDisplayName = currentUserProfile?.showFullName === false
+            ? (currentUserProfile?.firstName || cleanLoggedInHandle)
+            : (`${currentUserProfile?.firstName || ''} ${currentUserProfile?.lastName || ''}`.trim() || cleanLoggedInHandle)
+          const selfIdentity: PublicAccountIdentity = {
+            uid: cloudUserId || 'me',
+            handle: cleanLoggedInHandle,
+            name: selfDisplayName || `@${cleanLoggedInHandle}`,
+            avatarUrl: currentUserProfile?.avatarUrl || '',
+            isPrivate: Boolean(currentUserProfile?.isPrivate),
+            isDeactivated: false,
+          }
+          return {
+            ...prev,
+            followers: [...prev.followers, selfIdentity].sort((a, b) => a.name.localeCompare(b.name)),
+          }
+        }
+      }
+
+      if (isOwnProfile) {
+        if (!following) {
+          return {
+            ...prev,
+            following: prev.following.filter((f) => f.handle.replace(/^@/, '') !== cleanTarget),
+          }
+        } else {
+          const exists = prev.following.some((f) => f.handle.replace(/^@/, '') === cleanTarget)
+          if (exists) return prev
+          const targetIdentity: PublicAccountIdentity = {
+            uid: cleanTarget,
+            handle: cleanTarget,
+            name: name || `@${cleanTarget}`,
+            avatarUrl: avatarUrl || '',
+            isPrivate: Boolean(isPrivate),
+            isDeactivated: false,
+          }
+          return {
+            ...prev,
+            following: [...prev.following, targetIdentity].sort((a, b) => a.name.localeCompare(b.name)),
+          }
+        }
+      }
+
+      return prev
+    })
+  }
+
   useEffect(() => {
     if (!cloudUserId) return undefined
     return subscribeProfileFollowLists(userProfile.handle, setProfileFollowLists)
   }, [cloudUserId, userProfile.handle])
+
+  const isFollowerUser = !isOwnProfile && (
+    followerUserHandles.includes(cleanCurrentHandle) ||
+    followerUserHandles.includes(`@${cleanCurrentHandle}`) ||
+    Boolean(cleanLoggedInHandle && profileFollowLists?.following?.some((identity) => identity.handle.replace(/^@/, '') === cleanLoggedInHandle))
+  )
 
   const profileGridRef = useRef<HTMLElement>(null)
   const selectedCollectionId = onOpenCollectionPage ? initialCollectionId : localSelectedCollectionId
@@ -785,6 +906,19 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     : catalogMode === 'shelf'
       ? filteredShelfEntries
       : []
+
+  const profileGenreMap = useMemo(() => {
+    const all = [...(entries || []), ...(popularDemandEntries || [])]
+    const map = new Map<string, string>()
+    for (const e of all) {
+      const g = (e.genre || '').trim()
+      if (!g) continue
+      if (e.providerId) map.set(`${e.type}:${e.providerId}`, g)
+      if (e.title && e.creator) map.set(`${e.type}:${e.title.trim().toLowerCase()}:${e.creator.trim().toLowerCase()}`, g)
+      if (e.title) map.set(`${e.type}:${e.title.trim().toLowerCase()}`, g)
+    }
+    return map
+  }, [entries, popularDemandEntries])
   const activeExpandedCardId = catalogMode === 'reviewed'
     ? expandedCardId
     : catalogMode === 'shelf'
@@ -1062,7 +1196,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
     setCollectionCoverMode(mode)
     setCollectionCustomCover(initialCover)
     setCollectionGradientVariant(initialVariant)
-    setCollectionInlineRemovalTarget(null)
+    setCollectionInlineRemovalTargets(null)
 
     collectionInlineInitialRef.current = {
       name: initialName,
@@ -1092,7 +1226,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       setCollectionInlineDiscardConfirmOpen(true)
     } else {
       setCollectionInlineEditing(false)
-      setCollectionInlineRemovalTarget(null)
+      setCollectionInlineRemovalTargets(null)
     }
   }
 
@@ -1106,7 +1240,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       setCollectionGradientVariant(collectionInlineInitialRef.current.gradientVariant)
     }
     setCollectionInlineEditing(false)
-    setCollectionInlineRemovalTarget(null)
+    setCollectionInlineRemovalTargets(null)
   }
 
   const saveInlineCollectionEdit = (reorderedItemIds?: string[]) => {
@@ -1222,13 +1356,13 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   }
 
   const confirmInlineCollectionRemoval = () => {
-    if (!selectedCollection || !collectionInlineRemovalTarget) return
+    if (!selectedCollection || !collectionInlineRemovalTargets || collectionInlineRemovalTargets.length === 0) return
     try {
-      const targetId = collectionInlineRemovalTarget.id
+      const targetIds = new Set(collectionInlineRemovalTargets.map((t) => t.id))
       const remainingItems = selectedCollection.items?.filter(
-        (item) => item.id !== targetId && item.entryId !== targetId,
+        (item) => !targetIds.has(item.id) && !targetIds.has(item.entryId || ''),
       )
-      const remainingEntryIds = selectedCollection.entryIds?.filter((id) => id !== targetId)
+      const remainingEntryIds = selectedCollection.entryIds?.filter((id) => !targetIds.has(id))
       const updatedCollection: ProfileCollection = {
         ...selectedCollection,
         items: remainingItems,
@@ -1242,8 +1376,12 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       )
       setProfileCollections(nextCollections)
       persistCreatedCollections(nextCollections)
-      setCollectionInlineRemovalTarget(null)
-      setProfileMediaToast('Item removed from collection.')
+      setCollectionInlineRemovalTargets(null)
+      setProfileMediaToast(
+        targetIds.size === 1
+          ? 'Item removed from collection.'
+          : `${targetIds.size} items removed from collection.`
+      )
     } catch {
       setProfileMediaToast('An error has occurred.')
     }
@@ -1251,6 +1389,31 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   const handleDeleteCollection = (collection: ProfileCollection) => {
     setCollectionDeleteTarget(collection)
+  }
+
+  const handleFollowAction = (handle: string, isPrivate?: boolean, name?: string, avatarUrl?: string) => {
+    const clean = handle.replace(/^@/, '')
+    const isCurrentlyFollowing = followedUserHandles.includes(clean) || followedUserHandles.includes(`@${clean}`)
+    const isTargetPrivate = isPrivate ?? (clean === cleanCurrentHandle ? isPrivateProfile : false)
+
+    if (isCurrentlyFollowing && isTargetPrivate) {
+      setUnfollowConfirmTarget({
+        handle: clean,
+        name: name || (clean === cleanCurrentHandle ? profileDisplayName : undefined),
+        avatarUrl: avatarUrl || (clean === cleanCurrentHandle ? userProfile.avatarUrl : undefined),
+      })
+      return
+    }
+
+    if (isCurrentlyFollowing) {
+      onToggleFollowUser?.(clean)
+      applyOptimisticFollow(clean, false, name, avatarUrl, isPrivate)
+    } else if (isTargetPrivate) {
+      onToggleFollowRequest?.(clean)
+    } else {
+      onToggleFollowUser?.(clean)
+      applyOptimisticFollow(clean, true, name, avatarUrl, isPrivate)
+    }
   }
 
   const confirmDeleteCollection = () => {
@@ -1328,10 +1491,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   if (!isOwnProfile && userProfile.accountStatus === 'deactivated') {
     return (
       <motion.div
-        className="page-wrapper profile-page-wrapper"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.22, ease: 'easeOut' }}
+        className="page-wrapper profile-page-wrapper is-minimal-profile is-quiet-reader-page"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
       >
         {showLocalNavigation && (
           <button
@@ -1344,15 +1507,43 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             <ArrowLeft aria-hidden="true" />
           </button>
         )}
-        <div className="profile-unavailable-state" role="status">
-          <div className="profile-unavailable-icon"><AlertTriangle aria-hidden="true" /></div>
-          <span>{displayName}</span>
-          <h1>There is a problem loading this account</h1>
-          <p>This account is unavailable right now. Its profile and activity are hidden.</p>
-          <button type="button" className="secondary-action-btn" onClick={onBack}>
-            <ArrowLeft aria-hidden="true" />
-            Go back
-          </button>
+        <div className="profile-page-container quiet-reader-page-container">
+          <div className="profile-unavailable-state quiet-reader-card" role="status">
+            <div className="quiet-reader-icon-halo" aria-hidden="true">
+              <UserX size={32} strokeWidth={1.8} />
+            </div>
+
+            <h1 className="quiet-reader-title">
+              This account doesn't exist
+            </h1>
+
+            <p className="quiet-reader-description">
+              Try searching for another reader or explore recent reflections on The Commonplace.
+            </p>
+
+            <div className="quiet-reader-actions">
+              {onBack && (
+                <button
+                  type="button"
+                  className={`quiet-reader-btn ${onHome ? 'quiet-reader-btn--secondary' : 'quiet-reader-btn--primary'}`}
+                  onClick={onBack}
+                >
+                  <ArrowLeft size={16} aria-hidden="true" />
+                  <span>Go back</span>
+                </button>
+              )}
+              {onHome && (
+                <button
+                  type="button"
+                  className="quiet-reader-btn quiet-reader-btn--primary"
+                  onClick={onHome}
+                >
+                  <Compass size={16} aria-hidden="true" />
+                  <span>Explore Commonplace</span>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </motion.div>
     )
@@ -1457,6 +1648,49 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       <div className="profile-page-container">
         {!selectedCollection && (
           <>
+        <AnimatePresence>
+          {hasIncomingFollowRequest && !isOwnProfile && (
+            <motion.div
+              className="profile-incoming-request-pill"
+              initial={{ opacity: 0, y: -10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+            >
+              <div className="profile-incoming-request-pill-info">
+                <div className="profile-incoming-request-pill-icon" aria-hidden="true">
+                  <UserPlus size={15} />
+                </div>
+                <span className="profile-incoming-request-pill-text">
+                  <strong>{displayName}</strong> requested to follow you
+                </span>
+              </div>
+              <div className="profile-incoming-request-pill-actions">
+                <button
+                  type="button"
+                  className="profile-incoming-request-btn confirm"
+                  onClick={handleAcceptIncomingRequest}
+                  disabled={isRespondingToRequest}
+                  aria-label="Confirm follow request"
+                >
+                  <Check size={14} aria-hidden="true" />
+                  <span>Confirm</span>
+                </button>
+                <button
+                  type="button"
+                  className="profile-incoming-request-btn delete"
+                  onClick={handleDeclineIncomingRequest}
+                  disabled={isRespondingToRequest}
+                  aria-label="Delete follow request"
+                >
+                  <X size={14} aria-hidden="true" />
+                  <span>Delete</span>
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Banner Hero */}
         <div
           className={`profile-page-banner ${isOwnProfile && onUpdateProfile ? 'is-inline-editable' : ''} ${userProfile.coverUrl ? 'has-custom-cover' : 'is-default-cover'}`}
@@ -1531,37 +1765,16 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             </button>
           )}
 
-          {!isOwnProfile && (isLockedPrivate ? (
+          {!isOwnProfile && (
             <button
               type="button"
-              className={`edit-profile-btn ${isFollowingUser || isFollowRequested ? 'is-following' : ''}`}
-              onClick={() => isFollowingUser
-                ? onToggleFollowUser?.(userProfile.handle)
-                : onToggleFollowRequest?.(userProfile.handle)}
-              style={{
-                background: isFollowingUser || isFollowRequested ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
-                color: isFollowingUser || isFollowRequested ? 'var(--text-strong)' : '#0e0b06',
-                borderColor: isFollowingUser || isFollowRequested ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
-              }}
+              className={`edit-profile-btn ${isFollowingUser ? 'is-following' : isFollowRequested ? 'is-requested' : ''}`}
+              onClick={() => handleFollowAction(userProfile.handle, isPrivateProfile)}
             >
               {isFollowingUser || isFollowRequested ? <UserCheck size={14} /> : <UserPlus size={14} />}
-              <span>{isFollowingUser ? 'Following' : isFollowRequested ? 'Requested' : 'Request to Follow'}</span>
+              <span>{isFollowingUser ? 'Following' : isFollowRequested ? 'Requested' : isPrivateProfile ? 'Request to Follow' : 'Follow'}</span>
             </button>
-          ) : (
-            <button
-              type="button"
-              className={`edit-profile-btn ${isFollowingUser ? 'is-following' : ''}`}
-              onClick={() => onToggleFollowUser?.(userProfile.handle)}
-              style={{
-                background: isFollowingUser ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
-                color: isFollowingUser ? 'var(--text-strong)' : '#0e0b06',
-                borderColor: isFollowingUser ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
-              }}
-            >
-              {isFollowingUser ? <UserCheck size={14} /> : <UserPlus size={14} />}
-              <span>{isFollowingUser ? 'Following' : 'Follow'}</span>
-            </button>
-          ))}
+          )}
 
         </div>
 
@@ -1637,10 +1850,19 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     You can change your username in the settings.
                   </p>
                 </>
-              ) : showDisplayName && (
+              ) : showDisplayName ? (
                 <div className="profile-handle-row">
                   <span className="profile-page-handle">{handleFormatted}</span>
+                  {isFollowerUser && (
+                    <span className="profile-follows-you-badge">Follows you</span>
+                  )}
                 </div>
+              ) : (
+                isFollowerUser && (
+                  <div className="profile-handle-row">
+                    <span className="profile-follows-you-badge">Follows you</span>
+                  </div>
+                )
               )}
             </div>
 
@@ -1768,37 +1990,32 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
         {/* ── Catalog Section (locked if private & not following) ─────────────── */}
         {isLockedPrivate ? (
-          <div className="profile-private-locked">
-            <div className="private-locked-icon">
-              <Lock size={32} />
+          <div className="profile-private-locked" role="region" aria-label="Private profile">
+            <div className="private-locked-icon" aria-hidden="true">
+              <Lock size={26} strokeWidth={2} />
             </div>
             <h3 className="private-locked-title">This Profile is Private</h3>
             <p className="private-locked-subtitle">
-              Private catalogs become visible only when you and @{userProfile.handle.replace(/^@/, '')} follow each other.
+              Follow @{cleanCurrentHandle} to see their catalog, collections, and posts.
             </p>
             <button
               type="button"
-              className="edit-profile-btn"
-              style={{
-                position: 'static',
-                background: isFollowingUser || isFollowRequested ? 'rgba(255,255,255,0.08)' : 'var(--accent)',
-                color: isFollowingUser || isFollowRequested ? 'var(--text-strong)' : '#0e0b06',
-                borderColor: isFollowingUser || isFollowRequested ? 'rgba(255,255,255,0.15)' : 'var(--accent)',
-                padding: '10px 24px',
-                fontSize: '13px',
-              }}
-              onClick={() => isFollowingUser
-                ? onToggleFollowUser?.(userProfile.handle)
-                : onToggleFollowRequest?.(userProfile.handle)}
+              className={`private-locked-btn ${isFollowingUser ? 'is-following' : isFollowRequested ? 'is-pending' : 'is-request'}`}
+              onClick={() => handleFollowAction(userProfile.handle, isPrivateProfile)}
             >
-              {isFollowingUser || isFollowRequested ? (
+              {isFollowingUser ? (
                 <>
-                  <UserCheck size={14} />
-                  <span>{isFollowingUser ? 'Following' : 'Requested'}</span>
+                  <UserCheck size={14} aria-hidden="true" />
+                  <span>Following</span>
+                </>
+              ) : isFollowRequested ? (
+                <>
+                  <UserCheck size={14} aria-hidden="true" />
+                  <span>Requested</span>
                 </>
               ) : (
                 <>
-                  <UserPlus size={14} />
+                  <UserPlus size={14} aria-hidden="true" />
                   <span>Request to Follow</span>
                 </>
               )}
@@ -1859,7 +2076,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     )}
                   </button>
 
-                  {canViewSavedActivity && (
+                  {canViewSavedCatalog && (
                     <button
                       type="button"
                       role="tab"
@@ -1870,7 +2087,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     >
                       <Bookmark size={14} aria-hidden="true" />
                       <span>Saved Catalog</span>
-                      {isOwnProfile && userProfile.showSavedActivity !== true && (
+                      {isOwnProfile && (userProfile.showSavedCatalog ?? userProfile.showSavedActivity ?? false) !== true && (
                         <span
                           className="profile-catalog-tab-lock"
                           aria-label="Saved catalog is private"
@@ -1895,7 +2112,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     </button>
                   )}
 
-                  {canViewSavedActivity && (
+                  {canViewSavedCollections && (
                     <button
                       type="button"
                       role="tab"
@@ -1906,7 +2123,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     >
                       <FolderPlus size={14} aria-hidden="true" />
                       <span>Saved Collections</span>
-                      {isOwnProfile && userProfile.showSavedActivity !== true && (
+                      {isOwnProfile && (userProfile.showSavedCollections ?? userProfile.showSavedActivity ?? false) !== true && (
                         <span
                           className="profile-catalog-tab-lock"
                           aria-label="Saved collections are private"
@@ -1962,10 +2179,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                 followersCount={dynamicFollowersList.length}
                 followingCount={dynamicFollowingList.length}
                 isFollowingUser={isFollowingUser}
-                onToggleFollow={() => isFollowingUser
-                  ? onToggleFollowUser?.(userProfile.handle)
-                  : onToggleFollowRequest?.(userProfile.handle)}
-                onRemoveItem={(entry) => setCollectionInlineRemovalTarget(entry)}
+                onToggleFollow={() => handleFollowAction(userProfile.handle, isPrivateProfile)}
+                onRemoveItem={(entry) => setCollectionInlineRemovalTargets([entry])}
+                onRemoveItems={(entries) => setCollectionInlineRemovalTargets(entries)}
                 collectionCoverMode={collectionCoverMode}
                 setCollectionCoverMode={setCollectionCoverMode}
                 collectionCustomCover={collectionCustomCover}
@@ -2309,6 +2525,21 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     const { Icon, label } = getTypeMeta(entry.type)
                     const engagement = postEngagements[entry.id]
 
+                    const resolvedAvatar = entry.authorAvatarUrl || (
+                      (entry.authorHandle && userProfile.handle && entry.authorHandle.toLowerCase().replace(/^@/, '') === userProfile.handle.toLowerCase().replace(/^@/, ''))
+                        ? userProfile.avatarUrl
+                        : ''
+                    )
+                    const resolvedGenre = entry.genre || (
+                      (entry.providerId && profileGenreMap.get(`${entry.type}:${entry.providerId}`))
+                      || (entry.title && entry.creator && profileGenreMap.get(`${entry.type}:${entry.title.trim().toLowerCase()}:${entry.creator.trim().toLowerCase()}`))
+                      || (entry.title && profileGenreMap.get(`${entry.type}:${entry.title.trim().toLowerCase()}`))
+                      || ''
+                    )
+                    const cardEntry = (resolvedAvatar !== entry.authorAvatarUrl || (resolvedGenre && !entry.genre))
+                      ? { ...entry, authorAvatarUrl: resolvedAvatar || entry.authorAvatarUrl, genre: resolvedGenre || entry.genre }
+                      : entry
+
                     return (
                       <div
                         key={entry.id}
@@ -2326,10 +2557,10 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                         } : { width: '100%', marginBottom: 14 }}
                       >
                         <Card
-                          entry={entry}
+                          entry={cardEntry}
                           expanded={activeExpandedCardId === entry.id}
                           onDelete={isOwnProfile && catalogMode === 'reviewed' ? () => onDeleteEntry?.(entry.id) : undefined}
-                          onEdit={isOwnProfile && catalogMode === 'reviewed' ? () => onEditEntry?.(entry) : undefined}
+                          onEdit={isOwnProfile && catalogMode === 'reviewed' ? () => onEditEntry?.(cardEntry) : undefined}
                           onToggle={() => {
                             if (catalogMode === 'reviewed') {
                               setExpandedCardId(expandedCardId === entry.id ? '' : entry.id)
@@ -2337,7 +2568,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                               setShelfExpandedCardId(shelfExpandedCardId === entry.id ? '' : entry.id)
                             }
                           }}
-                          onExpandOverlay={() => onSelectEntry?.(entry)}
+                          onExpandOverlay={() => onSelectEntry?.(cardEntry)}
                           onOpenProfile={() => {}}
                           onOpenMedia={() => onOpenMediaProfile?.(entry)}
                           onOpenCreator={entry.type === 'game' ? undefined : (creatorName) => onOpenEntryCreator?.(entry, creatorName)}
@@ -2399,8 +2630,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       </AnimatePresence>
 
       <AnimatePresence>
-        {collectionInlineRemovalTarget && selectedCollection && (
-          <div className="collection-inline-remove-backdrop" onClick={() => setCollectionInlineRemovalTarget(null)}>
+        {collectionInlineRemovalTargets && collectionInlineRemovalTargets.length > 0 && selectedCollection && (
+          <div className="collection-inline-remove-backdrop" onClick={() => setCollectionInlineRemovalTargets(null)}>
             <motion.div
               ref={inlineRemovalDialogRef}
               className="collection-remove-confirm"
@@ -2416,10 +2647,26 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               <div className="collection-remove-confirm-icon-wrap" aria-hidden="true">
                 <Trash2 size={22} />
               </div>
-              <h3 id="collection-inline-remove-title">Remove this media?</h3>
-              <p><strong>{collectionInlineRemovalTarget.title}</strong> will be removed from {selectedCollection.name} only.</p>
+              <h3 id="collection-inline-remove-title">
+                {collectionInlineRemovalTargets.length === 1
+                  ? 'Remove this media?'
+                  : `Remove ${collectionInlineRemovalTargets.length} items?`}
+              </h3>
+              <p>
+                {collectionInlineRemovalTargets.length === 1 ? (
+                  <>
+                    <strong>{collectionInlineRemovalTargets[0].title}</strong> will be removed from{' '}
+                    {selectedCollection.name} only.
+                  </>
+                ) : (
+                  <>
+                    <strong>{collectionInlineRemovalTargets.length} selected items</strong> will be removed from{' '}
+                    {selectedCollection.name} only.
+                  </>
+                )}
+              </p>
               <div>
-                <button type="button" onClick={() => setCollectionInlineRemovalTarget(null)}>Keep it</button>
+                <button type="button" onClick={() => setCollectionInlineRemovalTargets(null)}>Keep it</button>
                 <button type="button" className="danger" onClick={confirmInlineCollectionRemoval}>Remove</button>
               </div>
             </motion.div>
@@ -3376,14 +3623,16 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             >
               <header className="follow-modal-header">
                 <div className="follow-modal-heading">
-                  <h2 id="follow-modal-title" className="follow-modal-title">Connections</h2>
+                  <h2 id="follow-modal-title" className="follow-modal-title">
+                    {activeFollowModal === 'followers' ? 'Followers' : 'Following'}
+                  </h2>
                   <p className="follow-modal-subtitle">@{userProfile.handle.replace(/^@/, '')}</p>
                 </div>
                 <button
                   type="button"
                   className="follow-modal-close"
                   onClick={closeFollowModal}
-                  aria-label="Close connections"
+                  aria-label={`Close ${activeFollowModal === 'followers' ? 'followers' : 'following'}`}
                 >
                   <X size={16} aria-hidden="true" />
                 </button>
@@ -3536,18 +3785,31 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                               )}
                             </span>
                             <span className="follow-person-info">
-                              {hasDistinctName ? (
+                              {person.isDeactivated ? (
+                                <span className="follow-person-name">
+                                  <span>{cleanName || 'Quiet Reader'}</span>
+                                  {person.isPrivate && <Lock size={11} aria-hidden="true" />}
+                                </span>
+                              ) : hasDistinctName ? (
                                 <>
                                   <span className="follow-person-name">
                                     <span>{cleanName}</span>
                                     {person.isPrivate && <Lock size={11} aria-hidden="true" />}
                                   </span>
-                                  <span className="follow-person-meta">@{cleanHandle}</span>
+                                  <span className="follow-person-meta">
+                                    @{cleanHandle}
+                                    {!isCurrentUser && followerUserHandles.includes(cleanHandle) && (
+                                      <span className="profile-follows-you-badge inline">Follows you</span>
+                                    )}
+                                  </span>
                                 </>
                               ) : (
                                 <span className="follow-person-name">
                                   <span>@{cleanHandle}</span>
                                   {person.isPrivate && <Lock size={11} aria-hidden="true" />}
+                                  {!isCurrentUser && followerUserHandles.includes(cleanHandle) && (
+                                    <span className="profile-follows-you-badge inline">Follows you</span>
+                                  )}
                                 </span>
                               )}
                             </span>
@@ -3564,7 +3826,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                                 className="follow-person-btn follow-btn-primary is-following"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  onToggleFollowUser?.(person.handle)
+                                  handleFollowAction(person.handle, person.isPrivate, cleanName, person.avatar)
                                 }}
                                 title="Click to unfollow"
                                 aria-label={`Unfollow ${displayHandle}`}
@@ -3606,6 +3868,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   onToggleFollowUser?.(person.handle)
+                                  applyOptimisticFollow(person.handle, true, person.name, person.avatar, person.isPrivate)
                                 }}
                                 aria-label={`Follow ${displayHandle}`}
                               >
@@ -3677,6 +3940,56 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
               <Plus aria-hidden="true" />
             </button>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {unfollowConfirmTarget && (
+          <div className="unfollow-confirm-backdrop" onClick={() => setUnfollowConfirmTarget(null)}>
+            <motion.div
+              ref={unfollowConfirmDialogRef}
+              className="collection-remove-confirm unfollow-confirm-dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="unfollow-confirm-title"
+              tabIndex={-1}
+              initial={{ opacity: 0, scale: 0.94, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 8 }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="unfollow-confirm-avatar-wrap">
+                {unfollowConfirmTarget.avatarUrl ? (
+                  <img src={unfollowConfirmTarget.avatarUrl} alt="" className="unfollow-confirm-avatar" />
+                ) : (
+                  <div className="collection-remove-confirm-icon-wrap" aria-hidden="true">
+                    <UserMinus size={22} />
+                  </div>
+                )}
+              </div>
+              <h3 id="unfollow-confirm-title">Unfollow @{unfollowConfirmTarget.handle.replace(/^@/, '')}?</h3>
+              <p>
+                Their profile is private. If you change your mind, you will need to request to follow again.
+              </p>
+              <div>
+                <button type="button" onClick={() => setUnfollowConfirmTarget(null)}>Cancel</button>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    const target = unfollowConfirmTarget
+                    setUnfollowConfirmTarget(null)
+                    if (target) {
+                      onToggleFollowUser?.(target.handle)
+                      applyOptimisticFollow(target.handle, false, target.name, target.avatarUrl)
+                    }
+                  }}
+                >
+                  Unfollow
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </motion.div>

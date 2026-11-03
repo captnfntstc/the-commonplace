@@ -28,6 +28,7 @@ export interface AlternativeCollectionDetailProps {
   onDeleteCollection?: () => void
   onToggleSave?: () => void
   onRemoveItem?: (entry: Entry) => void
+  onRemoveItems?: (entries: Entry[]) => void
   renderCoverArtwork: () => React.ReactNode
   followersCount?: number
   followingCount?: number

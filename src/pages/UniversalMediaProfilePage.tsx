@@ -648,6 +648,7 @@ const TrackRow: React.FC<{
     let resolvedArtworkUrl = artworkUrl
     let resolvedYear = item.subtitle?.match(/\b(19|20)\d{2}\b/)?.[0] || ''
     let resolvedExplicit = item.explicit
+    let resolvedGenre = (item as any).genre || ''
 
     if (entityType === 'song') {
       if (!/^song-\d+$/i.test(targetId)) {
@@ -670,6 +671,7 @@ const TrackRow: React.FC<{
             resolvedArtworkUrl = resolveArtworkUrl(best.coverUrl, best.title, best.type) || resolvedArtworkUrl
             resolvedYear = best.year || resolvedYear
             resolvedExplicit = best.explicit ?? resolvedExplicit
+            resolvedGenre = best.genre || best.genres?.[0] || resolvedGenre
           }
         } catch {
           // Keep the local song route fallback if the provider lookup is unavailable.
@@ -693,6 +695,7 @@ const TrackRow: React.FC<{
         metadataChips: [
           ...(resolvedArtist ? [{ label: 'Artist', value: resolvedArtist }] : []),
           ...(albumSubtitle ? [{ label: 'Album', value: albumSubtitle }] : []),
+          ...(resolvedGenre ? [{ label: 'Genre', value: resolvedGenre }] : []),
           ...(resolvedYear ? [{ label: 'Release Year', value: resolvedYear }] : []),
           ...(resolvedExplicit ? [{ label: 'Explicit', value: 'Yes' }] : []),
         ],
@@ -898,6 +901,7 @@ const MostQuotedSongCard: React.FC<{
     let resolvedArtworkUrl = artworkUrl
     let resolvedYear = item.year || ''
     let resolvedAlbum = item.album || ''
+    let resolvedGenre = (item as any).genre || ''
 
     if (!/^song-\d+$/i.test(targetId)) {
       setIsResolving(true)
@@ -930,6 +934,7 @@ const MostQuotedSongCard: React.FC<{
           resolvedArtworkUrl = resolveArtworkUrl(best.coverUrl, best.title, best.type) || resolvedArtworkUrl
           resolvedYear = best.year || resolvedYear
           resolvedAlbum = best.provider || resolvedAlbum
+          resolvedGenre = best.genre || best.genres?.[0] || resolvedGenre
         }
       } catch {
         // fallback to existing entity
@@ -951,6 +956,7 @@ const MostQuotedSongCard: React.FC<{
       metadataChips: [
         { label: 'Artist', value: resolvedArtist },
         ...(resolvedAlbum ? [{ label: 'Album', value: resolvedAlbum }] : []),
+        ...(resolvedGenre ? [{ label: 'Genre', value: resolvedGenre }] : []),
         ...(resolvedYear ? [{ label: 'Release Year', value: resolvedYear }] : []),
       ],
       communityRating: {

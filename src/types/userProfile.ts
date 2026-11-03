@@ -14,6 +14,8 @@ export type UserProfileState = {
   allowComments?: boolean
   isPrivate?: boolean
   showSavedActivity?: boolean
+  showSavedCatalog?: boolean
+  showSavedCollections?: boolean
   accountStatus?: 'active' | 'deactivated'
   location?: string
   website?: string

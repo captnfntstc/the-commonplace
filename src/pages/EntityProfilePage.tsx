@@ -332,13 +332,22 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
               </div>
             ) : (
               <div className="card-grid profile-masonry-grid" style={{ position: 'relative' }}>
-                {filteredCommunityEntries.map((entry) => (
+                {filteredCommunityEntries.map((entry) => {
+                  const fallbackGenre = entry.genre || communityEntries.find((e) =>
+                    e.genre && (
+                      (entry.providerId && e.providerId === entry.providerId) ||
+                      (e.title.toLowerCase().trim() === entry.title.toLowerCase().trim() && e.creator.toLowerCase().trim() === entry.creator.toLowerCase().trim())
+                    )
+                  )?.genre || ''
+                  const cardEntry = fallbackGenre && !entry.genre ? { ...entry, genre: fallbackGenre } : entry
+
+                  return (
                   <div key={entry.id} className="masonry-item" style={{ marginBottom: 16 }}>
                     <Card
-                      entry={entry}
+                      entry={cardEntry}
                       expanded={false}
-                      onToggle={() => onSelectEntry?.(entry)}
-                      onExpandOverlay={() => onSelectEntry?.(entry)}
+                      onToggle={() => onSelectEntry?.(cardEntry)}
+                      onExpandOverlay={() => onSelectEntry?.(cardEntry)}
                       onOpenProfile={() => onOpenUserProfile?.(entry.authorHandle || 'jimboii')}
                       typeIcon={typeIcon}
                       typeLabel={getTypeBadgeLabel(entity.type)}
@@ -349,7 +358,7 @@ export const EntityProfilePage: React.FC<EntityProfilePageProps> = ({
                       commentsDisabled={disabledCommentEntryIds.includes(entry.id)}
                     />
                   </div>
-                ))}
+                )})}
               </div>
             )}
           </section>
