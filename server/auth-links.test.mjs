@@ -77,6 +77,19 @@ test('requires an authenticated session before deactivating an account', async (
   )
 })
 
+test('requires an authenticated session before reactivating an account', async () => {
+  const request = Readable.from([])
+  Object.assign(request, {
+    method: 'POST',
+    url: '/api/auth/account/reactivate',
+    headers: {},
+  })
+  await assert.rejects(
+    () => handleAuthApiRequest(request, {}),
+    (error) => error.statusCode === 401 && error.message === 'Authentication required.',
+  )
+})
+
 test('validates deactivation answers and calculates automatic reactivation', () => {
   const now = Date.parse('2026-09-01T00:00:00.000Z')
   const scheduled = authLinkInternals.validateDeactivationRequest({

@@ -162,8 +162,9 @@ export function decodeFeedCursor(raw, category) {
 }
 
 function isDeactivated(profile, now = Date.now()) {
-  if (profile.accountStatus !== 'deactivated') return false
-  const reactivatesAt = millis(profile.reactivatesAt)
+  const status = profile.accountStatus || profile.account_status
+  if (status !== 'deactivated') return false
+  const reactivatesAt = millis(profile.reactivatesAt || profile.reactivates_at)
   return !reactivatesAt || now < reactivatesAt
 }
 
@@ -384,7 +385,7 @@ async function loadFeedPageSupabase(supabaseAdmin, viewerId, category, cursor) {
 
   const visibleEntries = (entries || []).filter((row) => {
     const profile = row.profiles
-    if (!profile || profile.account_status === 'deactivated') return false
+    if (!profile || isDeactivated(profile)) return false
     const isOwn = row.owner_id === viewerId
     if (isOwn) return true
     const isFollowed = followedIds.has(row.owner_id)

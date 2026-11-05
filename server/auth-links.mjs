@@ -502,6 +502,35 @@ async function deactivateAuthenticatedAccount(request, env) {
   }
 }
 
+async function reactivateAuthenticatedAccount(request, env) {
+  const idToken = bearerToken(request)
+  if (!idToken) {
+    const error = new Error('Authentication required.')
+    error.statusCode = 401
+    throw error
+  }
+  const supabase = getSupabaseAdmin(env)
+  const { data: authData, error: authError } = await supabase.auth.getUser(idToken)
+  if (authError || !authData?.user) {
+    const error = new Error('Authentication required.')
+    error.statusCode = 401
+    throw error
+  }
+
+  const uid = authData.user.id
+  await supabase
+    .from('profiles')
+    .update({
+      account_status: 'active',
+      reactivates_at: null,
+      deactivation_reason: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', uid)
+
+  return { reactivated: true }
+}
+
 async function deleteAuthenticatedAccount(request, env) {
   const idToken = bearerToken(request)
   if (!idToken) {
@@ -608,6 +637,9 @@ export async function handleAuthApiRequest(request, env = process.env) {
   const pathname = new URL(request.url || '/', 'http://localhost').pathname
   if (request.method === 'POST' && pathname === '/api/auth/account/deactivate') {
     return deactivateAuthenticatedAccount(request, env)
+  }
+  if (request.method === 'POST' && pathname === '/api/auth/account/reactivate') {
+    return reactivateAuthenticatedAccount(request, env)
   }
   if (request.method === 'DELETE' && pathname === '/api/auth/account') {
     return deleteAuthenticatedAccount(request, env)
