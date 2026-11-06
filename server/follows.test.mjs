@@ -14,6 +14,18 @@ test('rejects follow request endpoints when unauthenticated', async () => {
   )
 })
 
+test('rejects follow toggle endpoint when unauthenticated', async () => {
+  const request = {
+    method: 'POST',
+    url: '/api/follows/toggle',
+    headers: {},
+  }
+  await assert.rejects(
+    () => handleFollowRequestsApiRequest(request, {}),
+    (error) => error.statusCode === 401 && error.message === 'Authentication required.',
+  )
+})
+
 test('rejects follow request endpoints when token is invalid', async () => {
   const request = {
     method: 'POST',

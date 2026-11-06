@@ -48,7 +48,7 @@ export function createIgdbDevPlugin(env) {
           return
         }
 
-        if (request.url?.startsWith('/api/follow-requests/')) {
+        if (request.url?.startsWith('/api/follow-requests/') || request.url?.startsWith('/api/follows/')) {
           try {
             const payload = await handleFollowRequestsApiRequest(request, env)
             if (!payload) return next()

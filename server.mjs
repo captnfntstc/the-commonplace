@@ -56,7 +56,7 @@ createServer(async (request, response) => {
       return sendJson(response, 200, payload, 'no-store')
     }
 
-    if (request.url?.startsWith('/api/follow-requests/')) {
+    if (request.url?.startsWith('/api/follow-requests/') || request.url?.startsWith('/api/follows/')) {
       const payload = await handleFollowRequestsApiRequest(request)
       if (!payload) return sendJson(response, 404, { error: 'API route not found.' })
       return sendJson(response, 200, payload, 'no-store')

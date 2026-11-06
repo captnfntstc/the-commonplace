@@ -391,6 +391,157 @@ export async function handleFollowRequestsApiRequest(request, env = process.env)
     }
   }
 
+  if (request.method === 'POST' && pathname === '/api/follows/toggle') {
+    const { user: requesterUser, admin } = await authenticateRequestUser(request, env)
+    const body = await readJsonBody(request)
+    const targetHandle = cleanHandle(body.targetHandle)
+    const following = Boolean(body.following)
+    if (!targetHandle) throw httpError('Missing target handle.', 400)
+
+    // Resolve target profile
+    const { data: targetProfile } = await admin
+      .from('profiles')
+      .select('id, handle, is_private, account_status')
+      .ilike('handle', targetHandle)
+      .maybeSingle()
+
+    if (!targetProfile?.id) throw httpError('Target profile not found.', 404)
+    const targetId = targetProfile.id
+
+    if (following) {
+      // Upsert follow relation
+      await admin.from('follows').upsert({
+        follower_id: requesterUser.id,
+        following_id: targetId,
+        target_handle: targetHandle,
+      })
+
+      // Update requester cloud state
+      try {
+        const { data: requesterState } = await admin
+          .from('user_cloud_state')
+          .select('*')
+          .eq('user_id', requesterUser.id)
+          .maybeSingle()
+        if (requesterState) {
+          const rawFollowed = Array.isArray(requesterState.followed_user_handles)
+            ? requesterState.followed_user_handles.map(cleanHandle)
+            : []
+          await admin
+            .from('user_cloud_state')
+            .update({
+              followed_user_handles: Array.from(new Set([...rawFollowed, targetHandle])),
+            })
+            .eq('user_id', requesterUser.id)
+        }
+      } catch {
+        // ignore
+      }
+
+      // Always notify when following: clean up previous notification from this actor and insert fresh
+      if (targetId !== requesterUser.id) {
+        try {
+          await admin
+            .from('notifications')
+            .delete()
+            .eq('recipient_id', targetId)
+            .eq('actor_id', requesterUser.id)
+            .eq('type', 'follow')
+        } catch {
+          // ignore
+        }
+        try {
+          await admin
+            .from('notifications')
+            .delete()
+            .eq('id', `follow_${requesterUser.id}`)
+        } catch {
+          // ignore
+        }
+
+        try {
+          const freshId = `follow_${requesterUser.id}_${Date.now()}`
+          const { error: notifErr } = await admin.from('notifications').insert({
+            id: freshId,
+            recipient_id: targetId,
+            actor_id: requesterUser.id,
+            type: 'follow',
+            interaction_id: requesterUser.id,
+            read: false,
+            created_at: new Date().toISOString(),
+          })
+          if (notifErr && (notifErr.code === '23514' || notifErr.message?.includes('violates check constraint'))) {
+            await admin.from('notifications').insert({
+              id: freshId,
+              recipient_id: targetId,
+              actor_id: requesterUser.id,
+              type: 'follow',
+              interaction_id: `follow:${requesterUser.id}`,
+              read: false,
+              created_at: new Date().toISOString(),
+            })
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      return { success: true, following: true }
+    } else {
+      // Unfollow
+      await admin.from('follows').delete().match({
+        follower_id: requesterUser.id,
+        following_id: targetId,
+      })
+
+      // Clean up notifications from this actor to target
+      if (targetId !== requesterUser.id) {
+        try {
+          await admin
+            .from('notifications')
+            .delete()
+            .eq('recipient_id', targetId)
+            .eq('actor_id', requesterUser.id)
+            .eq('type', 'follow')
+        } catch {
+          // ignore
+        }
+        try {
+          await admin
+            .from('notifications')
+            .delete()
+            .eq('id', `follow_${requesterUser.id}`)
+        } catch {
+          // ignore
+        }
+      }
+
+      // Update requester cloud state
+      try {
+        const { data: requesterState } = await admin
+          .from('user_cloud_state')
+          .select('*')
+          .eq('user_id', requesterUser.id)
+          .maybeSingle()
+        if (requesterState) {
+          const rawFollowed = Array.isArray(requesterState.followed_user_handles)
+            ? requesterState.followed_user_handles.map(cleanHandle)
+            : []
+          await admin
+            .from('user_cloud_state')
+            .update({
+              followed_user_handles: rawFollowed.filter((h) => h !== targetHandle),
+            })
+            .eq('user_id', requesterUser.id)
+        }
+      } catch {
+        // ignore
+      }
+
+      return { success: true, following: false }
+    }
+  }
+
   if (request.method === 'GET' && pathname === '/api/profiles/content') {
     const url = new URL(request.url || '/', 'http://localhost')
     const queryUserId = url.searchParams.get('userId') || ''
@@ -431,7 +582,10 @@ export async function handleFollowRequestsApiRequest(request, env = process.env)
       targetProfile = data
     }
 
-    if (!targetProfile || targetProfile.account_status === 'deactivated') {
+    const isCurrentlyDeactivated = targetProfile?.account_status === 'deactivated' &&
+      (!targetProfile.reactivates_at || new Date(targetProfile.reactivates_at).getTime() > Date.now())
+
+    if (!targetProfile || isCurrentlyDeactivated) {
       throw httpError('Profile not found.', 404)
     }
 
