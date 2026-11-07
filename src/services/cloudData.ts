@@ -135,6 +135,9 @@ type CloudImageKind = 'avatar' | 'cover' | 'collection-cover'
 
 const MAX_MEDIA_DATA_URL_LENGTH = 700_000
 const accountIdentityCache = new Map<string, Promise<{ handle: string; deactivated: boolean }>>()
+export function clearAccountIdentityCache() {
+  accountIdentityCache.clear()
+}
 const pendingUserEntryWrites = new Map<string, Promise<void>>()
 
 export const DEACTIVATED_ACCOUNT_NAME = 'Quiet Reader'
@@ -348,14 +351,38 @@ export async function saveUserProfile(
 
 export async function reactivateUserAccount(userId: string) {
   if (!canUseCloudData(userId)) return
-  if (isSupabaseConfigured) {
-    void supabase.from('profiles').update({
-      account_status: 'active',
-      reactivates_at: null,
-      updated_at: new Date().toISOString(),
-    }).eq('id', userId)
+  accountIdentityCache.clear()
+
+  const token = await getSessionAccessToken()
+  if (token) {
+    try {
+      await fetch('/api/auth/account/reactivate', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+    } catch {
+      // fallback to direct supabase
+    }
   }
-  accountIdentityCache.delete(userId)
+
+  if (isSupabaseConfigured) {
+    try {
+      await supabase.from('profiles').update({
+        account_status: 'active',
+        reactivates_at: null,
+        deactivation_reason: null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', userId)
+    } catch (err) {
+      console.error('Error reactivating profile in Supabase:', err)
+    }
+  }
+
+  accountIdentityCache.clear()
+  notifyFollowsChanged()
 }
 
 export async function loadUserProfile(userId: string, fallbackEmail?: string): Promise<UserProfileState | null> {
@@ -371,6 +398,10 @@ export async function loadUserProfile(userId: string, fallbackEmail?: string): P
       const { data: sessionData } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }))
       const sessionUser = sessionData?.session?.user
       const email = (sessionUser?.id === userId ? sessionUser.email : fallbackEmail) || fallbackEmail || ''
+      if (profile.account_status === 'deactivated' && sessionUser?.id === userId) {
+        void reactivateUserAccount(userId)
+        profile.account_status = 'active'
+      }
       return {
         firstName: String(profile.first_name || ''),
         lastName: String(profile.last_name || ''),
@@ -849,7 +880,7 @@ async function loadPublicAccountIdentityById(
       .eq('id', userId)
       .maybeSingle()
     if (data) {
-      const isDeactivated = data.account_status === 'deactivated'
+      const isDeactivated = isAccountCurrentlyDeactivated(data as Record<string, unknown>)
       const name = data.show_full_name === false
         ? String(data.first_name || '')
         : `${String(data.first_name || '')} ${String(data.last_name || '')}`.trim()
@@ -938,6 +969,10 @@ export function subscribeProfileFollowLists(
         .on('postgres_changes', { event: '*', schema: 'public', table: 'follows' }, () => {
           void loadLists()
         })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, () => {
+          accountIdentityCache.clear()
+          void loadLists()
+        })
         .subscribe()
       subscriptions.push(() => void supabase.removeChannel(channel))
 
@@ -1016,7 +1051,7 @@ export async function loadPublicUserByHandle(handle: string, viewerId?: string |
 
     if (!profileRow) return null
 
-    const isDeactivated = profileRow.account_status === 'deactivated'
+    const isDeactivated = isAccountCurrentlyDeactivated(profileRow)
     const cleanResolvedHandle = cleanHandle(String(profileRow.handle || handle))
 
     if (isDeactivated) {
@@ -1153,7 +1188,7 @@ export async function loadPublicFeedEntries(excludedUserId?: string | null): Pro
         return (
           p &&
           p.is_private !== true &&
-          p.account_status !== 'deactivated' &&
+          !isAccountCurrentlyDeactivated(p) &&
           Boolean(cleanHandle(String(p.handle || '')))
         )
       })
@@ -1171,6 +1206,28 @@ export async function saveFollowRelationship(
   _actor?: { name?: string; handle?: string },
 ) {
   if (!canUseCloudData(followerId)) return
+
+  // First try the server endpoint with service admin for guaranteed execution & notification delivery
+  const token = await getSessionAccessToken()
+  if (token) {
+    try {
+      const res = await fetch('/api/follows/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ targetHandle, following }),
+      })
+      if (res.ok) {
+        notifyFollowsChanged()
+        return
+      }
+    } catch {
+      // fallback to direct supabase
+    }
+  }
+
   const targetId = await resolveUserIdByHandle(targetHandle)
   if (!targetId) return
 
@@ -1183,14 +1240,46 @@ export async function saveFollowRelationship(
       })
       if (targetId !== followerId) {
         try {
-          await supabase.from('notifications').insert({
-            id: `follow_${followerId}`,
+          await supabase
+            .from('notifications')
+            .delete()
+            .eq('recipient_id', targetId)
+            .eq('actor_id', followerId)
+            .eq('type', 'follow')
+        } catch {
+          // ignore
+        }
+        try {
+          await supabase
+            .from('notifications')
+            .delete()
+            .eq('id', `follow_${followerId}`)
+        } catch {
+          // ignore
+        }
+
+        try {
+          const freshId = `follow_${followerId}_${Date.now()}`
+          const { error: notifErr } = await supabase.from('notifications').insert({
+            id: freshId,
             recipient_id: targetId,
             actor_id: followerId,
             type: 'follow',
             interaction_id: followerId,
             read: false,
+            created_at: new Date().toISOString(),
           })
+          if (notifErr && (notifErr.code === '23514' || notifErr.message?.includes('violates check constraint'))) {
+            await supabase.from('notifications').insert({
+              id: freshId,
+              recipient_id: targetId,
+              actor_id: followerId,
+              type: 'follow',
+              interaction_id: `follow:${followerId}`,
+              read: false,
+              created_at: new Date().toISOString(),
+            })
+          }
         } catch {
           // ignore notification insert failure
         }
@@ -1201,6 +1290,16 @@ export async function saveFollowRelationship(
         following_id: targetId,
       })
       if (targetId !== followerId) {
+        try {
+          await supabase
+            .from('notifications')
+            .delete()
+            .eq('recipient_id', targetId)
+            .eq('actor_id', followerId)
+            .eq('type', 'follow')
+        } catch {
+          // ignore notification delete failure
+        }
         try {
           await supabase.from('notifications').delete().eq('id', `follow_${followerId}`)
         } catch {
@@ -1393,6 +1492,101 @@ export async function togglePostLike(
       // ignore notification failure
     }
   }
+}
+
+export interface EntryLiker {
+  userId: string
+  handle: string
+  name: string
+  avatarUrl?: string
+  createdAt?: string
+}
+
+export async function fetchEntryLikers(
+  postId: string,
+  options?: {
+    viewerId?: string | null
+    isViewerLiked?: boolean
+    viewerProfile?: { handle?: string; name?: string; avatarUrl?: string }
+    fallbackCount?: number
+  },
+): Promise<EntryLiker[]> {
+  const likers: EntryLiker[] = []
+  const seenHandles = new Set<string>()
+
+  // 1. Check local test likers from devtools / offline cache
+  try {
+    const rawLocal = localStorage.getItem(`the-commonplace.entry-likes.${postId}`)
+    if (rawLocal) {
+      const parsed: EntryLiker[] = JSON.parse(rawLocal)
+      parsed.forEach((item) => {
+        const clean = (item.handle || item.userId || '').toLowerCase().replace(/^@/, '')
+        if (clean && !seenHandles.has(clean)) {
+          seenHandles.add(clean)
+          likers.push(item)
+        }
+      })
+    }
+  } catch {}
+
+  // 2. Query Supabase entry_likes if configured
+  if (isSupabaseConfigured) {
+    try {
+      const { data: likes, error } = await supabase
+        .from('entry_likes')
+        .select('user_id, created_at')
+        .eq('entry_id', postId)
+        .order('created_at', { ascending: false })
+
+      if (!error && likes && likes.length > 0) {
+        const userIds = Array.from(new Set(likes.map((r: any) => r.user_id).filter(Boolean)))
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, handle, name, first_name, last_name, avatar_url, show_full_name')
+          .in('id', userIds)
+
+        const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]))
+
+        likes.forEach((row: any) => {
+          const p = profileMap.get(row.user_id)
+          const rawHandle = (p?.handle || row.user_id || '').replace(/^@/, '')
+          const clean = rawHandle.toLowerCase()
+          if (!seenHandles.has(clean)) {
+            seenHandles.add(clean)
+            const displayName = p?.show_full_name !== false && (p?.first_name || p?.last_name)
+              ? `${p?.first_name || ''} ${p?.last_name || ''}`.trim()
+              : p?.name || p?.first_name || (rawHandle ? `@${rawHandle}` : 'User')
+
+            likers.push({
+              userId: row.user_id,
+              handle: rawHandle ? `@${rawHandle}` : '',
+              name: displayName,
+              avatarUrl: p?.avatar_url || '',
+              createdAt: row.created_at,
+            })
+          }
+        })
+      }
+    } catch {}
+  }
+
+  // 3. Ensure viewer is listed if viewer liked the post
+  if (options?.isViewerLiked && options?.viewerProfile) {
+    const viewerHandle = (options.viewerProfile.handle || '').replace(/^@/, '')
+    const cleanViewer = viewerHandle.toLowerCase()
+    if (cleanViewer && !seenHandles.has(cleanViewer)) {
+      seenHandles.add(cleanViewer)
+      likers.unshift({
+        userId: options.viewerId || 'current-user',
+        handle: `@${viewerHandle}`,
+        name: options.viewerProfile.name || `@${viewerHandle}`,
+        avatarUrl: options.viewerProfile.avatarUrl,
+        createdAt: new Date().toISOString(),
+      })
+    }
+  }
+
+  return likers
 }
 
 export function subscribeUserNotifications(
