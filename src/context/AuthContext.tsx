@@ -189,6 +189,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
         if (session?.user) {
           const user = mapSupabaseUserToAuthUser(session.user, session.access_token)
           setCurrentUser(user)
+          void reactivateUserAccount(session.user.id)
           setVerificationCooldownUntil(readVerificationCooldown(user))
           setLoading(false)
         } else {
@@ -196,11 +197,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode; initialUser?: U
         }
       })
 
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
         if (!mounted) return
         if (session?.user) {
           const user = mapSupabaseUserToAuthUser(session.user, session.access_token)
           setCurrentUser(user)
+          if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
+            void reactivateUserAccount(session.user.id)
+          }
           setVerificationCooldownUntil(readVerificationCooldown(user))
           setLoading(false)
         } else {

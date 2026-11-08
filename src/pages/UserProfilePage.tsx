@@ -675,9 +675,16 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
   const filteredFollowList = useMemo(() => {
     if (!followSearch.trim()) return activeFollowList
     const q = followSearch.toLowerCase()
-    return activeFollowList.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.handle.toLowerCase().includes(q)
-    )
+    return activeFollowList.filter((p) => {
+      const isQuietReader = Boolean(
+        p.isDeactivated ||
+        (p.name || '').toLowerCase() === 'quiet reader'
+      )
+      if (isQuietReader) {
+        return 'quiet reader'.includes(q)
+      }
+      return p.name.toLowerCase().includes(q) || p.handle.toLowerCase().includes(q)
+    })
   }, [activeFollowList, followSearch])
 
   const canViewFollowLists = Boolean(userProfile.showFollowLists) || isOwnProfile
@@ -936,11 +943,15 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
       : 'all'
 
   // ── Masonry layout ─────────────────────────────────────────────────────────
+  const profileEntriesSignal = useMemo(
+    () => `${catalogMode}-${activeFilter}-${activeSearchQuery}-${activeEntries.map((entry) => entry.id).join('|')}`,
+    [catalogMode, activeFilter, activeSearchQuery, activeEntries],
+  )
   const activeMasonryLayout = useMasonryLayout(
     profileGridRef,
     activeEntries.length,
     activeExpandedCardId,
-    `${catalogMode}-${activeFilter}-${activeSearchQuery}-${activeEntries.map((entry) => entry.id).join('|')}`,
+    profileEntriesSignal,
     1280,
   )
   // Keep the measured grid hidden until its coordinates are committed. Motion
@@ -1490,12 +1501,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
 
   if (!isOwnProfile && userProfile.accountStatus === 'deactivated') {
     return (
-      <motion.div
-        className="page-wrapper profile-page-wrapper is-minimal-profile is-quiet-reader-page"
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-      >
+      <div className="page-wrapper profile-page-wrapper is-quiet-reader-page">
         {showLocalNavigation && (
           <button
             type="button"
@@ -1507,8 +1513,8 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             <ArrowLeft aria-hidden="true" />
           </button>
         )}
-        <div className="profile-page-container quiet-reader-page-container">
-          <div className="profile-unavailable-state quiet-reader-card" role="status">
+        <div className="quiet-reader-page-container">
+          <div className="quiet-reader-card" role="status">
             <div className="quiet-reader-icon-halo" aria-hidden="true">
               <UserX size={32} strokeWidth={1.8} />
             </div>
@@ -1545,7 +1551,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
             </div>
           </div>
         </div>
-      </motion.div>
+      </div>
     )
   }
   // ── Type icon helper ────────────────────────────────────────────────────────
@@ -2553,7 +2559,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
                           transition: suppressCatalogMotion
                             ? 'none'
-                            : 'transform 260ms cubic-bezier(0.16, 1, 0.3, 1)',
+                            : 'transform 200ms cubic-bezier(0.16, 1, 0.3, 1)',
                         } : { width: '100%', marginBottom: 14 }}
                       >
                         <Card
@@ -3750,7 +3756,13 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                     {filteredFollowList.map((person) => {
                       const cleanHandle = person.handle.replace(/^@/, '')
                       const cleanName = (person.name || '').trim()
+                      const isQuietReader = Boolean(
+                        person.isDeactivated ||
+                        cleanName === 'Quiet Reader' ||
+                        cleanName.toLowerCase() === 'quiet reader'
+                      )
                       const hasDistinctName = Boolean(
+                        !isQuietReader &&
                         cleanName &&
                         cleanName.toLowerCase() !== `@${cleanHandle.toLowerCase()}` &&
                         cleanName.toLowerCase() !== cleanHandle.toLowerCase()
@@ -3758,7 +3770,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                       const isPersonFollowing = followedUserHandles.includes(person.handle)
                       const isPersonRequested = followRequestedHandles.includes(person.handle)
                       const isCurrentUser = person.handle === (currentUserProfile?.handle || 'jimboii')
-                      const displayHandle = cleanName || `@${cleanHandle}`
+                      const displayHandle = isQuietReader ? 'Quiet Reader' : cleanName || `@${cleanHandle}`
 
                       return (
                         <div key={person.id} className="follow-person-row" role="listitem">
@@ -3766,14 +3778,14 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                             type="button"
                             className="follow-person-profile"
                             onClick={() => {
-                              if (!onSelectUserProfile) return
+                              if (!onSelectUserProfile || isQuietReader) return
                               onSelectUserProfile(person.handle)
                               closeFollowModal()
                             }}
-                            disabled={!onSelectUserProfile}
+                            disabled={!onSelectUserProfile || isQuietReader}
                           >
                             <span className="follow-person-avatar-wrapper">
-                              {person.avatar ? (
+                              {person.avatar && !isQuietReader ? (
                                 <img
                                   src={person.avatar}
                                   alt=""
@@ -3785,9 +3797,9 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                               )}
                             </span>
                             <span className="follow-person-info">
-                              {person.isDeactivated ? (
+                              {isQuietReader ? (
                                 <span className="follow-person-name">
-                                  <span>{cleanName || 'Quiet Reader'}</span>
+                                  <span>Quiet Reader</span>
                                   {person.isPrivate && <Lock size={11} aria-hidden="true" />}
                                 </span>
                               ) : hasDistinctName ? (
@@ -3818,7 +3830,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({
                           <div className="follow-person-actions">
                             {isCurrentUser ? (
                               <span className="follow-you-badge">You</span>
-                            ) : person.isDeactivated ? (
+                            ) : isQuietReader ? (
                               <span className="follow-you-badge">Unavailable</span>
                             ) : isPersonFollowing ? (
                               <button
