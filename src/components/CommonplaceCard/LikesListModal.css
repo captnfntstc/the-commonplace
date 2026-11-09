@@ -1,0 +1,246 @@
+/* ─── LIKES LIST MODAL ────────────────────────────────────────────── */
+
+.tcp-likes-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10002 !important;
+  display: grid !important;
+  place-items: center !important;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.tcp-likes-modal {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(85vh - 32px);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  text-align: left;
+  color: var(--text);
+}
+
+.tcp-likes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.tcp-likes-header-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tcp-likes-icon-badge {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(229, 115, 115, 0.15);
+  color: #e57373;
+}
+
+.tcp-likes-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-strong);
+  line-height: 1.2;
+}
+
+.tcp-likes-count-badge {
+  font-size: 11.5px;
+  color: var(--secondary);
+}
+
+.tcp-likes-close-btn {
+  background: transparent;
+  border: 0;
+  color: var(--secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  transition: all 0.15s ease;
+}
+
+.tcp-likes-close-btn:hover {
+  background: var(--tint);
+  color: var(--text-strong);
+}
+
+.tcp-likes-search-wrap {
+  position: relative;
+  margin: 12px 18px 4px;
+}
+
+.tcp-likes-search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--secondary);
+  pointer-events: none;
+}
+
+.tcp-likes-search-input {
+  width: 100%;
+  padding: 8px 32px 8px 34px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--tint-softer, var(--tint));
+  color: var(--text-strong);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.tcp-likes-search-input:focus {
+  border-color: var(--accent);
+}
+
+.tcp-likes-search-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 0;
+  color: var(--secondary);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.tcp-likes-body {
+  padding: 10px 14px 16px;
+  overflow-y: auto;
+  max-height: 400px;
+}
+
+.tcp-likes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tcp-likes-item {
+  margin: 0;
+}
+
+.tcp-likes-user-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.14s ease;
+}
+
+.tcp-likes-user-btn:hover {
+  background: var(--tint);
+}
+
+.tcp-likes-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--tint-strong, rgba(0, 0, 0, 0.08));
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.tcp-likes-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tcp-likes-avatar-initial {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.tcp-likes-user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.tcp-likes-user-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-strong);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tcp-likes-you-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-surface);
+  color: var(--accent);
+}
+
+.tcp-likes-user-handle {
+  font-size: 12px;
+  color: var(--secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tcp-likes-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--secondary);
+  font-size: 13px;
+}
+
+.tcp-likes-loading {
+  padding: 12px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tcp-likes-skeleton-row {
+  height: 40px;
+  border-radius: 10px;
+  background: var(--tint);
+  animation: pulse 1.5s infinite ease-in-out;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.25; }
+}

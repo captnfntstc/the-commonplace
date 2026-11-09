@@ -26,6 +26,7 @@ import { getEntryTypeIcon } from '../../utils/mediaIcons'
 import { useAuth } from '../../context/AuthContext'
 import { useAccessibleDialog } from '../../hooks/useAccessibleDialog'
 import { ReportDialog } from '../Reports/ReportDialog'
+import { LikesListModal } from './LikesListModal'
 import {
   canDeleteInteraction,
   hideOwnerInteraction,
@@ -129,6 +130,7 @@ interface EntryReadingPageProps {
   focusCommentId?: string
   focusReplyId?: string
   focusRequestId?: string
+  autoOpenLikes?: boolean
   isLiked?: boolean
   isSaved?: boolean
   likeCount?: number
@@ -161,6 +163,7 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   focusCommentId,
   focusReplyId,
   focusRequestId,
+  autoOpenLikes = false,
   isLiked = false,
   isSaved = false,
   likeCount = 0,
@@ -171,6 +174,13 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
   currentUserHandle,
 }) => {
   const { currentUser } = useAuth()
+  const [likesModalOpen, setLikesModalOpen] = useState(Boolean(autoOpenLikes))
+
+  useEffect(() => {
+    if (autoOpenLikes) {
+      setLikesModalOpen(true)
+    }
+  }, [autoOpenLikes, focusRequestId])
   const cloudUserId = currentUser?.uid || null
   const currentAuthor = currentUser?.displayName || currentUser?.email?.split('@')[0] || CURRENT_USER
   const currentInitials = currentAuthor
@@ -722,7 +732,24 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                     aria-pressed={isLiked}
                   >
                     <Heart aria-hidden="true" fill={isLiked ? 'currentColor' : 'none'} />
-                    <span>{likeCount}</span>
+                    <span
+                      className="entry-reading-like-count"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setLikesModalOpen(true)
+                      }}
+                      title="View likes"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.stopPropagation()
+                          setLikesModalOpen(true)
+                        }
+                      }}
+                    >
+                      {likeCount}
+                    </span>
                   </button>
                   <button
                     type="button"
@@ -761,6 +788,17 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
                   <span className="entry-reading-avatar" aria-hidden="true"><User /></span>
                   <strong>@{displayAuthorHandle}</strong>
                 </button>
+                {likeCount > 0 && (
+                  <button
+                    type="button"
+                    className="entry-reading-byline-likes-btn"
+                    onClick={() => setLikesModalOpen(true)}
+                    title={`View ${likeCount} ${likeCount === 1 ? 'person who liked' : 'people who liked'} this entry`}
+                  >
+                    <Heart size={12} fill="#e57373" color="#e57373" aria-hidden="true" />
+                    <span>{likeCount} {likeCount === 1 ? 'like' : 'likes'}</span>
+                  </button>
+                )}
                 {entry.createdAt && (
                   <span className="entry-reading-date"><Calendar aria-hidden="true" /><span>{formatFullDateTime(entry.createdAt)}</span></span>
                 )}
@@ -1484,6 +1522,23 @@ export const EntryReadingPage: React.FC<EntryReadingPageProps> = ({
             window.setTimeout(() => setReportToast(null), 3500)
           }}
         />
+        {entry && (
+          <LikesListModal
+            isOpen={likesModalOpen}
+            onClose={() => setLikesModalOpen(false)}
+            postId={entry.id}
+            entryTitle={entry.title}
+            likeCount={likeCount}
+            onOpenProfile={onOpenProfile}
+            currentUserHandle={currentUserHandle}
+            isViewerLiked={isLiked}
+            viewerProfile={{
+              handle: currentUserHandle,
+              name: currentAuthor,
+              avatarUrl: currentUser?.photoURL || undefined,
+            }}
+          />
+        )}
       </main>
   )
 }
