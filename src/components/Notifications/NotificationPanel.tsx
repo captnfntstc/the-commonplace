@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Bell, CakeSlice, Heart, MessageSquare, Trophy, UserCheck, UserPlus, Users, X } from 'lucide-react'
+import { Bell, BellOff, CakeSlice, Heart, MessageSquare, Trophy, UserCheck, UserPlus, Users, X } from 'lucide-react'
 import type { AppNotification as Notification, NotificationType } from '../../types/notification'
 
 interface NotificationPanelProps {
@@ -9,6 +9,10 @@ interface NotificationPanelProps {
   onClearAll: () => void
   onDismiss: (ids: string | string[]) => void
   onOpenNotification?: (notification: Notification) => void
+  onClearSilenceDigest?: () => void
+  isSilenced?: boolean
+  heldCount?: number
+  onReleaseHeld?: () => void
 }
 
 type NotificationStack = Notification & {
@@ -111,14 +115,22 @@ function stackNotifications(notifications: Notification[]): NotificationStack[] 
 function notifText(notification: NotificationStack): React.ReactNode {
   const actors = actorSummary(notification.actorLabels)
   switch (notification.type) {
-    case 'like':
+    case 'like': {
+      if (notification.stackCount >= 5) {
+        return <><strong>5+ people</strong> liked your entry: <em>&quot;{notification.entryTitle}&quot;</em></>
+      }
       return <><strong>{actors}</strong> liked your entry <em>&quot;{notification.entryTitle}&quot;</em></>
+    }
     case 'like_milestone':
       return <>Your entry <em>&quot;{notification.entryTitle}&quot;</em> reached <strong>{notification.milestoneCount} likes</strong></>
-    case 'comment':
+    case 'comment': {
+      if (notification.stackCount >= 5) {
+        return <><strong>5+ people</strong> commented on your entry: <em>&quot;{notification.entryTitle}&quot;</em></>
+      }
       return notification.stackCount === 1
         ? <><strong>{actors}</strong> commented: <em>&quot;{notification.commentSnippet}&quot;</em></>
         : <><strong>{actors}</strong> commented on your entry <em>&quot;{notification.entryTitle}&quot;</em></>
+    }
     case 'reply':
       return notification.stackCount === 1
         ? <><strong>{actors}</strong> replied: <em>&quot;{notification.commentSnippet}&quot;</em></>
@@ -146,110 +158,188 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({
   onClearAll,
   onDismiss,
   onOpenNotification,
+  onClearSilenceDigest,
+  isSilenced,
+  heldCount = 0,
+  onReleaseHeld,
 }) => {
   const unread = notifications.filter((notification) => !notification.read).length
-  const notificationStacks = stackNotifications(notifications)
+  const focusNotifications = notifications.filter((n) => n.heldDuringSilence)
+  const regularNotifications = notifications.filter((n) => !n.heldDuringSilence)
+
+  const focusStacks = stackNotifications(focusNotifications)
+  const regularStacks = stackNotifications(regularNotifications)
+  const allStacks = stackNotifications(notifications)
+
+  const renderStackItem = (notification: NotificationStack) => {
+    const opensPost = Boolean(
+      notification.postId
+      && ['like', 'like_milestone', 'comment', 'reply'].includes(notification.type),
+    )
+    const opensProfile = (
+      notification.type === 'follow'
+      || notification.type === 'follow_request'
+      || notification.type === 'follow_accept'
+    ) && Boolean(notification.actorHandle)
+    const isActionable = Boolean(onOpenNotification && (opensPost || opensProfile))
+    const openNotification = () => {
+      if (isActionable) onOpenNotification?.(notification)
+    }
+
+    return (
+      <motion.div
+        key={notification.id}
+        className={`notif-item ${notification.read ? 'read' : 'unread'} ${isActionable ? 'is-actionable' : ''}`}
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, x: 40, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
+        transition={{ duration: 0.22 }}
+        layout
+        role={isActionable ? 'button' : undefined}
+        tabIndex={isActionable ? 0 : undefined}
+        aria-label={isActionable
+          ? opensProfile
+            ? `Open profile for ${actorLabel(notification)}`
+            : `Open notification for ${notification.entryTitle || 'post'}`
+          : undefined}
+        onClick={openNotification}
+        onKeyDown={(event) => {
+          if (!isActionable || (event.key !== 'Enter' && event.key !== ' ')) return
+          event.preventDefault()
+          openNotification()
+        }}
+      >
+        <div
+          className="notif-icon-wrap"
+          style={{
+            color: notifColor(notification.type),
+            background: `${notifColor(notification.type)}18`,
+          }}
+        >
+          <NotifIcon type={notification.type} />
+        </div>
+        {notification.actorAvatarUrls.length > 0 && (
+          <div className="notif-avatar-stack" aria-hidden="true">
+            {notification.actorAvatarUrls.slice(0, 3).map((url, index) => (
+              <div className="notif-avatar" key={url} style={{ zIndex: 3 - index }}>
+                <img src={url} alt="" referrerPolicy="no-referrer" loading="lazy" decoding="async" />
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="notif-body">
+          <p className="notif-text">{notifText(notification)}</p>
+          <span className="notif-time">{timeAgo(notification.createdAt)} ago</span>
+        </div>
+        <button
+          type="button"
+          className="notif-dismiss-btn"
+          onClick={(event) => {
+            event.stopPropagation()
+            onDismiss(notification.notificationIds)
+          }}
+          aria-label={notification.stackCount > 1 ? `Dismiss ${notification.stackCount} grouped notifications` : 'Dismiss'}
+        >
+          <X size={12} />
+        </button>
+      </motion.div>
+    )
+  }
 
   return (
     <div className="notif-panel">
       <div className="notif-panel-header">
         <span className="notif-panel-title">Notifications</span>
-        <div className="notif-panel-actions">
-          {unread > 0 && (
-            <button type="button" className="notif-mark-all-btn" onClick={onMarkAllRead}>
-              Mark all read
-            </button>
-          )}
-          {notifications.length > 0 && (
-            <button type="button" className="notif-clear-all-btn" onClick={onClearAll}>
-              Clear all
+        {!isSilenced && (
+          <div className="notif-panel-actions">
+            {unread > 0 && (
+              <button type="button" className="notif-mark-all-btn" onClick={onMarkAllRead}>
+                Mark all read
+              </button>
+            )}
+            {notifications.length > 0 && (
+              <button type="button" className="notif-clear-all-btn" onClick={onClearAll}>
+                Clear all
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {isSilenced ? (
+        <div className="notif-silenced-empty">
+          <div className="notif-silenced-glyph">
+            <BellOff size={28} />
+          </div>
+          <h3 className="notif-silenced-heading">Notifications Silenced</h3>
+          <p className="notif-silenced-message">
+            Notifications are silenced and held quietly in the background until silence mode ends.
+          </p>
+          <div className="notif-silenced-badge-wrap">
+            <span className="notif-silenced-pill">Silence Active</span>
+          </div>
+          {heldCount > 0 && onReleaseHeld && (
+            <button
+              type="button"
+              className="notif-silence-release-btn"
+              onClick={onReleaseHeld}
+              title="Deliver queued notifications"
+              style={{ marginTop: 14 }}
+            >
+              Turn on notifications
             </button>
           )}
         </div>
-      </div>
-
-      {notifications.length === 0 ? (
+      ) : notifications.length === 0 ? (
         <div className="notif-empty">
           <Bell size={28} opacity={0.35} />
           <p>You&apos;re all caught up!</p>
         </div>
       ) : (
-        <div className="notif-list">
+        <div className="notif-panel-scroll">
           <AnimatePresence initial={false}>
-            {notificationStacks.map((notification) => {
-              const opensPost = Boolean(
-                notification.postId
-                && ['like', 'like_milestone', 'comment', 'reply'].includes(notification.type),
-              )
-              const opensProfile = (
-                notification.type === 'follow'
-                || notification.type === 'follow_request'
-                || notification.type === 'follow_accept'
-              ) && Boolean(notification.actorHandle)
-              const isActionable = Boolean(onOpenNotification && (opensPost || opensProfile))
-              const openNotification = () => {
-                if (isActionable) onOpenNotification?.(notification)
-              }
-
-              return (
-                <motion.div
-                  key={notification.id}
-                  className={`notif-item ${notification.read ? 'read' : 'unread'} ${isActionable ? 'is-actionable' : ''}`}
-                  initial={{ opacity: 0, y: -8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, x: 40, height: 0, marginBottom: 0, paddingTop: 0, paddingBottom: 0 }}
-                  transition={{ duration: 0.22 }}
-                  layout
-                  role={isActionable ? 'button' : undefined}
-                  tabIndex={isActionable ? 0 : undefined}
-                  aria-label={isActionable
-                    ? opensProfile
-                      ? `Open profile for ${actorLabel(notification)}`
-                      : `Open notification for ${notification.entryTitle || 'post'}`
-                    : undefined}
-                  onClick={openNotification}
-                  onKeyDown={(event) => {
-                    if (!isActionable || (event.key !== 'Enter' && event.key !== ' ')) return
-                    event.preventDefault()
-                    openNotification()
-                  }}
-                >
-                  <div
-                    className="notif-icon-wrap"
-                    style={{
-                      color: notifColor(notification.type),
-                      background: `${notifColor(notification.type)}18`,
-                    }}
-                  >
-                    <NotifIcon type={notification.type} />
-                  </div>
-                  {notification.actorAvatarUrls.length > 0 && (
-                    <div className="notif-avatar-stack" aria-hidden="true">
-                      {notification.actorAvatarUrls.slice(0, 3).map((url, index) => (
-                        <div className="notif-avatar" key={url} style={{ zIndex: 3 - index }}>
-                          <img src={url} alt="" referrerPolicy="no-referrer" loading="lazy" decoding="async" />
-                        </div>
-                      ))}
+            {focusStacks.length > 0 ? (
+              <>
+                <div className="notif-silence-digest-group">
+                  <div className="notif-silence-digest-banner">
+                    <div className="notif-silence-digest-badge">
+                      <BellOff size={13} aria-hidden="true" />
+                      <span>While Silenced</span>
                     </div>
-                  )}
-                  <div className="notif-body">
-                    <p className="notif-text">{notifText(notification)}</p>
-                    <span className="notif-time">{timeAgo(notification.createdAt)} ago</span>
+                    {onClearSilenceDigest && (
+                      <button
+                        type="button"
+                        className="notif-silence-digest-dismiss"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onClearSilenceDigest()
+                        }}
+                        aria-label="Clear While Silenced"
+                        title="Clear While Silenced"
+                      >
+                        <X size={12} aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    className="notif-dismiss-btn"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onDismiss(notification.notificationIds)
-                    }}
-                    aria-label={notification.stackCount > 1 ? `Dismiss ${notification.stackCount} grouped notifications` : 'Dismiss'}
-                  >
-                    <X size={12} />
-                  </button>
-                </motion.div>
-              )
-            })}
+                  <div className="notif-list">
+                    {focusStacks.map(renderStackItem)}
+                  </div>
+                </div>
+
+                {regularStacks.length > 0 && (
+                  <div className="notif-earlier-group">
+                    <div className="notif-earlier-header">Earlier</div>
+                    <div className="notif-list">
+                      {regularStacks.map(renderStackItem)}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="notif-list">
+                {allStacks.map(renderStackItem)}
+              </div>
+            )}
           </AnimatePresence>
         </div>
       )}
@@ -268,8 +358,12 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   onClearAll,
   onDismiss,
   onOpenNotification,
+  onClearSilenceDigest,
   open: controlledOpen,
   onOpenChange,
+  isSilenced,
+  heldCount = 0,
+  onReleaseHeld,
 }) => {
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
@@ -297,14 +391,18 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     <div className="notif-bell-wrapper" ref={ref}>
       <button
         type="button"
-        className="hdr-icon-btn notif-bell-btn"
+        className={`hdr-icon-btn notif-bell-btn ${isSilenced ? 'is-silenced' : ''}`}
         onClick={toggleOpen}
-        aria-label="Notifications"
-        title="Notifications"
+        aria-label={isSilenced ? 'Notifications (Silenced)' : 'Notifications'}
+        title={isSilenced ? 'Notifications silenced' : 'Notifications'}
       >
-        <Bell aria-hidden="true" />
+        {isSilenced ? (
+          <BellOff aria-hidden="true" className="notif-bell-silenced-icon" />
+        ) : (
+          <Bell aria-hidden="true" />
+        )}
         <AnimatePresence>
-          {unread > 0 && (
+          {!isSilenced && unread > 0 ? (
             <motion.span
               key="badge"
               className="notif-badge"
@@ -315,7 +413,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
             >
               {unread > 9 ? '9+' : unread}
             </motion.span>
-          )}
+          ) : null}
         </AnimatePresence>
       </button>
       <AnimatePresence>
@@ -332,6 +430,10 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
               onMarkAllRead={onMarkAllRead}
               onClearAll={onClearAll}
               onDismiss={onDismiss}
+              onClearSilenceDigest={onClearSilenceDigest}
+              isSilenced={isSilenced}
+              heldCount={heldCount}
+              onReleaseHeld={onReleaseHeld}
               onOpenNotification={onOpenNotification
                 ? (notification) => {
                     setOpen(false)

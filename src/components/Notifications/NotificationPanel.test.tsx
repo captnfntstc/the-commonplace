@@ -275,4 +275,80 @@ describe('NotificationPanel stacks', () => {
       expect(screen.queryByRole('button', { name: 'Open notification for The Bell Jar' })).not.toBeInTheDocument()
     })
   })
+
+  it('hides badge on NotificationBell and displays Notifications Silenced in NotificationPanel when isSilenced is true', () => {
+    const notifications = [likeNotification('1', 'Louis', 'louis')]
+    const { container } = render(
+      <NotificationBell
+        notifications={notifications}
+        onMarkAllRead={vi.fn()}
+        onClearAll={vi.fn()}
+        onDismiss={vi.fn()}
+        isSilenced={true}
+        heldCount={3}
+      />,
+    )
+
+    // No badge should be rendered
+    expect(container.querySelector('.notif-badge')).toBeNull()
+
+    // Open panel
+    fireEvent.click(screen.getByRole('button', { name: 'Notifications (Silenced)' }))
+    expect(screen.getByText('Notifications Silenced')).toBeInTheDocument()
+    expect(screen.getByText(/Notifications are silenced and held quietly/i)).toBeInTheDocument()
+    expect(screen.queryByText(/liked your entry/i)).not.toBeInTheDocument()
+  })
+
+  it('formats 5+ likes as a collective notification "5+ people liked your entry"', () => {
+    const notifications = [
+      likeNotification('1', 'Taylor Swift', 'taylorswift'),
+      likeNotification('2', 'Jimboi', 'jimboi'),
+      likeNotification('3', 'Olivia Rodrigo', 'oliviarodrigo'),
+      likeNotification('4', 'Phoebe Bridgers', 'phoebe'),
+      likeNotification('5', 'Gracie Abrams', 'gracie'),
+    ]
+
+    render(
+      <NotificationPanel
+        notifications={notifications}
+        onMarkAllRead={vi.fn()}
+        onClearAll={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('5+ people')).toBeInTheDocument()
+    expect(screen.getByText(/liked your entry:/i)).toBeInTheDocument()
+    expect(screen.getByText('"The Bell Jar"')).toBeInTheDocument()
+  })
+
+  it('displays "While Silenced" section for notifications delivered from silence and clears on dismiss', () => {
+    const onClearSilenceDigest = vi.fn()
+    const notifications: AppNotification[] = [
+      {
+        ...likeNotification('1', 'Taylor Swift', 'taylorswift'),
+        heldDuringSilence: true,
+      },
+      likeNotification('2', 'Pat', 'patpatrojas'),
+    ]
+
+    render(
+      <NotificationPanel
+        notifications={notifications}
+        onMarkAllRead={vi.fn()}
+        onClearAll={vi.fn()}
+        onDismiss={vi.fn()}
+        onClearSilenceDigest={onClearSilenceDigest}
+      />,
+    )
+
+    expect(screen.getByText('While Silenced')).toBeInTheDocument()
+    expect(screen.queryByText('Quietly held while notifications were paused')).not.toBeInTheDocument()
+    expect(screen.getByText('Earlier')).toBeInTheDocument()
+
+    // Test clear While Silenced section button
+    const clearBtn = screen.getByRole('button', { name: 'Clear While Silenced' })
+    fireEvent.click(clearBtn)
+    expect(onClearSilenceDigest).toHaveBeenCalledOnce()
+  })
 })

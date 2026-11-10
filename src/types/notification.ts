@@ -25,4 +25,5 @@ export interface AppNotification {
   entryTitle?: string
   milestoneCount?: number
   commentSnippet?: string
+  heldDuringSilence?: boolean
 }
