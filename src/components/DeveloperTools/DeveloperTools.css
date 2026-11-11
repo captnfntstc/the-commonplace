@@ -1,0 +1,302 @@
+/* ─── DEVELOPER TOOLS & ADMIN DOCK ──────────────────────────────────── */
+
+.tcp-admin-dock {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  z-index: 1200;
+  pointer-events: auto;
+}
+
+.tcp-admin-dock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 8px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--divider);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  cursor: pointer;
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tcp-admin-dock-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16), 0 0 12px var(--accent-surface);
+}
+
+.tcp-admin-dock-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-surface);
+  color: var(--accent);
+}
+
+.tcp-admin-dock-text {
+  letter-spacing: -0.01em;
+}
+
+.tcp-admin-dock-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-surface);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Modal Backdrop & Dialog */
+.tcp-dev-backdrop {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10001 !important;
+  display: grid !important;
+  place-items: center !important;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.tcp-dev-modal {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  text-align: left;
+  color: var(--text);
+}
+
+.tcp-dev-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.tcp-dev-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tcp-dev-icon-badge {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--accent-surface);
+  color: var(--accent);
+}
+
+.tcp-dev-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-strong);
+  font-family: inherit;
+}
+
+.tcp-dev-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.tcp-dev-admin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-surface);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.tcp-dev-mode-pill {
+  font-size: 11px;
+  color: var(--secondary);
+}
+
+.tcp-dev-close-btn {
+  background: transparent;
+  border: 0;
+  color: var(--secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  transition: all 0.15s ease;
+}
+
+.tcp-dev-close-btn:hover {
+  background: var(--tint);
+  color: var(--text-strong);
+}
+
+.tcp-dev-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.tcp-dev-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tcp-dev-section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.tcp-dev-section-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent-surface);
+  color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.tcp-dev-section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text-strong);
+}
+
+.tcp-dev-section-desc {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  color: var(--secondary);
+  line-height: 1.45;
+}
+
+.tcp-dev-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.tcp-dev-btn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card-elevated, var(--card));
+  color: var(--text-strong);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: all 0.15s ease;
+}
+
+.tcp-dev-btn:hover {
+  background: var(--tint);
+  border-color: var(--border);
+  transform: translateY(-1px);
+}
+
+.tcp-dev-btn.highlight {
+  background: var(--accent-surface);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tcp-dev-btn.highlight:hover {
+  filter: brightness(0.96);
+}
+
+.tcp-dev-btn.release {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #16a34a;
+}
+
+.tcp-dev-btn.release:hover {
+  background: rgba(34, 197, 94, 0.2);
+}
+
+.tcp-dev-status-card {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--tint-softer, var(--tint));
+  border: 1px solid var(--divider);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--secondary);
+}
+
+.tcp-dev-status-card strong {
+  color: var(--text-strong);
+}
+
+.tcp-dev-footer {
+  padding: 14px 24px;
+  border-top: 1px solid var(--divider);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card);
+}
+
+.tcp-dev-footer-note {
+  font-size: 11.5px;
+  color: var(--secondary);
+}
+
+.tcp-dev-done-btn {
+  padding: 7px 18px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-fg, #ffffff);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tcp-dev-done-btn:hover {
+  filter: brightness(1.08);
+}
