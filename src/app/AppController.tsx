@@ -43,13 +43,29 @@ import { useAuth } from '../context/AuthContext'
 import { useMasonryLayout } from '../hooks/useMasonryLayout'
 import { useAccessibleDialog } from '../hooks/useAccessibleDialog'
 import { NotificationBell } from '../components/Notifications/NotificationPanel'
+import {
+  getSilenceSettings,
+  saveSilenceSettings,
+  getHeldNotificationsQueue,
+  saveHeldNotificationsQueue,
+  clearHeldNotificationsQueue,
+  isSilenceActive,
+  enqueueHeldNotification,
+  getDeliveredSilenceNotificationIds,
+  saveDeliveredSilenceNotificationIds,
+  removeDeliveredSilenceNotificationIds,
+  clearDeliveredSilenceNotificationIds,
+  type SilenceNotificationsSettings,
+} from '../services/silenceNotifications'
 import { MOCK_ENTITY_PROFILES } from '../data/entityProfiles'
 import { UNIVERSAL_MEDIA_ENTITIES } from '../data/universalMediaEntities'
 import type { MediaEntityType, UniversalMediaEntity, HumanProfileMetadata } from '../types/mediaEntity'
 import { professionLabel } from '../features/profiles/humanProfile'
 import { resolveArtworkUrl } from '../utils/artwork'
 import { CollectionPickerModal } from '../components/Collections/CollectionPickerModal'
-import { APP_TOAST_EVENT, type AppToastEventDetail } from '../utils/toast'
+import { DeveloperToolsDock } from '../components/DeveloperTools/DeveloperToolsDock'
+import { DeveloperToolsModal } from '../components/DeveloperTools/DeveloperToolsModal'
+import { APP_TOAST_EVENT, showToast, type AppToastEventDetail } from '../utils/toast'
 import {
   cacheIdentityAlias,
   cacheProfileEntity,
@@ -136,6 +152,7 @@ import {
   acceptFollowRequest,
   canUseCloudData,
   cleanHandle,
+  clearAccountIdentityCache,
   declineFollowRequest,
   loadIncomingFollowRequestHandles,
   loadPostEntry,
@@ -144,7 +161,9 @@ import {
   loadPublicUserByHandle,
   loadOrMigrateUserCollections,
   loadOrMigrateUserData,
+  loadUserEntries,
   notifyFollowsChanged,
+  reactivateUserAccount,
   saveUserCollections,
   saveUserCloudState,
   saveUserEntries,
@@ -501,6 +520,48 @@ export default function AppController() {
     homeDataStatus === 'ready',
   )
   const [activeView, setActiveView] = useState<ActiveView>(() => initialViewFromPath(location.pathname))
+
+  const refreshHomeFeed = useCallback(() => {
+    clearAccountIdentityCache()
+
+    if (personalizedFeed.enabled) {
+      void personalizedFeed.refresh(true)
+    }
+
+    if (cloudUserId) {
+      void loadPublicFeedEntries(cloudUserId).then((loaded) => {
+        setPublicFeedEntries(loaded)
+      }).catch(() => {})
+
+      void loadUserEntries(cloudUserId).then((userEntries) => {
+        if (userEntries && Array.isArray(userEntries)) {
+          setEntries((prev) => reconcileEntrySnapshots(userEntries, prev))
+        }
+      }).catch(() => {})
+    } else {
+      void loadPublicFeedEntries(null).then((loaded) => {
+        setPublicFeedEntries(loaded)
+      }).catch(() => {})
+    }
+  }, [cloudUserId, personalizedFeed])
+
+  const previousViewRef = useRef<ActiveView>(activeView)
+  const isInitialMountRef = useRef(true)
+
+  useEffect(() => {
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false
+      previousViewRef.current = activeView
+      return
+    }
+
+    const previousView = previousViewRef.current
+    previousViewRef.current = activeView
+
+    if (previousView !== 'feed' && activeView === 'feed') {
+      refreshHomeFeed()
+    }
+  }, [activeView, refreshHomeFeed])
   const [selectedProfileHandle, setSelectedProfileHandle] = useState<string | null>(null)
   const [selectedProfileCollectionId, setSelectedProfileCollectionId] = useState<string | null>(null)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
@@ -826,7 +887,12 @@ export default function AppController() {
     setSelectedEntityType(null)
     setSelectedProfileHandle(null)
     setActiveView('feed')
-    navigate('/')
+    if (location.pathname === '/' || activeView === 'feed') {
+      refreshHomeFeed()
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } else {
+      navigate('/')
+    }
   }
 
   const handlePageBack = () => {
@@ -1067,6 +1133,7 @@ export default function AppController() {
     postId: string
     commentId?: string
     replyId?: string
+    openLikes?: boolean
     requestId: string
   } | null>(null)
   const notificationOpenRequestRef = useRef('')
@@ -1082,6 +1149,7 @@ export default function AppController() {
   const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
   const [showScrollToTop, setShowScrollToTop] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
+  const [devToolsOpen, setDevToolsOpen] = useState(false)
   const [logoutLoading, setLogoutLoading] = useState(false)
   const [logoutError, setLogoutError] = useState('')
   const gridRef = useRef<HTMLElement>(null)
@@ -1693,9 +1761,15 @@ export default function AppController() {
   // ── Notifications ────────────────────────────────────────────────────────────
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {
+      const deliveredSilenceIds = getDeliveredSilenceNotificationIds()
       const parsed = JSON.parse(localStorage.getItem('the-commonplace.notifications') || '[]')
       return Array.isArray(parsed)
-        ? parsed.filter((notification) => !isLegacySeedHandle(notification?.actorHandle))
+        ? parsed
+            .filter((notification) => !isLegacySeedHandle(notification?.actorHandle))
+            .map((n) => ({
+              ...n,
+              heldDuringSilence: Boolean(n.heldDuringSilence || deliveredSilenceIds.has(n.id)),
+            }))
         : []
     } catch {
       return []
@@ -1734,6 +1808,7 @@ export default function AppController() {
     }
     setHomeDataStatus('loading')
     cloudHydratedUserRef.current = cloudUserId
+    void reactivateUserAccount(cloudUserId)
     const hydrationEntriesRevision = entriesRevisionRef.current
     let cancelled = false
 
@@ -1997,6 +2072,7 @@ export default function AppController() {
 
   const dismissNotification = (ids: string | string[]) => {
     const notificationIds = Array.isArray(ids) ? ids : [ids]
+    removeDeliveredSilenceNotificationIds(notificationIds)
     setNotifications((prev) => {
       const idSet = new Set(notificationIds)
       const next = prev.filter((notification) => !idSet.has(notification.id))
@@ -2019,6 +2095,7 @@ export default function AppController() {
   }
 
   const clearAllNotifications = () => {
+    clearDeliveredSilenceNotificationIds()
     const cloudIds = notifications
       .filter((notification) => notification.type !== 'birthday')
       .map(({ id }) => id)
@@ -2035,6 +2112,126 @@ export default function AppController() {
         .catch((error) => console.error('Unable to clear cloud notifications.', error))
     }
   }
+
+  const [silenceSettings, setSilenceSettings] = useState<SilenceNotificationsSettings>(() => getSilenceSettings())
+  const [heldNotifications, setHeldNotifications] = useState<AppNotification[]>(() => getHeldNotificationsQueue())
+
+  const handleClearSilenceDigest = useCallback(() => {
+    clearDeliveredSilenceNotificationIds()
+    setNotifications((prev) => {
+      const next = prev.map((n) => ({ ...n, heldDuringSilence: false }))
+      localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+      return next
+    })
+  }, [])
+
+  const releaseHeldNotifications = useCallback(() => {
+    const queue = getHeldNotificationsQueue()
+    const currentSilence = getSilenceSettings()
+    if (currentSilence.enabled) {
+      saveSilenceSettings({ ...currentSilence, enabled: false })
+    }
+
+    if (queue.length === 0) return
+    const queueIds = queue.map((n) => n.id)
+    saveDeliveredSilenceNotificationIds(queueIds)
+
+    setNotifications((prev) => {
+      const existingIds = new Set(prev.map((n) => n.id))
+      const fresh = queue.map((n) => ({ ...n, heldDuringSilence: true })).filter((n) => !existingIds.has(n.id))
+      const next = [...fresh, ...prev.map((n) => ({
+        ...n,
+        heldDuringSilence: Boolean(queueIds.includes(n.id)),
+      }))]
+      localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+      persistCloudState({ notifications: next })
+      return next
+    })
+    clearHeldNotificationsQueue()
+    setHeldNotifications([])
+    showToast(`Delivered ${queue.length} held notification${queue.length === 1 ? '' : 's'}.`)
+  }, [persistCloudState, showToast])
+
+  useEffect(() => {
+    let wasActive = isSilenceActive(silenceSettings)
+
+    const handleSilenceSettingsChanged = (e: Event) => {
+      const nextSettings = (e as CustomEvent<SilenceNotificationsSettings>).detail || getSilenceSettings()
+      const isNowActive = isSilenceActive(nextSettings)
+      setSilenceSettings(nextSettings)
+
+      if (!wasActive && isNowActive) {
+        // Silence mode turned ON: clear previous While Silenced batch
+        handleClearSilenceDigest()
+      } else if (wasActive && !isNowActive) {
+        // Silence mode turned OFF: release held queue and automatically pop open notifications!
+        releaseHeldNotifications()
+        setNotificationsOpen(true)
+      }
+      wasActive = isNowActive
+    }
+    const handleQueueChanged = (e: Event) => {
+      const nextQueue = (e as CustomEvent<AppNotification[]>).detail || getHeldNotificationsQueue()
+      setHeldNotifications(nextQueue)
+    }
+    const handleSimulateNotification = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (!detail) return
+      const incoming: AppNotification[] = Array.isArray(detail)
+        ? detail
+        : detail.notifications
+          ? detail.notifications
+          : detail.id
+            ? [detail as AppNotification]
+            : []
+      if (incoming.length === 0) return
+
+      const activeSilence = isSilenceActive(getSilenceSettings())
+      if (activeSilence) {
+        let queue = getHeldNotificationsQueue()
+        incoming.forEach((item) => {
+          queue = enqueueHeldNotification(queue, item)
+        })
+        saveHeldNotificationsQueue(queue)
+        setHeldNotifications(queue)
+      } else {
+        const incomingHeldIds = incoming.filter((n) => n.heldDuringSilence).map((n) => n.id)
+        if (incomingHeldIds.length > 0) {
+          saveDeliveredSilenceNotificationIds(incomingHeldIds)
+          setNotificationsOpen(true)
+        }
+
+        setNotifications((prev) => {
+          const incomingIds = new Set(incoming.map((n) => n.id))
+          const next = [...incoming, ...prev.filter((n) => !incomingIds.has(n.id))].map((n) => ({
+            ...n,
+            heldDuringSilence: Boolean(n.heldDuringSilence || incomingHeldIds.includes(n.id)),
+          }))
+          localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
+          return next
+        })
+        showToast(
+          incoming.length === 1
+            ? `Notification: ${incoming[0].actorName || incoming[0].actorHandle || 'new alert'}`
+            : `Received ${incoming.length} test notifications`,
+        )
+      }
+    }
+    const handleReleaseEvent = () => {
+      releaseHeldNotifications()
+    }
+
+    window.addEventListener('commonplace:silence-settings-changed', handleSilenceSettingsChanged)
+    window.addEventListener('commonplace:silence-queue-changed', handleQueueChanged)
+    window.addEventListener('commonplace:simulate-notification', handleSimulateNotification)
+    window.addEventListener('commonplace:release-held-queue', handleReleaseEvent)
+    return () => {
+      window.removeEventListener('commonplace:silence-settings-changed', handleSilenceSettingsChanged)
+      window.removeEventListener('commonplace:silence-queue-changed', handleQueueChanged)
+      window.removeEventListener('commonplace:simulate-notification', handleSimulateNotification)
+      window.removeEventListener('commonplace:release-held-queue', handleReleaseEvent)
+    }
+  }, [releaseHeldNotifications, showToast])
 
   const [incomingFollowRequestedHandles, setIncomingFollowRequestedHandles] = useState<string[]>([])
   const [followerUserHandles, setFollowerUserHandles] = useState<string[]>([])
@@ -2257,11 +2454,13 @@ export default function AppController() {
         ? notification.interactionId
         : undefined
     const replyId = notification.type === 'reply' ? notification.interactionId : undefined
+    const openLikes = notification.type === 'like' || notification.type === 'like_milestone'
     notificationOpenRequestRef.current = notification.id
     setOverlayNotificationFocus({
       postId,
       commentId,
       replyId,
+      openLikes,
       requestId: notification.id,
     })
     setSelectedEntityId(null)
@@ -2286,9 +2485,47 @@ export default function AppController() {
   useEffect(() => {
     if (!cloudUserId || homeDataStatus !== 'ready') return
     return subscribeUserNotifications(cloudUserId, (remoteNotifications) => {
+      const currentSilence = getSilenceSettings()
+      if (isSilenceActive(currentSilence)) {
+        const currentQueue = getHeldNotificationsQueue()
+        let updatedQueue = currentQueue
+        setNotifications((previous) => {
+          const knownIds = new Set([
+            ...previous.map((n) => n.id),
+            ...currentQueue.map((n) => n.id),
+          ])
+          const brandNew = remoteNotifications.filter((n) => !knownIds.has(n.id))
+          for (const item of brandNew) {
+            updatedQueue = enqueueHeldNotification(updatedQueue, item)
+          }
+          if (updatedQueue !== currentQueue) {
+            saveHeldNotificationsQueue(updatedQueue)
+            setHeldNotifications(updatedQueue)
+          }
+          return previous
+        })
+        return
+      }
+
       setNotifications((previous) => {
-        const localOnlyNotifications = previous.filter((notification) => notification.type === 'birthday')
-        const next = [...localOnlyNotifications, ...remoteNotifications]
+        const deliveredSilenceIds = getDeliveredSilenceNotificationIds()
+        const prevMap = new Map(previous.map((n) => [n.id, n]))
+        const remoteIds = new Set(remoteNotifications.map((n) => n.id))
+
+        // Preserve local-only notifications (e.g. simulated alerts, birthday)
+        const localOnly = previous.filter((n) => !remoteIds.has(n.id))
+
+        // Remote notifications merged with any local flags (like heldDuringSilence)
+        const mergedRemote = remoteNotifications.map((remote) => {
+          const prev = prevMap.get(remote.id)
+          const isHeld = Boolean(prev?.heldDuringSilence || deliveredSilenceIds.has(remote.id))
+          return isHeld ? { ...remote, heldDuringSilence: true } : remote
+        })
+
+        const next = [...localOnly, ...mergedRemote].map((n) => ({
+          ...n,
+          heldDuringSilence: Boolean(n.heldDuringSilence || deliveredSilenceIds.has(n.id)),
+        }))
         localStorage.setItem('the-commonplace.notifications', JSON.stringify(next))
         return next
       })
@@ -2323,17 +2560,21 @@ export default function AppController() {
     return map
   }, [entries, personalizedFeed.items, publicFeedEntries])
 
+  const homeEntriesSignal = useMemo(
+    () => `${activeView}:${authLoading ? 'loading' : 'ready'}:${typeFilter}:${filteredEntries.map((entry) => entry.id).join('|')}`,
+    [activeView, authLoading, typeFilter, filteredEntries],
+  )
   const masonryLayout = useMasonryLayout(
     gridRef,
     filteredEntries.length,
     expandedCardId,
-    `${activeView}:${authLoading ? 'loading' : 'ready'}:${typeFilter}:${filteredEntries.map((entry) => entry.id).join('|')}`,
+    homeEntriesSignal,
   )
   const positionedCardIdsRef = useRef(new Set<string>())
   const [isInitialRender, setIsInitialRender] = useState(true)
   const [isFilterSwitching, setIsFilterSwitching] = useState(false)
-  const showHomeSkeleton = homeDataStatus === 'loading'
-    || personalizedFeed.loading
+  const showHomeSkeleton = (homeDataStatus === 'loading' && filteredEntries.length === 0)
+    || (personalizedFeed.loading && filteredEntries.length === 0)
     || (isInitialRender && filteredEntries.length > 0 && !masonryLayout)
 
   const handleTypeFilterChange = (nextFilter: EntryType | 'all') => {
@@ -2485,6 +2726,10 @@ export default function AppController() {
       onClearAll={clearAllNotifications}
       onDismiss={dismissNotification}
       onOpenNotification={handleOpenNotification}
+      onClearSilenceDigest={handleClearSilenceDigest}
+      isSilenced={isSilenceActive(silenceSettings)}
+      heldCount={heldNotifications.length}
+      onReleaseHeld={releaseHeldNotifications}
       onOpenChange={(open) => {
         setNotificationsOpen(open)
         if (open) {
@@ -2950,47 +3195,58 @@ export default function AppController() {
   }
 
   const renderEmailVerificationPrompt = () => (
-    <AnimatePresence>
-      {verificationPromptOpen && (
-        <div
-          className="modal-backdrop"
-          onClick={() => setVerificationPromptOpen(false)}
-        >
-          <motion.div
-            ref={verificationDialogRef}
-            className="settings-modal"
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.96 }}
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="email-verification-title"
-            tabIndex={-1}
+    <>
+      <AnimatePresence>
+        {verificationPromptOpen && (
+          <div
+            className="modal-backdrop"
+            onClick={() => setVerificationPromptOpen(false)}
           >
-            <div className="settings-header">
-              <div className="settings-header-title">
-                <MailCheck aria-hidden="true" />
-                <h2 id="email-verification-title">Verify your email first</h2>
+            <motion.div
+              ref={verificationDialogRef}
+              className="settings-modal"
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="email-verification-title"
+              tabIndex={-1}
+            >
+              <div className="settings-header">
+                <div className="settings-header-title">
+                  <MailCheck aria-hidden="true" />
+                  <h2 id="email-verification-title">Verify your email first</h2>
+                </div>
               </div>
-            </div>
-            <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 12 }}>
-              You haven&apos;t confirmed your email yet. To publish entries and access all posting features,
-              verify <strong>{currentUser?.email || 'your email address'}</strong> first.
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={() => setVerificationPromptOpen(false)}
-              >
-                Okay
-              </button>
-            </div>
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
+              <p style={{ color: 'var(--secondary)', lineHeight: 1.6, marginBottom: 12 }}>
+                You haven&apos;t confirmed your email yet. To publish entries and access all posting features,
+                verify <strong>{currentUser?.email || 'your email address'}</strong> first.
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={() => setVerificationPromptOpen(false)}
+                >
+                  Okay
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      <DeveloperToolsDock
+        currentHandle={userProfile.handle}
+        onOpen={() => setDevToolsOpen(true)}
+      />
+      <DeveloperToolsModal
+        isOpen={devToolsOpen}
+        onClose={() => setDevToolsOpen(false)}
+        currentHandle={userProfile.handle}
+      />
+    </>
   )
 
   // Render Standalone Pages
@@ -3044,6 +3300,7 @@ export default function AppController() {
             focusCommentId={overlayNotificationFocus?.postId === overlayEntry.id ? overlayNotificationFocus?.commentId : undefined}
             focusReplyId={overlayNotificationFocus?.postId === overlayEntry.id ? overlayNotificationFocus?.replyId : undefined}
             focusRequestId={overlayNotificationFocus?.postId === overlayEntry.id ? overlayNotificationFocus?.requestId : undefined}
+            autoOpenLikes={overlayNotificationFocus?.postId === overlayEntry.id ? Boolean(overlayNotificationFocus?.openLikes) : false}
             isLiked={postEngagements[overlayEntry.id]?.isLiked ?? likedEntryIds.includes(overlayEntry.id)}
             isSaved={savedEntryIds.includes(overlayEntry.id)}
             likeCount={postEngagements[overlayEntry.id]?.likeCount || 0}
@@ -3641,7 +3898,7 @@ export default function AppController() {
                   transform: `translate3d(${pos.left}px, ${pos.top}px, 0)`,
                   transition: (isInitialRender || !hadMeasuredPosition)
                     ? 'none'
-                    : 'transform 260ms cubic-bezier(0.16, 1, 0.3, 1)',
+                    : 'transform 200ms cubic-bezier(0.16, 1, 0.3, 1)',
                 } : { width: '100%', marginBottom: 14 }}
               >
                 <Card

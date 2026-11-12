@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -26,7 +27,18 @@ import {
   Scale,
   Scroll,
   FolderPlus,
+  BellOff,
 } from 'lucide-react'
+import {
+  getSilenceSettings,
+  saveSilenceSettings,
+  getHeldNotificationsQueue,
+  clearHeldNotificationsQueue,
+  activateSilenceMode,
+  type SilenceNotificationsSettings,
+  type SilenceDurationMode,
+} from '../services/silenceNotifications'
+import type { AppNotification } from '../types/notification'
 import {
   APPEARANCE_THEMES,
   useAppearanceSettings,
@@ -204,7 +216,109 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [followerAlerts, setFollowerAlerts] = useState(true)
   const [emailDigest, setEmailDigest] = useState(true)
   const [announcementAlerts, setAnnouncementAlerts] = useState(false)
-  const [quietHours, setQuietHours] = useState(false)
+  const [silenceSettings, setSilenceSettings] = useState<SilenceNotificationsSettings>(() => getSilenceSettings())
+  const [heldQueue, setHeldQueue] = useState<AppNotification[]>(() => getHeldNotificationsQueue())
+  const [showSilenceConfirmModal, setShowSilenceConfirmModal] = useState(false)
+  const [dontShowAgainChecked, setDontShowAgainChecked] = useState(false)
+  const [pendingSilenceMode, setPendingSilenceMode] = useState<SilenceDurationMode>('indefinite')
+
+  useEffect(() => {
+    const handleSilenceSettingsChange = (e: Event) => {
+      const custom = e as CustomEvent<SilenceNotificationsSettings>
+      if (custom.detail) setSilenceSettings(custom.detail)
+    }
+    const handleQueueChange = (e: Event) => {
+      const custom = e as CustomEvent<AppNotification[]>
+      if (custom.detail) setHeldQueue(custom.detail)
+    }
+    window.addEventListener('commonplace:silence-settings-changed', handleSilenceSettingsChange)
+    window.addEventListener('commonplace:silence-queue-changed', handleQueueChange)
+    return () => {
+      window.removeEventListener('commonplace:silence-settings-changed', handleSilenceSettingsChange)
+      window.removeEventListener('commonplace:silence-queue-changed', handleQueueChange)
+    }
+  }, [])
+
+  const handleToggleSilence = (enable: boolean) => {
+    if (!enable) {
+      const updated: SilenceNotificationsSettings = {
+        ...silenceSettings,
+        enabled: false,
+      }
+      setSilenceSettings(updated)
+      saveSilenceSettings(updated)
+      return
+    }
+
+    if (!silenceSettings.skipConfirmationDialog) {
+      setPendingSilenceMode(silenceSettings.mode || 'indefinite')
+      setShowSilenceConfirmModal(true)
+    } else {
+      const updated = activateSilenceMode(silenceSettings, silenceSettings.mode || 'indefinite')
+      setSilenceSettings(updated)
+      saveSilenceSettings(updated)
+    }
+  }
+
+  const handleConfirmSilenceDialog = () => {
+    setShowSilenceConfirmModal(false)
+    const updated = activateSilenceMode({
+      ...silenceSettings,
+      skipConfirmationDialog: dontShowAgainChecked ? true : silenceSettings.skipConfirmationDialog,
+    }, pendingSilenceMode)
+    setSilenceSettings(updated)
+    saveSilenceSettings(updated)
+  }
+
+  const handleSelectSilenceMode = (mode: SilenceDurationMode) => {
+    setPendingSilenceMode(mode)
+    if (silenceSettings.enabled) {
+      const updated = activateSilenceMode(silenceSettings, mode)
+      setSilenceSettings(updated)
+      saveSilenceSettings(updated)
+    } else {
+      const updated: SilenceNotificationsSettings = { ...silenceSettings, mode }
+      setSilenceSettings(updated)
+      saveSilenceSettings(updated)
+    }
+  }
+
+  const handleScheduleTimeChange = (type: 'start' | 'end', val: string) => {
+    const updated: SilenceNotificationsSettings = {
+      ...silenceSettings,
+      schedule: {
+        ...silenceSettings.schedule,
+        [type === 'start' ? 'startTime' : 'endTime']: val,
+      },
+    }
+    setSilenceSettings(updated)
+    saveSilenceSettings(updated)
+  }
+
+  const handleToggleScheduleDay = (dayIndex: number) => {
+    const currentDays = silenceSettings.schedule.days || []
+    const nextDays = currentDays.includes(dayIndex)
+      ? currentDays.filter((d) => d !== dayIndex)
+      : [...currentDays, dayIndex].sort()
+    const updated: SilenceNotificationsSettings = {
+      ...silenceSettings,
+      schedule: {
+        ...silenceSettings.schedule,
+        days: nextDays,
+      },
+    }
+    setSilenceSettings(updated)
+    saveSilenceSettings(updated)
+  }
+
+  const handleReleaseHeldQueue = () => {
+    window.dispatchEvent(new CustomEvent('commonplace:release-held-queue'))
+  }
+
+  const handleClearHeldQueue = () => {
+    clearHeldNotificationsQueue()
+    setHeldQueue([])
+  }
   const [dateFormat, setDateFormat] = useState<'locale' | 'iso' | 'editorial'>('locale')
   const [firstDayOfWeek, setFirstDayOfWeek] = useState<'sunday' | 'monday'>('sunday')
   const [legalModalType, setLegalModalType] = useState<LegalModalType>(null)
@@ -1064,18 +1178,147 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </SettingsSection>
 
               <SettingsSection
-                title="Quiet Hours & Focus"
-                description="Silence notification sounds and real-time banners during contemplation or reading hours."
-                icon={Clock}
+                title="Silence Notifications"
+                description="Pause incoming alerts and hold up to 20 separate notifications until you are ready."
+                icon={BellOff}
               >
-                <div className="settings-card">
+                <div className="settings-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <SettingsToggle
-                    label="Enable Quiet Hours"
-                    description="Temporarily silence push sounds and banners between 10:00 PM and 8:00 AM in your local timezone."
-                    checked={quietHours}
-                    onChange={setQuietHours}
-                    icon={Clock}
-                    badge={quietHours ? '10 PM – 8 AM' : 'Inactive'}
+                    label="Silence Notifications"
+                    description="Quiet all real-time alerts. Incoming notifications are held quietly in the background."
+                    checked={silenceSettings.enabled}
+                    onChange={handleToggleSilence}
+                    icon={BellOff}
+                    badge={
+                      !silenceSettings.enabled
+                        ? 'Inactive'
+                        : silenceSettings.mode === 'indefinite'
+                          ? 'Silenced (Until turned on)'
+                          : silenceSettings.mode === '1hour'
+                            ? 'Silenced (1 hour)'
+                            : `Scheduled (${silenceSettings.schedule.startTime} – ${silenceSettings.schedule.endTime})`
+                    }
+                  />
+
+                  {/* Silence Options (Accessible when silence is enabled) */}
+                  {silenceSettings.enabled ? (
+                    <div className="silence-options-container">
+                      <strong style={{ fontSize: '13px', color: 'var(--text-strong)' }}>
+                        Silence Duration & Schedule
+                      </strong>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                        <SettingsToggle
+                          label="1-Hour Duration"
+                          description="Automatically restore alerts after 60 minutes instead of remaining silent until turned off."
+                          checked={silenceSettings.mode === '1hour'}
+                          onChange={(val) => {
+                            handleSelectSilenceMode(val ? '1hour' : 'indefinite')
+                          }}
+                          icon={Clock}
+                          badge={silenceSettings.mode === '1hour' ? 'Active' : undefined}
+                        />
+
+                        <SettingsToggle
+                          label="Custom Schedule"
+                          description="Automatically silence alerts during selected hours and active days of the week."
+                          checked={silenceSettings.mode === 'schedule'}
+                          onChange={(val) => {
+                            handleSelectSilenceMode(val ? 'schedule' : 'indefinite')
+                          }}
+                          icon={Clock}
+                          badge={silenceSettings.mode === 'schedule' ? 'Active' : undefined}
+                        />
+
+                        {silenceSettings.mode === 'schedule' && (
+                          <div className="silence-schedule-box">
+                            <div className="silence-time-row">
+                              <label className="silence-time-input-group">
+                                <span>From:</span>
+                                <input
+                                  type="time"
+                                  value={silenceSettings.schedule.startTime || '22:00'}
+                                  onChange={(e) => handleScheduleTimeChange('start', e.target.value)}
+                                />
+                              </label>
+                              <label className="silence-time-input-group">
+                                <span>To:</span>
+                                <input
+                                  type="time"
+                                  value={silenceSettings.schedule.endTime || '08:00'}
+                                  onChange={(e) => handleScheduleTimeChange('end', e.target.value)}
+                                />
+                              </label>
+                            </div>
+                            <div className="silence-days-row">
+                              <span style={{ fontSize: '12px', color: 'var(--secondary)', marginRight: '4px' }}>Active days:</span>
+                              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((dayChar, dayIdx) => {
+                                const isDayActive = (silenceSettings.schedule.days || []).includes(dayIdx)
+                                return (
+                                  <button
+                                    key={dayIdx}
+                                    type="button"
+                                    className={`silence-day-pill ${isDayActive ? 'active' : ''}`}
+                                    onClick={() => handleToggleScheduleDay(dayIdx)}
+                                    title={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayIdx]}
+                                  >
+                                    {dayChar}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="silence-inactive-hint">
+                      <span>Turn on Silence Notifications above to configure duration or scheduled hours.</span>
+                    </div>
+                  )}
+
+                  {/* Queue Status Bar */}
+                  <div className="silence-queue-status-bar">
+                    <div className="silence-queue-status-left">
+                      <Clock size={16} aria-hidden="true" />
+                      <span>
+                        Held Queue: <strong>{heldQueue.length}</strong> notifications held
+                      </span>
+                    </div>
+                    {heldQueue.length > 0 && (
+                      <div className="silence-queue-actions">
+                        <button
+                          type="button"
+                          className="silence-queue-btn primary"
+                          onClick={handleReleaseHeldQueue}
+                        >
+                          Deliver now
+                        </button>
+                        <button
+                          type="button"
+                          className="silence-queue-btn"
+                          onClick={handleClearHeldQueue}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Confirmation Dialog Toggle (can be turned back on in settings) */}
+                  <SettingsToggle
+                    label="Confirm Before Silencing"
+                    description="Display the confirmation prompt when turning on silence mode."
+                    checked={!silenceSettings.skipConfirmationDialog}
+                    onChange={(val) => {
+                      const updated = {
+                        ...silenceSettings,
+                        skipConfirmationDialog: !val,
+                      }
+                      setSilenceSettings(updated)
+                      saveSilenceSettings(updated)
+                    }}
+                    icon={AlertCircle}
                   />
                 </div>
               </SettingsSection>
@@ -1612,11 +1855,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     <button
                       type="button"
                       className="secondary-action-btn"
-                      style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ whiteSpace: 'nowrap', flexShrink: 0, minWidth: 'max-content' }}
                       onClick={handleClearLocalCache}
                     >
-                      <HardDrive aria-hidden="true" />
-                      <span>Purge Local Cache</span>
+                      <HardDrive aria-hidden="true" style={{ flexShrink: 0 }} />
+                      <span style={{ whiteSpace: 'nowrap' }}>Purge Local Cache</span>
                     </button>
                   </div>
                 </div>
@@ -2268,6 +2511,60 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           </div>
         </div>
       )}
+
+      {/* Silence Notifications Confirmation Dialog */}
+      <AnimatePresence>
+        {showSilenceConfirmModal && (
+          <div className="silence-confirm-backdrop" onClick={() => setShowSilenceConfirmModal(false)}>
+            <motion.div
+              className="collection-remove-confirm silence-confirm-dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="silence-confirm-title"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="silence-confirm-icon-wrap" aria-hidden="true">
+                <BellOff size={24} />
+              </div>
+              <h3 id="silence-confirm-title">Silence Notifications?</h3>
+              <p>
+                Incoming notifications will be silenced and held quietly in the background until silence mode ends or is turned back on.
+              </p>
+              <p style={{ margin: '8px 0 0', fontSize: '13px', opacity: 0.85 }}>
+                Up to 20 separate notifications will be held.
+              </p>
+
+              <div style={{ margin: '18px 0 0', display: 'flex', justifyContent: 'center' }}>
+                <label className="silence-confirm-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={dontShowAgainChecked}
+                    onChange={(e) => setDontShowAgainChecked(e.target.checked)}
+                  />
+                  <span>Don't show this confirmation again</span>
+                </label>
+              </div>
+
+              <div>
+                <button type="button" onClick={() => setShowSilenceConfirmModal(false)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="silence-confirm-action-btn"
+                  onClick={handleConfirmSilenceDialog}
+                >
+                  Silence Notifications
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Legal & Policy Modal */}
       <LegalModal type={legalModalType} onClose={() => setLegalModalType(null)} />

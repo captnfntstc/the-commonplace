@@ -56,7 +56,12 @@ export function usePersonalizedFeed(user: User | null, category: FeedCategory, r
     const requestKey = `${target}:${reset ? 'reset' : cursor || 'initial'}`
     if (requestKeys.current.has(requestKey) || (!reset && current.loading)) return
     requestKeys.current.add(requestKey)
-    updateBucket(target, (bucket) => ({ ...bucket, loading: true, error: '', ...(reset ? { initialized: false } : {}) }))
+    updateBucket(target, (bucket) => ({
+      ...bucket,
+      loading: true,
+      error: '',
+      ...(reset && bucket.items.length === 0 ? { initialized: false } : {}),
+    }))
     try {
       const page = await loadFeedPage(user, target, cursor)
       updateBucket(target, (bucket) => {
@@ -65,7 +70,7 @@ export function usePersonalizedFeed(user: User | null, category: FeedCategory, r
           ...bucket,
           items,
           visibleCount: reset
-            ? Math.min(REVEAL_SIZE, items.length)
+            ? Math.max(bucket.visibleCount, Math.min(REVEAL_SIZE, items.length))
             : revealAfterFetch
               ? Math.min(items.length, bucket.visibleCount + REVEAL_SIZE)
               : Math.max(bucket.visibleCount, Math.min(REVEAL_SIZE, items.length)),
@@ -134,7 +139,12 @@ export function usePersonalizedFeed(user: User | null, category: FeedCategory, r
   }, [category, fetchBucket, updateBucket])
 
   const refresh = useCallback(
-    () => fetchBucket(category, true),
+    (resetAll = false) => {
+      if (resetAll) {
+        setBuckets({})
+      }
+      return fetchBucket(category, true)
+    },
     [category, fetchBucket],
   )
 

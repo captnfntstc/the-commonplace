@@ -160,7 +160,7 @@ describe('SettingsPage Redesign & Content Updates', () => {
     expect(screen.getByLabelText(/Last Name/i)).toBeDefined()
   })
 
-  it('navigates to Notifications tab and displays interaction alerts and quiet hours', () => {
+  it('navigates to Notifications tab and displays interaction alerts and silence notifications', () => {
     render(
       <SettingsPage
         onBack={vi.fn()}
@@ -175,7 +175,52 @@ describe('SettingsPage Redesign & Content Updates', () => {
     expect(screen.getByText(/In-App Activity Notifications/i)).toBeDefined()
     expect(screen.getByText(/Quote & Citation Notices/i)).toBeDefined()
     expect(screen.getByText(/Weekly Sanctuary Digest/i)).toBeDefined()
-    expect(screen.getByText(/Enable Quiet Hours/i)).toBeDefined()
+    expect(screen.getAllByText(/Silence Notifications/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/Turn on Silence Notifications above to configure duration or scheduled hours/i)).toBeDefined()
+  })
+
+  it('triggers silence confirmation dialog, toggles duration modes with switches', () => {
+    localStorage.clear()
+
+    render(
+      <SettingsPage
+        onBack={vi.fn()}
+        userProfile={mockProfile}
+        onSaveProfile={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Notifications/i }))
+
+    // Switch silence on
+    const silenceToggle = screen.getByRole('switch', { name: 'Silence Notifications' })
+    fireEvent.click(silenceToggle)
+
+    // Verify confirmation dialog opened without FIFO disclaimer
+    expect(screen.getByRole('alertdialog')).toBeDefined()
+    expect(screen.getByRole('heading', { name: 'Silence Notifications?' })).toBeDefined()
+    expect(screen.getByText(/Incoming notifications will be silenced/i)).toBeDefined()
+    expect(screen.queryByText(/FIFO/i)).toBeNull()
+
+    // Check "Don't show this confirmation again" and confirm
+    const dontShowCheckbox = screen.getByRole('checkbox', { name: /Don't show this confirmation again/i })
+    fireEvent.click(dontShowCheckbox)
+
+    const confirmBtn = screen.getByRole('button', { name: 'Silence Notifications' })
+    fireEvent.click(confirmBtn)
+
+    // Verify silence is enabled with badge
+    expect(screen.getByText('Silenced (Until turned on)')).toBeDefined()
+
+    // Duration and schedule switches are now accessible
+    expect(screen.getByText(/Silence Duration & Schedule/i)).toBeDefined()
+    const scheduleToggle = screen.getByRole('switch', { name: 'Custom Schedule' })
+    fireEvent.click(scheduleToggle)
+    expect(screen.getByText(/Active days:/i)).toBeDefined()
+
+    const oneHourToggle = screen.getByRole('switch', { name: '1-Hour Duration' })
+    fireEvent.click(oneHourToggle)
+    expect(screen.getByText(/Silenced \(1 hour\)/i)).toBeDefined()
   })
 
   it('navigates to Language & Region tab and displays multilingual placeholder and formatting', () => {
